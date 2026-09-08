@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - name: Verify static export exists
+        run: test -d out && test -f out/index.html
+
+  rust:
+    name: Rust format, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Format
+        run: cargo fmt --check
+        working-directory: src-tauri
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - name: Tests
+        run: cargo test
+        working-directory: src-tauri
+
+  release-build:
+    name: Windows release build smoke test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Static export
+        run: npm run build
+      - name: Tauri release build (no bundle)
+        run: npm run tauri build -- --no-bundle
+        env:
+          CI: "true"
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high --omit=dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          lockfile: src-tauri/Cargo.lock

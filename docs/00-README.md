@@ -53,6 +53,7 @@ Give a furniture shop one simple application for product photos, article numbers
 | `30-settings-licensing-and-localization.md` | Shop settings, license, language |
 | `31-phase-0-decision-record.md` | Approved Phase 0 decisions (see authority note) |
 | `32-pos-wireframe.md` | POS new-sale wireframe (Phase 0 proof) |
+| `33-development-guide.md` | Version requirements, local checks, workflow |
 
 ## Document authority
 
