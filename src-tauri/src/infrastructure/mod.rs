@@ -1,3 +1,4 @@
+pub mod audit;
 mod backup;
 pub mod clock;
 pub mod db;
@@ -5,11 +6,14 @@ pub mod fonts;
 pub mod id;
 mod image_pipeline;
 pub mod logging;
+pub mod password;
 mod paths;
 mod pdf;
 pub mod session;
+pub mod throttle;
 pub mod write_coordinator;
 
+pub use audit::{AuditInput, AuditService};
 pub use backup::{create_backup, list_backups};
 pub use clock::{Clock, SystemClock};
 pub use db::{integrity_check, open, DbInfo, IntegrityInfo};
@@ -19,4 +23,5 @@ pub use logging::{install as install_logging, redact};
 pub use paths::FilePaths;
 pub use pdf::generate_proof_pdf;
 pub use session::SessionManager;
+pub use throttle::LoginThrottle;
 pub use write_coordinator::WriteCoordinator;

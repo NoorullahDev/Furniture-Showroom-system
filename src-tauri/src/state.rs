@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::infrastructure::audit::AuditService;
 use crate::infrastructure::clock::SystemClock;
 use crate::infrastructure::id::UuidIdGenerator;
 use crate::infrastructure::session::SessionManager;
+use crate::infrastructure::throttle::LoginThrottle;
 use crate::infrastructure::write_coordinator::WriteCoordinator;
 use crate::infrastructure::FilePaths;
 
@@ -15,6 +17,8 @@ pub struct AppState {
     pub ids: UuidIdGenerator,
     pub write_coordinator: WriteCoordinator,
     pub sessions: SessionManager,
+    pub audits: AuditService,
+    pub throttle: LoginThrottle,
 }
 
 impl AppState {
@@ -23,6 +27,9 @@ impl AppState {
         let ids = UuidIdGenerator;
         let write_coordinator = WriteCoordinator::new();
         let sessions = SessionManager::new(pool.clone(), Arc::new(clock), Arc::new(ids));
+        let app_version = env!("CARGO_PKG_VERSION").to_string();
+        let audits = AuditService::new(pool.clone(), Arc::new(clock), app_version);
+        let throttle = LoginThrottle::new();
         Self {
             pool,
             paths,
@@ -30,6 +37,8 @@ impl AppState {
             ids,
             write_coordinator,
             sessions,
+            audits,
+            throttle,
         }
     }
 }

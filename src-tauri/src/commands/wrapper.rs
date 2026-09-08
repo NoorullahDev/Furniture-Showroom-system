@@ -8,7 +8,16 @@ pub async fn run_command<T>(
     name: &str,
     fut: impl std::future::Future<Output = Result<T, AppError>>,
 ) -> Result<T, AppErrorDto> {
-    let correlation_id = new_correlation_id();
+    run_command_with_correlation(name, new_correlation_id(), fut).await
+}
+
+/// Variant that lets the caller reuse one correlation id for both the log span
+/// and any audit events written by the command (e.g. `auth_login`).
+pub async fn run_command_with_correlation<T>(
+    name: &str,
+    correlation_id: String,
+    fut: impl std::future::Future<Output = Result<T, AppError>>,
+) -> Result<T, AppErrorDto> {
     let span = tracing::info_span!("command", command = %name, correlation_id = %correlation_id);
     let _enter = span.enter();
 

@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use sqlx::sqlite::SqlitePool;
+use sqlx::sqlite::{SqliteConnection, SqlitePool};
 use sqlx::Transaction;
 
 use crate::error::AppError;
@@ -20,19 +20,23 @@ impl WriteCoordinator {
         Self::default()
     }
 
-    /// Begin a transaction, run `op`, then commit (or roll back on error).
-    /// Writes are globally serialized; reads stay concurrent.
+    /// Begin a transaction, run `op` on the underlying connection, then commit
+    /// (or roll back on error). Writes are globally serialized; reads stay
+    /// concurrent. The closure receives a plain `&mut SqliteConnection` so SQL
+    /// and repositories work directly on the transaction's connection; this
+    /// type is the only place where the transaction wrapper is dereferenced.
     pub async fn execute<T>(
         &self,
         pool: &SqlitePool,
         op: impl for<'a> FnOnce(
-            &'a mut Transaction<'_, sqlx::Sqlite>,
+            &'a mut SqliteConnection,
         )
             -> Pin<Box<dyn Future<Output = Result<T, AppError>> + Send + 'a>>,
     ) -> Result<T, AppError> {
         let _guard = self.lock.lock().await;
-        let mut tx = pool.begin().await?;
-        match op(&mut tx).await {
+        let mut tx: Transaction<'_, sqlx::Sqlite> = pool.begin().await?;
+        let conn: &mut SqliteConnection = &mut tx;
+        match op(conn).await {
             Ok(value) => {
                 tx.commit().await?;
                 Ok(value)

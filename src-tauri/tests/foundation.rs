@@ -113,7 +113,7 @@ async fn write_transaction_rolls_back_on_error() {
                     sqlx::query(
                         "INSERT INTO settings (key, value_json) VALUES ('shop.name', '\"X\"')",
                     )
-                    .execute(&mut **tx)
+                    .execute(tx)
                     .await?;
                     // Force a failure after the insert; nothing may persist.
                     Err(AppError::Validation("simulated failure".into()))

@@ -40,10 +40,68 @@ pub fn install(log_dir: &Path, verbose: bool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Mask obvious secret material inside a string before it reaches a log file.
-/// This is a defensive backstop; the primary rule is to never log command
-/// arguments or user data at all.
+/// Mask obvious secret material inside a string before it reaches a log file
+/// or the audit store. This is a defensive backstop; the primary rule is to
+/// never log command arguments or user data at all.
+///
+/// Two passes:
+/// - If the value is JSON, every sensitive key (password, token, secret,
+///   salt, key material) is masked recursively so `before_json`/`after_json`
+///   can never leak secrets stored under such keys.
+/// - Otherwise a substring pass masks `password=`, `token=`, bearer headers,
+///   etc. for plain log lines.
 pub fn redact(value: &str) -> String {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(value) {
+        return redact_json(parsed).to_string();
+    }
+    redact_substrings(value)
+}
+
+fn redact_json(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => map
+            .into_iter()
+            .map(|(key, child)| {
+                if is_sensitive_key(&key) {
+                    (key, serde_json::Value::String("[REDACTED]".into()))
+                } else {
+                    (key, redact_json(child))
+                }
+            })
+            .collect(),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_json).collect())
+        }
+        other => other,
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    const EXACT: [&str; 10] = [
+        "password",
+        "password_hash",
+        "current_password",
+        "new_password",
+        "token",
+        "secret",
+        "salt",
+        "license_key",
+        "backup_password",
+        "authorization",
+    ];
+    let lower = key.to_ascii_lowercase();
+    if EXACT.contains(&lower.as_str()) {
+        return true;
+    }
+    lower.ends_with("_password")
+        || lower.ends_with("_hash")
+        || lower.ends_with("_token")
+        || lower.ends_with("_secret")
+        || lower.ends_with("_salt")
+        || lower.ends_with("_key")
+}
+
+fn redact_substrings(value: &str) -> String {
     const PATTERNS: [&str; 9] = [
         "password=",
         "password:",
@@ -103,5 +161,24 @@ mod tests {
         );
         assert_eq!(redact("token=abc, next=1"), "token=[REDACTED], next=1");
         assert_eq!(redact("no secrets here"), "no secrets here");
+    }
+
+    #[test]
+    fn masks_secrets_inside_json() {
+        let input = r#"{"user": 1, "password": "hunter2", "new_password": "hunter3", "nested": {"token": "abc", "safe": "kept"}, "password_changed": true, "numbers": [1, 2]}"#;
+        let out = redact(input);
+        assert!(!out.contains("hunter2"));
+        assert!(!out.contains("hunter3"));
+        assert!(!out.contains("\"abc\""));
+        assert!(out.contains("password_changed"));
+        assert_eq!(out.matches("[REDACTED]").count(), 3);
+    }
+
+    #[test]
+    fn redacts_non_json_password_hashes_in_arrays() {
+        let input = r#"["owner", {"account": {"secret": "s3cr3t"}, "data": "2000-01-01"}]"#;
+        let out = redact(input);
+        assert!(!out.contains("s3cr3t"));
+        assert!(out.contains("2000-01-01"));
     }
 }

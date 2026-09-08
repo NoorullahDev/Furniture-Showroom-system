@@ -59,6 +59,22 @@ pub fn run() {
             commands::proof::proof_open_path,
             commands::settings::settings_get,
             commands::settings::settings_set,
+            commands::first_run::first_run_status,
+            commands::first_run::first_run_complete,
+            commands::auth::auth_login,
+            commands::auth::auth_logout,
+            commands::auth::auth_current,
+            commands::auth::auth_lock,
+            commands::auth::auth_unlock,
+            commands::auth::auth_change_password,
+            commands::users::user_create,
+            commands::users::user_list,
+            commands::users::user_update,
+            commands::users::user_deactivate,
+            commands::users::user_reset_password,
+            commands::roles::role_list,
+            commands::roles::role_permissions_set,
+            commands::audit::audit_query,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

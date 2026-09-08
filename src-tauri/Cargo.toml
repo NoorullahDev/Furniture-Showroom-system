@@ -23,8 +23,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v7"] }
+uuid = { version = "1", features = ["v4", "v7"] }
 sha2 = "0.10"
+argon2 = "0.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 printpdf = "=0.7.0"
 anyhow = "1"
