@@ -41,10 +41,11 @@ async fn db_opens_runs_migrations_and_seeds() {
 
     // Rerun migrations: must be a no-op.
     infra::db::MIGRATOR.run(&pool).await.unwrap();
-    let version_again: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let version_again: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(version_again, 1);
 
     pool.close().await;
@@ -69,7 +70,10 @@ fn pdf_embeds_unicode_font_and_renders() {
     );
 
     // The embedded font must have been materialized in the fonts dir.
-    assert!(paths.fonts_dir.join("NotoNastaliqUrdu-Regular.ttf").exists());
+    assert!(paths
+        .fonts_dir
+        .join("NotoNastaliqUrdu-Regular.ttf")
+        .exists());
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -92,9 +96,7 @@ fn image_pipeline_validates_and_creates_thumbnails() {
         Some("webp")
     );
     assert!(paths.images_dir.join(&imported.stored_name).exists());
-    let thumb_name = imported
-        .stored_name
-        .replace(".webp", "-thumb.webp");
+    let thumb_name = imported.stored_name.replace(".webp", "-thumb.webp");
     assert!(paths.images_dir.join(&thumb_name).exists());
 
     // A non-image file must be rejected cleanly.

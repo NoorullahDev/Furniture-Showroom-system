@@ -1,12 +1,22 @@
+mod backup;
+pub mod clock;
 pub mod db;
 pub mod fonts;
+pub mod id;
 mod image_pipeline;
+pub mod logging;
 mod paths;
 mod pdf;
-mod backup;
+pub mod session;
+pub mod write_coordinator;
 
 pub use backup::{create_backup, list_backups};
-pub use db::{open, DbInfo};
+pub use clock::{Clock, SystemClock};
+pub use db::{integrity_check, open, DbInfo, IntegrityInfo};
+pub use id::{IdGenerator, UuidIdGenerator};
 pub use image_pipeline::{import_image, ImportedImage};
+pub use logging::{install as install_logging, redact};
 pub use paths::FilePaths;
 pub use pdf::generate_proof_pdf;
+pub use session::SessionManager;
+pub use write_coordinator::WriteCoordinator;

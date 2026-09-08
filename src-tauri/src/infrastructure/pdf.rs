@@ -19,14 +19,15 @@ pub struct ProofPdf {
 /// shaping, so Urdu renders as individual glyph forms. Full shaping is a
 /// later-phase concern (HarfBuzz-backed rendering) and is flagged in the
 /// risk register as "PDF works in English but fails in Urdu".
-pub fn generate_proof_pdf(
-    reports_dir: &Path,
-    fonts_dir: &Path,
-) -> Result<ProofPdf, AppError> {
+pub fn generate_proof_pdf(reports_dir: &Path, fonts_dir: &Path) -> Result<ProofPdf, AppError> {
     let font_candidates = super::fonts::resolve_fonts(fonts_dir)?;
 
-    let (doc, page1, layer1) =
-        PdfDocument::new("Furniture Shop — Technical Proof", Mm(210.0), Mm(297.0), "Page 1");
+    let (doc, page1, layer1) = PdfDocument::new(
+        "Furniture Shop — Technical Proof",
+        Mm(210.0),
+        Mm(297.0),
+        "Page 1",
+    );
 
     let helvetica = doc
         .add_builtin_font(BuiltinFont::Helvetica)
@@ -50,9 +51,8 @@ pub fn generate_proof_pdf(
         }
     }
 
-    let urdu_font = urdu_font.ok_or_else(|| {
-        AppError::Pdf("no Unicode font could be embedded for Urdu text".into())
-    })?;
+    let urdu_font = urdu_font
+        .ok_or_else(|| AppError::Pdf("no Unicode font could be embedded for Urdu text".into()))?;
 
     let layer = doc.get_page(page1).get_layer(layer1);
 
@@ -127,7 +127,8 @@ pub fn generate_proof_pdf(
     let filename = format!("proof-{}.pdf", uuid::Uuid::now_v7());
     let path = reports_dir.join(filename);
     let mut out = BufWriter::new(fs::File::create(&path)?);
-    doc.save(&mut out).map_err(|e| AppError::Pdf(e.to_string()))?;
+    doc.save(&mut out)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
     out.flush()?;
 
     let bytes = fs::metadata(&path)?.len();

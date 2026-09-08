@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
-const URDU_FONT_BYTES: &[u8] =
-    include_bytes!("../../assets/fonts/NotoNastaliqUrdu-VF.ttf");
+const URDU_FONT_BYTES: &[u8] = include_bytes!("../../assets/fonts/NotoNastaliqUrdu-VF.ttf");
 
 /// Materializes the embedded Noto Nastaliq Urdu font and returns an ordered
 /// list of candidate font files for the PDF renderer.

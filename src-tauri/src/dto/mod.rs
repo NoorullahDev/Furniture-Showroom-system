@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::error::{new_correlation_id, AppError};
+use crate::error::AppError;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -10,12 +10,12 @@ pub struct AppErrorDto {
     pub correlation_id: String,
 }
 
-impl From<AppError> for AppErrorDto {
-    fn from(err: AppError) -> Self {
+impl AppErrorDto {
+    pub fn from_error(err: &AppError, correlation_id: &str) -> Self {
         AppErrorDto {
             code: err.code().to_string(),
             message: err.to_string(),
-            correlation_id: new_correlation_id(),
+            correlation_id: correlation_id.to_string(),
         }
     }
 }
