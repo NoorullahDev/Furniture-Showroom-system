@@ -1,0 +1,36 @@
+[package]
+name = "furniture-shop"
+version = "0.1.0"
+description = "Offline-first furniture shop management system"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "furniture_shop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+opener = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v7"] }
+sha2 = "0.10"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+printpdf = "=0.7.0"
+anyhow = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

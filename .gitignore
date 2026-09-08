@@ -1,0 +1,32 @@
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*.log
+
+# Node
+node_modules
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/
+*.log
+src-tauri/assets/*.ico
+src-tauri/app-icon.png
+
+# Local data created at runtime
+*.db
+*.db-shm
+*.db-wal
+*.backup
+*.pdf
+*.webp
+
+# Secrets
+.env
+.env.*
+!.env.example
