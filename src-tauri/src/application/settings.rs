@@ -1,14 +1,11 @@
 use crate::error::AppError;
 use crate::infrastructure::clock::Clock;
+use crate::repositories::SettingsRepository;
 use crate::state::AppState;
 
-/// Read one settings value as raw JSON text (Phase 1 example read).
+/// Read one settings value as raw JSON text (Phase 1 example read service).
 pub async fn get(state: &AppState, key: &str) -> Result<Option<String>, AppError> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT value_json FROM settings WHERE key = ?")
-        .bind(key)
-        .fetch_optional(&state.pool)
-        .await?;
-    Ok(row.map(|(value,)| value))
+    SettingsRepository::find(&state.pool, key).await
 }
 
 /// Upsert one settings key inside a single serialized write transaction
@@ -25,26 +22,9 @@ pub async fn set(
 
     state
         .write_coordinator
-        .execute(&state.pool, move |tx| {
-            let key_owned = key_owned.clone();
-            let value_owned = value_owned.clone();
-            let now = now.clone();
-            let updated_by = updated_by;
+        .execute(&state.pool, |tx| {
             Box::pin(async move {
-                sqlx::query(
-                    "INSERT INTO settings (key, value_json, updated_by, updated_at)
-                     VALUES (?, ?, ?, ?)
-                     ON CONFLICT(key) DO UPDATE SET
-                       value_json = excluded.value_json,
-                       updated_by = excluded.updated_by,
-                       updated_at = excluded.updated_at",
-                )
-                .bind(key_owned)
-                .bind(value_owned)
-                .bind(updated_by)
-                .bind(now)
-                .execute(&mut **tx)
-                .await?;
+                SettingsRepository::upsert(tx, &key_owned, &value_owned, updated_by, &now).await?;
                 Ok(())
             })
         })

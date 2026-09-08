@@ -4,6 +4,7 @@ pub mod domain;
 pub mod dto;
 pub mod error;
 pub mod infrastructure;
+pub mod repositories;
 pub mod state;
 
 use tauri::Manager;
