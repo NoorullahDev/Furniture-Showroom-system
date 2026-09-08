@@ -184,6 +184,39 @@ fn logging_redacts_secret_material() {
 }
 
 #[test]
+fn capabilities_deny_shell_fs_and_network() {
+    let manifest = include_str!("../capabilities/default.json");
+    let caps: serde_json::Value = serde_json::from_str(manifest).unwrap();
+    let permissions = caps["permissions"]
+        .as_array()
+        .expect("capability must list permissions");
+
+    for blocked in ["shell", "fs", "http", "process", "window-state", "updater"] {
+        let blocked_prefix = format!("{blocked}:");
+        for permission in permissions {
+            let text = permission.as_str().unwrap();
+            assert!(
+                !(text == blocked || text.starts_with(&blocked_prefix)),
+                "permission `{text}` is not least-privilege for Phase 1"
+            );
+        }
+    }
+
+    assert!(
+        permissions
+            .iter()
+            .any(|p| p.as_str() == Some("core:default")),
+        "core:default capability must be present"
+    );
+    assert!(
+        permissions
+            .iter()
+            .any(|p| p.as_str() == Some("dialog:default")),
+        "dialog capability must be present"
+    );
+}
+
+#[test]
 fn id_and_clock_foundations_are_available() {
     let gen = infra::UuidIdGenerator;
     let id = gen.new_id();

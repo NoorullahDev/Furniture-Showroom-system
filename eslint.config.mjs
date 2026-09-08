@@ -10,7 +10,17 @@ const compat = new FlatCompat({ baseDirectory: __dirname });
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    ignores: [".next/**", "out/**", "node_modules/**", "next-env.d.ts", "src-tauri/**"],
+    ignores: [
+      ".next/**",
+      "out/**",
+      "node_modules/**",
+      "next-env.d.ts",
+      "src-tauri/**",
+      "next.config.js",
+      "postcss.config.js",
+      "tailwind.config.js",
+      "eslint.config.mjs",
+    ],
   },
   {
     files: ["src/lib/tauri/client.ts"],
