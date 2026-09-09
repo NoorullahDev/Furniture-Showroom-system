@@ -119,12 +119,11 @@ type CartLine = {
 const SALES_LEDGER_LABELS: Record<string, string> = {
   opening_balance: "Opening balance",
   sale: "Sale",
-  receipt: "Payment received",
+  payment: "Payment received",
   advance_used: "Advance used",
   advance_restore: "Advance restored",
-  sale_refund: "Sale refund",
+  sale_cancellation: "Sale cancelled",
   payment_refund: "Payment refund",
-  void: "Receipt voided",
 };
 
 function todayIso(): string {

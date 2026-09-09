@@ -562,7 +562,13 @@ pub async fn create_receipt(
                 .last_insert_rowid();
 
                 let advance = match input.allocations.as_ref() {
-                    Some(allocs) if !allocs.is_empty() => {
+                    Some(allocs) => {
+                        // Explicit allocation list is authoritative: a zero
+                        // amount for a sale leaves that invoice untouched, and
+                        // the unallocated remainder becomes an advance. An
+                        // empty (or fully zeroed) list therefore holds the
+                        // whole amount as an advance rather than auto-applying
+                        // it oldest-first.
                         let alloc_sum: i64 = allocs.iter().map(|a| a.amount_minor).sum();
                         if alloc_sum > input.amount_minor {
                             return Err(AppError::Validation(format!(
@@ -573,9 +579,7 @@ pub async fn create_receipt(
                         let mut seen = std::collections::HashSet::new();
                         for alloc in allocs {
                             if alloc.amount_minor <= 0 {
-                                return Err(AppError::Validation(
-                                    "allocation amounts must be positive".into(),
-                                ));
+                                continue;
                             }
                             if !seen.insert(alloc.sale_id) {
                                 return Err(AppError::Validation(format!(
@@ -612,6 +616,9 @@ pub async fn create_receipt(
                             }
                         }
                         for alloc in allocs {
+                            if alloc.amount_minor <= 0 {
+                                continue;
+                            }
                             sqlx::query(
                                 "UPDATE sales
                                     SET paid_minor = paid_minor + ?, due_minor = due_minor - ?,
@@ -636,7 +643,7 @@ pub async fn create_receipt(
                         }
                         input.amount_minor - alloc_sum
                     }
-                    _ => {
+                    None => {
                         let open: Vec<i64> = sqlx::query_scalar(
                             "SELECT id FROM sales
                              WHERE customer_id = ? AND status = 'confirmed' AND due_minor > 0

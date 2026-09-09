@@ -561,6 +561,88 @@ async fn manual_allocation_rejects_over_payment_and_non_customer_sales() {
 }
 
 #[tokio::test]
+async fn manual_allocation_zero_and_empty_lists_leave_invoices_untouched() {
+    let dir = temp_dir("manual-skip");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "manual-skip").await;
+    let product = stock_product(&state, &owner, "RC-10", 50, 1000).await;
+    set_price(&state, product, 10_000).await;
+    let customer = create_customer(&state, &owner, "CUST-SKIP", None, None).await;
+    let cash = funded_cash(&state, &owner, "SKIPCASH").await;
+
+    let s1 = make_open_sale(&state, &owner, Some(customer), product, 2, "2026-09-01").await;
+    let s2 = make_open_sale(&state, &owner, Some(customer), product, 2, "2026-09-02").await;
+
+    // Zeroing a row must skip that invoice: 30,000 pays s1 (20k) fully and the
+    // remaining 10,000 becomes advance while s2 stays untouched.
+    let skip = application::customers::create_receipt(
+        &state,
+        &owner,
+        CustomerReceiptInput {
+            customer_id: customer,
+            payment_method_id: 1,
+            cash_account_id: cash,
+            payment_date: "2026-09-03".into(),
+            amount_minor: 30_000,
+            notes: None,
+            idempotency_key: Some("rc-skipzer".into()),
+            allocations: Some(vec![
+                CustomerReceiptAllocationInput {
+                    sale_id: s2.id,
+                    amount_minor: 0,
+                },
+                CustomerReceiptAllocationInput {
+                    sale_id: s1.id,
+                    amount_minor: 20_000,
+                },
+            ]),
+        },
+        "corr-skipzer",
+    )
+    .await
+    .unwrap();
+    assert_eq!(skip.advance_alloc_minor, 10_000);
+    assert_eq!(skip.allocations.len(), 1);
+    assert_eq!(skip.allocations[0].sale_id, s1.id);
+
+    let s1d = application::sales::get_sale(&state, &owner, s1.id)
+        .await
+        .unwrap();
+    assert_eq!(s1d.due_minor, 0);
+    let s2d = application::sales::get_sale(&state, &owner, s2.id)
+        .await
+        .unwrap();
+    assert_eq!(s2d.due_minor, 20_000);
+
+    // Explicitly empty allocation list means advance, not oldest-first auto
+    // allocation: s2 still has 20,000 open and must be left unchanged.
+    let empty = application::customers::create_receipt(
+        &state,
+        &owner,
+        CustomerReceiptInput {
+            customer_id: customer,
+            payment_method_id: 1,
+            cash_account_id: cash,
+            payment_date: "2026-09-04".into(),
+            amount_minor: 5_000,
+            notes: None,
+            idempotency_key: Some("rc-empty".into()),
+            allocations: Some(vec![]),
+        },
+        "corr-empty",
+    )
+    .await
+    .unwrap();
+    assert_eq!(empty.advance_alloc_minor, 5_000);
+    assert!(empty.allocations.is_empty());
+    let s2d2 = application::sales::get_sale(&state, &owner, s2.id)
+        .await
+        .unwrap();
+    assert_eq!(s2d2.due_minor, 20_000);
+    assert_eq!(customer_balance(&state, customer).await, 5_000);
+}
+
+#[tokio::test]
 async fn receipt_posts_single_ledger_and_cash_entries() {
     let dir = temp_dir("once");
     let state = open_state(&dir).await;
