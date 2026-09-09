@@ -7,6 +7,7 @@ pub mod products;
 pub mod proof;
 pub mod purchases;
 pub mod roles;
+pub mod sales;
 pub mod settings;
 pub mod suppliers;
 pub mod users;

@@ -1055,3 +1055,274 @@ export const supplierReturnPost = (session: string, input: SupplierReturnPostInp
 
 export const supplierReturnList = (session: string) =>
   runCommand<SupplierReturnDto[]>("supplier_return_list", { session });
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Customers, furniture sets (bundles), sales, receipts, invoices
+// ---------------------------------------------------------------------------
+
+export type CustomerDto = {
+  id: number;
+  code: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  creditLimitMinor: number;
+  openingBalanceMinor: number;
+  balanceMinor: number;
+  advanceMinor: number;
+  isActive: boolean;
+  createdAt: string;
+};
+
+export type CustomerInput = {
+  code: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  creditLimitMinor?: number | null;
+  openingBalanceMinor?: number | null;
+  isActive?: boolean | null;
+};
+
+export type CustomerLedgerEntryDto = {
+  id: number;
+  entryType: string;
+  documentType?: string | null;
+  documentId?: number | null;
+  amountMinor: number;
+  balanceAfterMinor: number;
+  notes?: string | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type BundleItemInput = {
+  productId: number;
+  quantity: number;
+};
+
+export type BundleInput = {
+  code: string;
+  name: string;
+  description?: string | null;
+  coverImagePath?: string | null;
+  defaultPriceMinor?: number | null;
+  isActive?: boolean | null;
+  items: BundleItemInput[];
+};
+
+export type BundleItemDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  sortOrder: number;
+  unitCostEstimateMinor: number;
+  lineCostEstimateMinor: number;
+};
+
+export type BundleDto = {
+  id: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  coverImagePath?: string | null;
+  defaultPriceMinor: number;
+  isActive: boolean;
+  items: BundleItemDto[];
+  costEstimateMinor: number;
+  createdAt: string;
+};
+
+export type BundleAvailabilityDto = {
+  bundleId: number;
+  bundleName: string;
+  locationId: number;
+  availableCount: number;
+  limitingProductId?: number | null;
+  limitingProductName?: string | null;
+  limitingAvailable?: number | null;
+  limitingNeededPerSet?: number | null;
+};
+
+export type SaleItemInput = {
+  productId?: number | null;
+  bundleId?: number | null;
+  quantity: number;
+};
+
+export type SaleComponentDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitCostMinor: number;
+  lineCostMinor: number;
+};
+
+export type SaleItemDto = {
+  id: number;
+  productId?: number | null;
+  bundleId?: number | null;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitPriceMinor: number;
+  lineTotalMinor: number;
+  unitCostMinor: number;
+  lineCostMinor: number;
+  components: SaleComponentDto[];
+};
+
+export type SaleCreateInput = {
+  locationId: number;
+  customerId?: number | null;
+  kind?: string | null;
+  saleDate?: string | null;
+  discountMinor?: number | null;
+  deliveryChargeMinor?: number | null;
+  notes?: string | null;
+  items: SaleItemInput[];
+};
+
+export type SaleConfirmInput = {
+  saleId: number;
+  idempotencyKey?: string | null;
+  paidMinor?: number | null;
+  cashAccountId?: number | null;
+  paymentMethodId?: number | null;
+  advanceUsedMinor?: number | null;
+};
+
+export type SaleDto = {
+  id: number;
+  saleNumber?: string | null;
+  kind: string;
+  customerId?: number | null;
+  customerName?: string | null;
+  locationId: number;
+  saleDate: string;
+  status: string;
+  subtotalMinor: number;
+  discountMinor: number;
+  deliveryChargeMinor: number;
+  taxMinor: number;
+  totalMinor: number;
+  paidMinor: number;
+  advanceUsedMinor: number;
+  dueMinor: number;
+  costMinor: number;
+  notes?: string | null;
+  items: SaleItemDto[];
+  createdAt: string;
+  confirmedAt?: string | null;
+  confirmedBy?: number | null;
+};
+
+export type SaleCancelInput = {
+  saleId: number;
+  reason?: string | null;
+};
+
+export type CustomerReceiptInput = {
+  customerId: number;
+  paymentMethodId: number;
+  cashAccountId: number;
+  paymentDate: string;
+  amountMinor: number;
+  notes?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type SalePaymentAllocationDto = {
+  saleId: number;
+  saleNumber?: string | null;
+  amountMinor: number;
+};
+
+export type CustomerPaymentDto = {
+  id: number;
+  receiptNumber?: string | null;
+  customerId: number;
+  customerName: string;
+  saleId?: number | null;
+  paymentMethodId: number;
+  paymentMethodName: string;
+  cashAccountId: number;
+  cashAccountName: string;
+  paymentDate: string;
+  amountMinor: number;
+  advanceAllocMinor: number;
+  status: string;
+  notes?: string | null;
+  allocations: SalePaymentAllocationDto[];
+  createdAt: string;
+  voidedAt?: string | null;
+};
+
+export type CustomerPaymentVoidInput = {
+  paymentId: number;
+  reason?: string | null;
+};
+
+export const customerList = (session: string) =>
+  runCommand<CustomerDto[]>("customer_list", { session });
+
+export const customerGet = (session: string, customerId: number) =>
+  runCommand<CustomerDto>("customer_get", { session, customerId });
+
+export const customerCreate = (session: string, input: CustomerInput) =>
+  runCommand<CustomerDto>("customer_create", { session, input });
+
+export const customerUpdate = (
+  session: string,
+  customerId: number,
+  input: CustomerInput,
+) => runCommand<CustomerDto>("customer_update", { session, customerId, input });
+
+export const customerLedger = (session: string, customerId: number) =>
+  runCommand<CustomerLedgerEntryDto[]>("customer_ledger", { session, customerId });
+
+export const customerReceiptCreate = (session: string, input: CustomerReceiptInput) =>
+  runCommand<CustomerPaymentDto>("customer_receipt_create", { session, input });
+
+export const customerReceiptVoid = (session: string, input: CustomerPaymentVoidInput) =>
+  runCommand<CustomerPaymentDto>("customer_receipt_void", { session, input });
+
+export const customerReceiptList = (session: string, customerId: number) =>
+  runCommand<CustomerPaymentDto[]>("customer_receipt_list", { session, customerId });
+
+export const bundleList = (session: string) =>
+  runCommand<BundleDto[]>("bundle_list", { session });
+
+export const bundleGet = (session: string, bundleId: number) =>
+  runCommand<BundleDto>("bundle_get", { session, bundleId });
+
+export const bundleCreate = (session: string, input: BundleInput) =>
+  runCommand<BundleDto>("bundle_create", { session, input });
+
+export const bundleUpdate = (session: string, bundleId: number, input: BundleInput) =>
+  runCommand<BundleDto>("bundle_update", { session, bundleId, input });
+
+export const bundleAvailability = (session: string, bundleId: number, locationId: number) =>
+  runCommand<BundleAvailabilityDto>("bundle_availability", { session, bundleId, locationId });
+
+export const saleCreate = (session: string, input: SaleCreateInput) =>
+  runCommand<SaleDto>("sale_create", { session, input });
+
+export const saleConfirm = (session: string, input: SaleConfirmInput) =>
+  runCommand<SaleDto>("sale_confirm", { session, input });
+
+export const saleCancel = (session: string, input: SaleCancelInput) =>
+  runCommand<SaleDto>("sale_cancel", { session, input });
+
+export const saleList = (session: string) =>
+  runCommand<SaleDto[]>("sale_list", { session });
+
+export const saleGet = (session: string, saleId: number) =>
+  runCommand<SaleDto>("sale_get", { session, saleId });
+
+export const saleInvoicePdf = (session: string, saleId: number) =>
+  runCommand<PdfResult>("sale_invoice_pdf", { session, saleId });

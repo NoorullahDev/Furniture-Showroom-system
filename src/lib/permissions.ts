@@ -23,13 +23,20 @@ export const PERMISSION_GROUPS: { group: string; permissions: PermissionDef[] }[
   {
     group: "Sales",
     permissions: [
-      { code: "sale.create", label: "Create sales", description: "Enter quotations and sales." },
+      { code: "sale.create", label: "Create sales", description: "Enter and confirm sales." },
       {
         code: "sale.discount.override",
         label: "Override discount",
         description: "Apply discounts above the configured limit.",
       },
       { code: "sale.cancel", label: "Cancel sales", description: "Cancel confirmed sales." },
+      { code: "sale.credit", label: "Sell on credit", description: "Record credit sales and use customer advances." },
+      { code: "customer.create", label: "Create customers", description: "Add and edit customer profiles." },
+      { code: "customer.view", label: "View customers", description: "See customer balances and ledgers." },
+      { code: "payment.receive", label: "Receive payments", description: "Record customer receipts." },
+      { code: "bundle.create", label: "Manage furniture sets", description: "Create and maintain furniture sets." },
+      { code: "bundle.view", label: "View furniture sets", description: "See furniture sets and availability." },
+      { code: "invoice.print", label: "Print invoices", description: "Generate printable sale invoices." },
     ],
   },
   {

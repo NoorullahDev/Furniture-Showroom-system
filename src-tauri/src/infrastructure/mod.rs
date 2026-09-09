@@ -25,7 +25,7 @@ pub use image_pipeline::{
 };
 pub use logging::{install as install_logging, redact};
 pub use paths::FilePaths;
-pub use pdf::generate_proof_pdf;
+pub use pdf::{generate_invoice_pdf, generate_proof_pdf, InvoiceLine, InvoicePdf, InvoiceRecord};
 pub use session::SessionManager;
 pub use throttle::LoginThrottle;
 pub use write_coordinator::WriteCoordinator;
