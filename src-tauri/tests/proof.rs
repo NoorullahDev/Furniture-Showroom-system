@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 3);
+    assert_eq!(info.version, 4);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -31,7 +31,7 @@ async fn db_opens_runs_migrations_and_seeds() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(perm_count, 22);
+    assert_eq!(perm_count, 25);
 
     let owner_perm_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
@@ -48,7 +48,21 @@ async fn db_opens_runs_migrations_and_seeds() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(loc_count, 1);
+    assert_eq!(loc_count, 2);
+
+    // Phase 4 inventory tables and views exist.
+    let inventory_objects: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type IN ('table', 'view', 'index') AND name IN (
+             'stock_movements', 'stock_reservations', 'stock_balances',
+             'inventory_count_sessions', 'inventory_count_lines',
+             'inventory_cost_layers', 'current_stock', 'current_valuation'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(inventory_objects, 8);
 
     // Phase 3 catalogue seeds (units) are present and idempotent.
     let unit_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM units")
@@ -77,7 +91,7 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 3);
+    assert_eq!(version_again, 4);
 
     // Owner role template grants every permission (Phase 2 seed invariant).
     let owner_has_all: i64 = sqlx::query_scalar(

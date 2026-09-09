@@ -96,6 +96,17 @@ pub fn run() {
             commands::products::product_image_remove,
             commands::products::product_image_set_primary,
             commands::products::product_image_reorder,
+            commands::inventory::location_list,
+            commands::inventory::stock_balance_list,
+            commands::inventory::stock_movement_list,
+            commands::inventory::stock_valuation,
+            commands::inventory::stock_opening,
+            commands::inventory::stock_transfer,
+            commands::inventory::stock_adjust,
+            commands::inventory::stock_damage,
+            commands::inventory::stock_repair,
+            commands::inventory::stock_reserve,
+            commands::inventory::stock_release,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

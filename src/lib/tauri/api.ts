@@ -533,3 +533,133 @@ export const productImageReorder = (
 /** Read a stored product image and return it as a `data:` URL for `<img>` use. */
 export const productImageData = (session: string, path: string) =>
   runCommand<string>("product_image_data", { session, path });
+
+// --- Inventory (Phase 4) ------------------------------------------------------
+
+export type LocationDto = {
+  id: number;
+  name: string;
+  locationType: string;
+  isActive: boolean;
+};
+
+export type StockBalanceDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  thumbnailPath: string | null;
+  locationId: number;
+  locationName: string;
+  onHand: number;
+  reserved: number;
+  damaged: number;
+  minimumStock: number;
+  available: number;
+};
+
+export type StockMovementDto = {
+  id: number;
+  productId: number;
+  articleNumber: string | null;
+  productName: string | null;
+  locationId: number;
+  locationName: string | null;
+  movementType: string;
+  quantityDelta: number;
+  moveNumber: string | null;
+  unitCostMinor: number | null;
+  referenceType: string | null;
+  referenceId: number | null;
+  reason: string | null;
+  reversalOfId: number | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type ValuationLineDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  unitCostMinor: number;
+  sellableQty: number;
+  valueMinor: number;
+};
+
+export type PostStockInput = {
+  productId: number;
+  locationId: number;
+  quantity: number;
+  unitCostMinor?: number | null;
+  reason?: string | null;
+};
+
+export type TransferStockInput = {
+  productId: number;
+  fromLocationId: number;
+  toLocationId: number;
+  quantity: number;
+  reason?: string | null;
+};
+
+export type AdjustStockInput = {
+  productId: number;
+  locationId: number;
+  adjustmentQty: number;
+  unitCostMinor?: number | null;
+  reason?: string | null;
+};
+
+export type DamageStockInput = {
+  productId: number;
+  locationId: number;
+  quantity: number;
+  reason?: string | null;
+};
+
+export type ReleaseStockInput = {
+  productId: number;
+  locationId: number;
+  quantity: number;
+  reason?: string | null;
+};
+
+export const locationList = (session: string) =>
+  runCommand<LocationDto[]>("location_list", { session });
+
+export const stockBalanceList = (session: string, locationId?: number | null) =>
+  runCommand<StockBalanceDto[]>("stock_balance_list", { session, locationId: locationId ?? null });
+
+export const stockMovementList = (
+  session: string,
+  opts?: { productId?: number | null; locationId?: number | null; limit?: number | null },
+) =>
+  runCommand<StockMovementDto[]>("stock_movement_list", {
+    session,
+    productId: opts?.productId ?? null,
+    locationId: opts?.locationId ?? null,
+    limit: opts?.limit ?? null,
+  });
+
+export const stockValuation = (session: string) =>
+  runCommand<ValuationLineDto[]>("stock_valuation", { session });
+
+export const stockOpening = (session: string, input: PostStockInput) =>
+  runCommand<StockMovementDto>("stock_opening", { session, input });
+
+export const stockTransfer = (session: string, input: TransferStockInput) =>
+  runCommand<StockMovementDto[]>("stock_transfer", { session, input });
+
+export const stockAdjust = (session: string, input: AdjustStockInput) =>
+  runCommand<StockMovementDto>("stock_adjust", { session, input });
+
+export const stockDamage = (session: string, input: DamageStockInput) =>
+  runCommand<StockMovementDto>("stock_damage", { session, input });
+
+export const stockRepair = (session: string, input: DamageStockInput) =>
+  runCommand<StockMovementDto>("stock_repair", { session, input });
+
+export const stockReserve = (session: string, input: ReleaseStockInput) =>
+  runCommand<StockMovementDto>("stock_reserve", { session, input });
+
+export const stockRelease = (session: string, input: ReleaseStockInput) =>
+  runCommand<StockMovementDto>("stock_release", { session, input });

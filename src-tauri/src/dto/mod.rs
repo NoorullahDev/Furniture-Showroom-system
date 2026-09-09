@@ -5,6 +5,7 @@ use crate::error::AppError;
 use crate::infrastructure::redact;
 
 pub mod catalogue;
+pub mod inventory;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
