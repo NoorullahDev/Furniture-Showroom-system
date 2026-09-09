@@ -2249,7 +2249,10 @@ mod tests {
             "Seats=3 does not match attribute search 'oak'"
         );
         assert!(ids.contains(&oak_sofa.id));
-        assert!(ids.contains(&oak_table.id));
+        assert!(
+            !ids.contains(&oak_table.id),
+            "a name-only match must not satisfy the attribute filter"
+        );
 
         let combo = list_products(
             &h.state,
