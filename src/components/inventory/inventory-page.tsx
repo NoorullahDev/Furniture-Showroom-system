@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { StoredImage } from "@/components/catalogue/stored-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -113,6 +114,7 @@ export function InventoryPage() {
 
   const [view, setView] = React.useState<Tab>("stock");
   const [locationId, setLocationId] = React.useState<number | null>(null);
+  const [historyProductId, setHistoryProductId] = React.useState<number | null>(null);
   const [dialog, setDialog] = React.useState<
     null | "opening" | "transfer" | "adjust" | "damage" | "reserve" | "count" | "import"
   >(null);
@@ -130,9 +132,9 @@ export function InventoryPage() {
   });
 
   const movementsQuery = useQuery({
-    queryKey: ["inventory", "movements", locationId],
+    queryKey: ["inventory", "movements", locationId, historyProductId],
     queryFn: () =>
-      stockMovementList(session, { locationId, limit: 200 }),
+      stockMovementList(session, { productId: historyProductId, locationId, limit: 200 }),
     enabled: !!session,
   });
 
@@ -165,6 +167,21 @@ export function InventoryPage() {
   const valuation = valuationQuery.data ?? [];
   const lowStock = lowStockQuery.data ?? [];
   const countSessions = countSessionsQuery.data ?? [];
+
+  const historyProduct = React.useMemo(() => {
+    if (historyProductId === null) return null;
+    const balancesData = balancesQuery.data ?? [];
+    const movementsData = movementsQuery.data ?? [];
+    const b = balancesData.find((x) => x.productId === historyProductId);
+    if (b) {
+      return { name: b.productName, article: b.articleNumber, thumb: b.thumbnailPath };
+    }
+    const m = movementsData.find((x) => x.productId === historyProductId);
+    if (m) {
+      return { name: m.productName ?? "Product", article: m.articleNumber ?? "", thumb: null };
+    }
+    return { name: "Product", article: "", thumb: null };
+  }, [historyProductId, balancesQuery.data, movementsQuery.data]);
 
   const totals = React.useMemo(() => {
     const t = (balancesQuery.data ?? []).reduce(
@@ -274,16 +291,47 @@ export function InventoryPage() {
 
       <div className="mt-4">
         {view === "stock" && (
-          <BalancesTable rows={balances} loading={balancesQuery.isLoading} />
+          <BalancesTable
+            rows={balances}
+            loading={balancesQuery.isLoading}
+            onViewHistory={(pid) => {
+              setHistoryProductId(pid);
+              setView("ledger");
+            }}
+          />
         )}
         {view === "ledger" && (
-          <LedgerTable
-            rows={movements}
-            loading={movementsQuery.isLoading}
-            session={session}
-            canMutate={canMutate}
-            onReverse={() => invalidate()}
-          />
+          <>
+            {historyProduct && (
+              <div className="mb-3 flex items-center justify-between rounded-lg border border-forest-200 bg-forest-50 px-3 py-2">
+                <div className="flex items-center gap-3">
+                  <StoredImage path={historyProduct.thumb} className="h-8 w-8 rounded-md object-cover" />
+                  <div className="grid gap-0">
+                    <span className="text-sm font-medium text-forest-800">{historyProduct.name}</span>
+                    <span className="text-[11px] text-forest-600">{historyProduct.article} · stock history</span>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setHistoryProductId(null);
+                    setView("ledger");
+                  }}
+                >
+                  Clear filter
+                </Button>
+              </div>
+            )}
+            <LedgerTable
+              rows={movements}
+              loading={movementsQuery.isLoading}
+              session={session}
+              canMutate={canMutate}
+              onReverse={() => invalidate()}
+              onViewHistory={(pid) => setHistoryProductId(pid)}
+            />
+          </>
         )}
         {view === "low" && (
           <LowStockTable rows={lowStock} loading={lowStockQuery.isLoading} />
@@ -512,9 +560,11 @@ function TabButton({
 function BalancesTable({
   rows,
   loading,
+  onViewHistory,
 }: {
   rows: StockBalanceDto[];
   loading: boolean;
+  onViewHistory: (productId: number) => void;
 }) {
   if (loading) return <LoadingRow />;
   if (rows.length === 0) {
@@ -539,9 +589,18 @@ function BalancesTable({
             {rows.map((b) => (
               <TableRow key={`${b.productId}-${b.locationId}`}>
                 <TableCell>
-                  <div className="grid gap-0.5">
-                    <span className="font-medium text-neutral-900">{b.productName}</span>
-                    <span className="text-[11px] text-neutral-500">{b.articleNumber}</span>
+                  <div className="flex items-center gap-3">
+                    <StoredImage path={b.thumbnailPath} className="h-10 w-10 rounded-md object-cover" />
+                    <div className="grid gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => onViewHistory(b.productId)}
+                        className="text-left font-medium text-neutral-900 hover:text-forest-700 hover:underline"
+                      >
+                        {b.productName}
+                      </button>
+                      <span className="text-[11px] text-neutral-500">{b.articleNumber}</span>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell>{b.locationName}</TableCell>
@@ -574,12 +633,14 @@ function LedgerTable({
   session,
   canMutate,
   onReverse,
+  onViewHistory,
 }: {
   rows: StockMovementDto[];
   loading: boolean;
   session: string;
   canMutate: boolean;
   onReverse: () => void;
+  onViewHistory: (productId: number) => void;
 }) {
   const queryClient = useQueryClient();
   const [reversing, setReversing] = React.useState(false);
@@ -642,7 +703,13 @@ function LedgerTable({
                   </TableCell>
                   <TableCell>
                     <div className="grid gap-0.5">
-                      <span className="font-medium text-neutral-900">{m.productName}</span>
+                      <button
+                        type="button"
+                        onClick={() => onViewHistory(m.productId)}
+                        className="text-left font-medium text-neutral-900 hover:text-forest-700 hover:underline"
+                      >
+                        {m.productName}
+                      </button>
                       <span className="text-[11px] text-neutral-500">{m.articleNumber}</span>
                     </div>
                   </TableCell>
@@ -745,9 +812,12 @@ function LowStockTable({ rows, loading }: { rows: LowStockItemDto[]; loading: bo
             {rows.map((item) => (
               <TableRow key={item.productId}>
                 <TableCell>
-                  <div className="grid gap-0.5">
-                    <span className="font-medium text-neutral-900">{item.productName}</span>
-                    <span className="text-[11px] text-neutral-500">{item.articleNumber}</span>
+                  <div className="flex items-center gap-3">
+                    <StoredImage path={item.thumbnailPath} className="h-10 w-10 rounded-md object-cover" />
+                    <div className="grid gap-0.5">
+                      <span className="font-medium text-neutral-900">{item.productName}</span>
+                      <span className="text-[11px] text-neutral-500">{item.articleNumber}</span>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{item.minimumStock}</TableCell>
