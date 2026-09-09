@@ -171,6 +171,9 @@ pub async fn update_user(
             "you cannot deactivate your own account".into(),
         ));
     }
+    if role_codes.as_deref().is_some_and(|codes| codes.is_empty()) {
+        return Err(AppError::Validation("at least one role is required".into()));
+    }
 
     let current = load_user(state, user_id).await?;
     let full_name = match &full_name {

@@ -282,11 +282,25 @@ pub async fn unlock_session(
     session_id: &str,
     password: &str,
 ) -> Result<(), AppError> {
-    let principal = resolve_session(state, session_id).await?;
-    let stored: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
-        .bind(principal.user_id)
-        .fetch_one(&state.pool)
-        .await?;
+    // Unlock must NOT go through `resolve_session`: that gate rejects locked
+    // sessions. Read the session directly and verify the user is still usable.
+    let session = state
+        .sessions
+        .get(session_id)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("session is not active".into()))?;
+    if !session.active {
+        return Err(AppError::Unauthorized("session is not active".into()));
+    }
+
+    let (stored, is_active): (String, i64) =
+        sqlx::query_as("SELECT password_hash, is_active FROM users WHERE id = ?")
+            .bind(session.user_id)
+            .fetch_one(&state.pool)
+            .await?;
+    if is_active == 0 {
+        return Err(AppError::Unauthorized("user is deactivated".into()));
+    }
     if !password::verify_password(password, &stored) {
         return Err(AppError::InvalidCredentials);
     }
@@ -294,7 +308,7 @@ pub async fn unlock_session(
     state
         .audits
         .record_pool(crate::infrastructure::AuditInput {
-            user_id: Some(principal.user_id),
+            user_id: Some(session.user_id),
             session_id: Some(session_id.to_string()),
             action: "auth.unlock".into(),
             entity_type: Some("session".into()),
@@ -474,6 +488,35 @@ mod tests {
         state.sessions.lock(&session.id).await.unwrap();
         let err = resolve_session(&state, &session.id).await.unwrap_err();
         assert!(matches!(err, AppError::SessionLocked(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn locked_session_unlocks_only_with_correct_password() {
+        let dir = std::env::temp_dir().join("furniture-shop-auth-unlock");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = crate::infrastructure::FilePaths::init(&dir).unwrap();
+        let (pool, _) = crate::infrastructure::db::open(&paths).await.unwrap();
+        let state = AppState::new(pool, paths);
+
+        let user_id = seed_owner(&state).await;
+        let session = state.sessions.create(user_id).await.unwrap();
+        state.sessions.lock(&session.id).await.unwrap();
+
+        let err = unlock_session(&state, &session.id, "wrong-pass")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidCredentials));
+        assert!(matches!(
+            resolve_session(&state, &session.id).await.unwrap_err(),
+            AppError::SessionLocked(_)
+        ));
+
+        unlock_session(&state, &session.id, "Owner Pass 123")
+            .await
+            .unwrap();
+        assert!(resolve_session(&state, &session.id).await.is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -39,6 +39,25 @@ type AuditQueryRow = (
     String,
 );
 
+/// Normalize a date filter bound. A bare wall-clock date (`YYYY-MM-DD`, as
+/// picked by the audit viewer) is expanded to a full RFC3339 instant covering
+/// that whole day; anything else passes through unchanged.
+fn normalize_bound(value: &str, end_of_day: bool) -> Option<String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    if v.len() == 10 && v.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        let suffix = if end_of_day {
+            "T23:59:59.999Z"
+        } else {
+            "T00:00:00.000Z"
+        };
+        return Some(format!("{v}{suffix}"));
+    }
+    Some(v.to_string())
+}
+
 /// Read-only, filtered view of the audit trail. Requires `audit.view`.
 pub async fn query_audit(
     state: &AppState,
@@ -48,6 +67,8 @@ pub async fn query_audit(
     principal.require("audit.view")?;
     let limit = i64::from(filter.limit.clamp(1, 500));
     let offset = i64::from(filter.offset);
+    let from = normalize_bound(filter.from.as_deref().unwrap_or(""), false);
+    let to = normalize_bound(filter.to.as_deref().unwrap_or(""), true);
 
     let count_sql = format!("SELECT COUNT(*) FROM audit_logs {FILTER_CLAUSE}");
     let total: i64 = sqlx::query_scalar::<_, i64>(&count_sql)
@@ -57,10 +78,10 @@ pub async fn query_audit(
         .bind(filter.entity_type.clone())
         .bind(filter.user_id)
         .bind(filter.user_id)
-        .bind(filter.from.clone())
-        .bind(filter.from.clone())
-        .bind(filter.to.clone())
-        .bind(filter.to.clone())
+        .bind(from.clone())
+        .bind(from.clone())
+        .bind(to.clone())
+        .bind(to.clone())
         .fetch_one(&state.pool)
         .await?;
 
@@ -78,10 +99,10 @@ pub async fn query_audit(
         .bind(filter.entity_type.clone())
         .bind(filter.user_id)
         .bind(filter.user_id)
-        .bind(filter.from.clone())
-        .bind(filter.from.clone())
-        .bind(filter.to.clone())
-        .bind(filter.to.clone())
+        .bind(from.clone())
+        .bind(from.clone())
+        .bind(to.clone())
+        .bind(to.clone())
         .bind(limit)
         .bind(offset)
         .fetch_all(&state.pool)
@@ -127,4 +148,27 @@ pub async fn query_audit(
         .collect();
 
     Ok(AuditPageDto { total, items })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_bounds_expand_to_full_day() {
+        assert_eq!(
+            normalize_bound("2026-09-08", false),
+            Some("2026-09-08T00:00:00.000Z".into())
+        );
+        assert_eq!(
+            normalize_bound("2026-09-08", true),
+            Some("2026-09-08T23:59:59.999Z".into())
+        );
+        assert_eq!(
+            normalize_bound("2026-09-08T09:30:00.000Z", false),
+            Some("2026-09-08T09:30:00.000Z".into())
+        );
+        assert_eq!(normalize_bound("", false), None);
+        assert_eq!(normalize_bound("   ", true), None);
+    }
 }

@@ -4,6 +4,7 @@ export type CommandError = {
   code: string;
   message: string;
   correlationId?: string;
+  retryAfterSecs?: number;
   fieldErrors?: Record<string, string>;
 };
 
@@ -15,6 +16,11 @@ function toCommandError(e: unknown): CommandError {
     code: "INTERNAL",
     message: typeof e === "string" ? e : "Unexpected error",
   };
+}
+
+/** Normalize an unknown thrown value (e.g. from a TanStack Query error) into a CommandError. */
+export function asCommandError(e: unknown): CommandError {
+  return toCommandError(e);
 }
 
 export async function runCommand<T>(
