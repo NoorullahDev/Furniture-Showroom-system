@@ -7,6 +7,7 @@ use crate::infrastructure::redact;
 pub mod catalogue;
 pub mod inventory;
 pub mod purchases;
+pub mod receivables;
 pub mod sales;
 
 #[derive(Debug, Serialize)]

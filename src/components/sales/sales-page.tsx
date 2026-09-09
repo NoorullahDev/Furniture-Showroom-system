@@ -6,6 +6,7 @@ import {
   Banknote,
   CheckCircle2,
   ClipboardList,
+  Copy,
   FileText,
   Layers,
   Loader2,
@@ -15,6 +16,7 @@ import {
   Printer,
   Search,
   ShoppingCart,
+  TriangleAlert,
   UserPlus,
   X,
 } from "lucide-react";
@@ -62,12 +64,16 @@ import {
   customerList,
   customerReceiptCreate,
   customerReceiptList,
+  customerReceiptPdf,
+  customerReceiptPreview,
   customerReceiptVoid,
+  customerStatement,
   customerUpdate,
   locationList,
   paymentMethodList,
   productList,
   proofOpenPath,
+  receivables,
   saleCancel,
   saleConfirm,
   saleCreate,
@@ -82,9 +88,15 @@ import {
   type CustomerInput,
   type CustomerLedgerEntryDto,
   type CustomerPaymentDto,
+  type CustomerReceiptAllocationInput,
+  type CustomerStatementDto,
   type LocationDto,
   type PaymentMethodDto,
   type ProductListItemDto,
+  type ReceiptPreviewDto,
+  type ReceivableCustomerDto,
+  type ReceivableSaleDto,
+  type ReceivablesDto,
   type SaleDto,
   type StockBalanceDto,
 } from "@/lib/tauri/api";
@@ -92,7 +104,7 @@ import { formatDateTime, formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
 
-type SalesTab = "pos" | "sales" | "customers" | "sets";
+type SalesTab = "pos" | "sales" | "customers" | "sets" | "due";
 
 type CartLine = {
   key: string;
@@ -119,6 +131,51 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isoDate(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function saleReminderText(s: ReceivableSaleDto): string {
+  const invoice = s.saleNumber ?? `#${s.saleId}`;
+  const due = s.dueDate ?? s.saleDate;
+  return `Dear ${s.customerName}, a friendly reminder that invoice ${invoice} dated ${s.saleDate} (due ${due}) still has ${formatPkr(s.dueMinor)} outstanding against a total of ${formatPkr(s.totalMinor)}. Please arrange payment at your earliest convenience. Thank you.`;
+}
+
+function customerReminderText(c: ReceivableCustomerDto): string {
+  const overdue = c.overdueMinorTotal > 0 ? `, of which ${formatPkr(c.overdueMinorTotal)} is overdue` : "";
+  return `Dear ${c.customerName}, a friendly reminder that your account currently shows ${formatPkr(c.balanceMinor)} outstanding${overdue}. Please arrange payment at your earliest convenience. Thank you.`;
+}
+
+function statementReminderText(c: CustomerDto, closingMinor: number, asOf: string): string {
+  if (closingMinor <= 0) {
+    return `Dear ${c.name}, your account is fully settled as of ${asOf}. Thank you.`;
+  }
+  return `Dear ${c.name}, a statement as of ${asOf} shows a pending balance of ${formatPkr(closingMinor)}. Please arrange payment at your earliest convenience. Thank you.`;
+}
+
+function CopyReminderButton({ text, label = "Copy reminder" }: { text: string; label?: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = React.useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(text);
+      setCopied(true);
+      toast({ variant: "success", title: "Reminder copied" });
+    } catch {
+      toast({ variant: "error", title: "Could not copy the reminder" });
+    }
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={() => void copy()}>
+      <Copy className="mr-1 h-3.5 w-3.5" />
+      {copied ? "Copied" : label}
+    </Button>
+  );
+}
+
 export function SalesPage() {
   const { toast } = useToast();
   const { refresh, profile, hasPermission } = useSession();
@@ -134,6 +191,7 @@ export function SalesPage() {
   const canManageBundles = hasPermission("bundle.create");
   const canViewBundles = hasPermission("bundle.view");
   const canPrint = hasPermission("invoice.print");
+  const canReceive = hasPermission("payment.receive");
 
   const [view, setView] = React.useState<SalesTab>(() => (canSell ? "pos" : "sales"));
   const [dialog, setDialog] = React.useState<
@@ -293,6 +351,11 @@ export function SalesPage() {
         <TabButton active={view === "sets"} onClick={() => setView("sets")} icon={<Layers className="h-4 w-4" />}>
           Furniture sets
         </TabButton>
+        {canReceive && (
+          <TabButton active={view === "due"} onClick={() => setView("due")} icon={<TriangleAlert className="h-4 w-4" />}>
+            Due control
+          </TabButton>
+        )}
       </div>
 
       <div className="mt-5">
@@ -361,6 +424,7 @@ export function SalesPage() {
             }}
           />
         )}
+        {view === "due" && canReceive && <DueControlPanel session={session} onError={failed} />}
       </div>
 
       {dialog === "customer" && (
@@ -1037,6 +1101,39 @@ function PrintInvoiceButton({
   );
 }
 
+function PrintReceiptButton({
+  session,
+  paymentId,
+  className,
+  onError,
+}: {
+  session: string;
+  paymentId: number;
+  className?: string;
+  onError?: (e: Error) => void;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const pdf = await customerReceiptPdf(session, paymentId);
+      await proofOpenPath(pdf.reportPath);
+    } catch (e) {
+      toast({ variant: "error", title: "Could not generate receipt", description: commandErrorMessage(e) });
+      onError?.(e as Error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={() => void run()} disabled={busy} className={className}>
+      {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Printer className="mr-1 h-3.5 w-3.5" />}
+      Print
+    </Button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sales list
 // ---------------------------------------------------------------------------
@@ -1374,6 +1471,194 @@ function CustomersTable({
   );
 }
 
+function DueControlPanel({ session, onError }: { session: string; onError: (e: Error) => void }) {
+  const query = useQuery({
+    queryKey: ["selling", "receivables"],
+    queryFn: () => receivables(session),
+    enabled: !!session,
+  });
+  const data = (query.data ?? null) as ReceivablesDto | null;
+
+  React.useEffect(() => {
+    if (query.isError && query.error) onError(query.error as Error);
+  }, [query.isError, query.error, onError]);
+
+  if (query.isLoading) return <LoadingRow />;
+  if (!data) return <EmptyRow message="Could not load receivable data." />;
+
+  return (
+    <div className="grid gap-6">
+      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-rose-700">
+            <TriangleAlert className="h-4 w-4" /> Overdue
+          </h3>
+          <span className="text-xs text-neutral-500">{data.overdue.length} unpaid past due</span>
+        </div>
+        {data.overdue.length === 0 ? (
+          <EmptyRow message="No overdue invoices." />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Sale date</TableHead>
+                  <TableHead>Due date</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Due</TableHead>
+                  <TableHead className="text-right">Days</TableHead>
+                  <TableHead className="text-right">Reminder</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.overdue.map((s) => (
+                  <TableRow key={s.saleId}>
+                    <TableCell>{s.customerName}</TableCell>
+                    <TableCell className="font-medium text-neutral-900">{s.saleNumber ?? `#${s.saleId}`}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.saleDate}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.dueDate ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(s.totalMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(s.paidMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium text-rose-600">{formatPkr(s.dueMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{s.days}</TableCell>
+                    <TableCell className="text-right">
+                      <CopyReminderButton text={saleReminderText(s)} label="Copy" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
+          <h3 className="text-sm font-semibold text-neutral-900">Due in 7 days</h3>
+          <span className="text-xs text-neutral-500">{data.dueSoon.length} approaching</span>
+        </div>
+        {data.dueSoon.length === 0 ? (
+          <EmptyRow message="Nothing due in the next week." />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Sale date</TableHead>
+                  <TableHead>Due date</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Due</TableHead>
+                  <TableHead className="text-right">In days</TableHead>
+                  <TableHead className="text-right">Reminder</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.dueSoon.map((s) => (
+                  <TableRow key={s.saleId}>
+                    <TableCell>{s.customerName}</TableCell>
+                    <TableCell className="font-medium text-neutral-900">{s.saleNumber ?? `#${s.saleId}`}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.saleDate}</TableCell>
+                    <TableCell className="whitespace-nowrap">{s.dueDate ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(s.totalMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(s.paidMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(s.dueMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{s.days}</TableCell>
+                    <TableCell className="text-right">
+                      <CopyReminderButton text={saleReminderText(s)} label="Copy" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
+          <h3 className="text-sm font-semibold text-neutral-900">Highest balances</h3>
+          <span className="text-xs text-neutral-500">top {data.highBalance.length}</span>
+        </div>
+        {data.highBalance.length === 0 ? (
+          <EmptyRow message="No customer balances." />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="text-right">Overdue</TableHead>
+                  <TableHead className="text-right">Reminder</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.highBalance.map((c) => (
+                  <TableRow key={c.customerId}>
+                    <TableCell className="font-medium text-neutral-900">{c.customerName}</TableCell>
+                    <TableCell>{c.phone ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums text-rose-600">{formatPkr(c.balanceMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(c.overdueMinorTotal)}</TableCell>
+                    <TableCell className="text-right">
+                      <CopyReminderButton text={customerReminderText(c)} label="Copy" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+
+      <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
+          <h3 className="text-sm font-semibold text-amber-700">Credit limit exceptions</h3>
+          <span className="text-xs text-neutral-500">{data.creditLimitExceptions.length} over limit</span>
+        </div>
+        {data.creditLimitExceptions.length === 0 ? (
+          <EmptyRow message="No customer is over their credit limit." />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead className="text-right">Limit</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead className="text-right">Over</TableHead>
+                  <TableHead className="text-right">Reminder</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.creditLimitExceptions.map((c) => (
+                  <TableRow key={c.customerId}>
+                    <TableCell className="font-medium text-neutral-900">{c.customerName}</TableCell>
+                    <TableCell>{c.phone ?? "—"}</TableCell>
+                    <TableCell className="text-right tabular-nums">{formatPkr(c.creditLimitMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums text-rose-600">{formatPkr(c.balanceMinor)}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium text-amber-700">{formatPkr(Math.max(0, c.balanceMinor - c.creditLimitMinor))}</TableCell>
+                    <TableCell className="text-right">
+                      <CopyReminderButton text={customerReminderText(c)} label="Copy" />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function CustomerDialog({
   session,
   customer,
@@ -1393,6 +1678,7 @@ function CustomerDialog({
   const [email, setEmail] = React.useState(customer?.email ?? "");
   const [address, setAddress] = React.useState(customer?.address ?? "");
   const [creditLimit, setCreditLimit] = React.useState(customer?.creditLimitMinor ?? 0);
+  const [creditDays, setCreditDays] = React.useState(customer?.creditDays ?? 30);
   const [openingBalance, setOpeningBalance] = React.useState(customer?.openingBalanceMinor ?? 0);
   const [isActive, setIsActive] = React.useState(customer?.isActive ?? true);
 
@@ -1405,6 +1691,7 @@ function CustomerDialog({
         email: email.trim() || null,
         address: address.trim() || null,
         creditLimitMinor: creditLimit,
+        creditDays: creditDays < 0 ? 0 : creditDays,
       };
       if (customer) {
         return customerUpdate(session, customer.id, { ...input, isActive });
@@ -1454,6 +1741,17 @@ function CustomerDialog({
           <Label>Credit limit</Label>
           <MoneyInput value={creditLimit} onCommit={(v) => setCreditLimit(v < 0 ? 0 : v)} placeholder="0.00" />
         </div>
+        <div className="grid gap-1.5">
+          <Label>Credit terms (days)</Label>
+          <Input
+            type="number"
+            min={0}
+            step={1}
+            value={creditDays}
+            onChange={(e) => setCreditDays(Number.isFinite(Number(e.target.value)) ? Math.max(0, Math.floor(Number(e.target.value))) : 30)}
+            inputMode="numeric"
+          />
+        </div>
         {!customer && (
           <div className="grid gap-1.5">
             <Label>Opening balance</Label>
@@ -1496,8 +1794,12 @@ function LedgerDialog({
   const queryClient = useQueryClient();
   const { hasPermission } = useSession();
   const canReceive = hasPermission("payment.receive");
-  const [section, setSection] = React.useState<"ledger" | "receipts">("ledger");
+  const [section, setSection] = React.useState<"ledger" | "receipts" | "statement">("ledger");
   const [mode, setMode] = React.useState<LedgerMode>({ tab: "view" });
+  const [statementRange, setStatementRange] = React.useState<{ from: string; to: string }>(() => {
+    const now = new Date();
+    return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDate(now) };
+  });
 
   const ledgerQuery = useQuery({
     queryKey: ["selling", "ledger", customer.id],
@@ -1509,9 +1811,20 @@ function LedgerDialog({
     queryFn: () => customerReceiptList(session, customer.id),
     enabled: !!session,
   });
+  const statementQuery = useQuery({
+    queryKey: ["selling", "statement", customer.id, statementRange.from, statementRange.to],
+    queryFn: () =>
+      customerStatement(session, {
+        customerId: customer.id,
+        fromDate: statementRange.from,
+        toDate: statementRange.to,
+      }),
+    enabled: !!session && statementRange.from.length > 0 && statementRange.to.length > 0 && statementRange.from <= statementRange.to,
+  });
 
   const ledger = (ledgerQuery.data ?? []) as CustomerLedgerEntryDto[];
   const receipts = (receiptsQuery.data ?? []) as CustomerPaymentDto[];
+  const statement = (statementQuery.data ?? null) as CustomerStatementDto | null;
 
   const afterLedgerChange = (message: string) => {
     void queryClient.invalidateQueries({ queryKey: ["selling"] });
@@ -1571,6 +1884,9 @@ function LedgerDialog({
           </TabButton>
           <TabButton active={section === "receipts"} onClick={() => setSection("receipts")} icon={<Banknote className="h-4 w-4" />}>
             Receipts
+          </TabButton>
+          <TabButton active={section === "statement"} onClick={() => setSection("statement")} icon={<ClipboardList className="h-4 w-4" />}>
+            Statement
           </TabButton>
           {canReceive && (
             <Button
@@ -1653,20 +1969,100 @@ function LedgerDialog({
                         </TableCell>
                         <TableCell className="text-right">
                           {canReceive && p.status === "posted" && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-rose-600"
-                              onClick={() => setMode({ tab: "void", payment: p })}
-                            >
-                              Void
-                            </Button>
+                            <div className="flex items-center justify-end gap-2">
+                              <PrintReceiptButton session={session} paymentId={p.id} onError={onError} />
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-rose-600"
+                                onClick={() => setMode({ tab: "void", payment: p })}
+                              >
+                                Void
+                              </Button>
+                            </div>
                           )}
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+              )}
+            </>
+          )}
+        {section === "statement" && (
+            <>
+              <div className="flex flex-wrap items-end gap-2 pb-2">
+                <div className="grid gap-1">
+                  <Label className="text-[11px]">From</Label>
+                  <Input type="date" value={statementRange.from} onChange={(e) => setStatementRange({ ...statementRange, from: e.target.value })} />
+                </div>
+                <div className="grid gap-1">
+                  <Label className="text-[11px]">To</Label>
+                  <Input type="date" value={statementRange.to} onChange={(e) => setStatementRange({ ...statementRange, to: e.target.value })} />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setSection("ledger")}
+                >
+                  View full ledger
+                </Button>
+              </div>
+              {statementQuery.isLoading ? (
+                <LoadingRow />
+              ) : !statement ? (
+                <EmptyRow message="No statement for this range." />
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-2 rounded-md bg-neutral-50 p-3 text-sm">
+                    <div>
+                      <p className="text-[11px] text-neutral-500">Opening</p>
+                      <p className="font-medium tabular-nums">{formatPkr(statement.openingBalanceMinor)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-neutral-500">Movement</p>
+                      <p className="font-medium tabular-nums">{formatPkr(statement.closingBalanceMinor - statement.openingBalanceMinor)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[11px] text-neutral-500">Closing</p>
+                      <p className="font-medium tabular-nums text-forest-700">{formatPkr(Math.max(0, statement.closingBalanceMinor))}</p>
+                    </div>
+                  </div>
+                  {statement.entries.length === 0 ? (
+                    <EmptyRow message="No entries in this range." />
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                          <TableHead className="text-right">Balance</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {statement.entries.map((e) => (
+                          <TableRow key={e.id}>
+                            <TableCell className="whitespace-nowrap">{formatDateTime(e.createdAt)}</TableCell>
+                            <TableCell>
+                              <p className="text-sm text-neutral-900">{SALES_LEDGER_LABELS[e.entryType] ?? e.entryType}</p>
+                              {e.notes && <p className="text-[11px] text-neutral-500">{e.notes}</p>}
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">{formatPkr(e.amountMinor)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{formatPkr(e.balanceAfterMinor)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                  <div className="flex justify-end pt-2">
+                    <CopyReminderButton
+                      text={statementReminderText(customer, Math.max(0, statement.closingBalanceMinor), statementRange.to)}
+                      label="Copy reminder"
+                    />
+                  </div>
+                </>
               )}
             </>
           )}
@@ -1699,6 +2095,7 @@ function RecordReceiptDialog({
   const [accountId, setAccountId] = React.useState<number | null>(null);
   const [paymentDate, setPaymentDate] = React.useState(todayIso());
   const [notes, setNotes] = React.useState("");
+  const [allocations, setAllocations] = React.useState<CustomerReceiptAllocationInput[]>([]);
 
   const methodsQuery = useQuery({
     queryKey: ["selling", "payment-methods"],
@@ -1710,6 +2107,33 @@ function RecordReceiptDialog({
     queryFn: () => cashAccountList(session),
     enabled: !!session,
   });
+  const previewQuery = useQuery({
+    queryKey: ["selling", "receipt-preview", customer.id, amount],
+    queryFn: () => customerReceiptPreview(session, { customerId: customer.id, amountMinor: amount }),
+    enabled: amount > 0,
+  });
+
+  React.useEffect(() => {
+    if (previewQuery.data) {
+      setAllocations(previewQuery.data.allocations.map((a) => ({ saleId: a.saleId, amountMinor: a.allocatedMinor })));
+    }
+  }, [previewQuery.data]);
+
+  const previewData = (previewQuery.data ?? null) as ReceiptPreviewDto | null;
+  const dueMap = React.useMemo(() => {
+    const m = new Map<number, number>();
+    for (const a of previewData?.allocations ?? []) m.set(a.saleId, a.dueMinor);
+    return m;
+  }, [previewData]);
+  const allocMap = React.useMemo(() => {
+    const m = new Map<number, number>();
+    for (const a of allocations) m.set(a.saleId, a.amountMinor);
+    return m;
+  }, [allocations]);
+  const submitAllocations: CustomerReceiptAllocationInput[] | null =
+    previewData?.allocations.map((a) => ({ saleId: a.saleId, amountMinor: allocMap.get(a.saleId) ?? a.allocatedMinor })) ?? null;
+  const allocatedSum = (submitAllocations ?? []).reduce((s, a) => s + Math.max(0, a.amountMinor), 0);
+  const overDue = (submitAllocations ?? []).some((a) => a.amountMinor > (dueMap.get(a.saleId) ?? 0));
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -1720,13 +2144,25 @@ function RecordReceiptDialog({
         paymentDate,
         amountMinor: amount,
         notes: notes.trim() || null,
+        allocations: submitAllocations ?? [],
         idempotencyKey: `receipt-${customer.id}-${Date.now()}`,
       }),
     onSuccess: onDone,
     onError,
   });
 
-  const valid = amount > 0 && methodId !== null && accountId !== null && paymentDate.length > 0;
+  const previewReady = amount > 0 && previewQuery.isSuccess && !previewQuery.isFetching;
+  const valid =
+    amount > 0 &&
+    methodId !== null &&
+    accountId !== null &&
+    paymentDate.length > 0 &&
+    previewReady &&
+    allocatedSum <= amount &&
+    !overDue;
+
+  const setAllocation = (saleId: number, v: number) =>
+    setAllocations((prev) => [...prev.filter((x) => x.saleId !== saleId), { saleId, amountMinor: v }]);
 
   return (
     <FormDialog
@@ -1742,6 +2178,54 @@ function RecordReceiptDialog({
         <Label>Amount</Label>
         <MoneyInput value={amount} onCommit={(v) => setAmount(v < 0 ? 0 : v)} placeholder="0.00" />
       </div>
+      {amount > 0 && (previewQuery.isPending || previewQuery.isFetching) ? (
+        <div className="flex items-center gap-2 text-sm text-neutral-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Calculating allocation…
+        </div>
+      ) : null}
+      {amount > 0 && previewQuery.isError ? (
+        <p className="text-xs text-rose-600">Could not preview allocation. Please try again.</p>
+      ) : null}
+      {previewReady ? (
+        <div className="overflow-hidden rounded-md border border-neutral-200">
+          <div className="border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium text-neutral-600">
+            Apply to open invoices
+          </div>
+          <div className="divide-y divide-neutral-100">
+            {previewData!.allocations.length === 0 ? (
+              <p className="px-3 py-2 text-sm text-neutral-500">No open invoices — the full amount will be held as advance.</p>
+            ) : (
+              previewData!.allocations.map((a) => (
+                <div key={a.saleId} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-neutral-900">{a.saleNumber ?? `Invoice #${a.saleId}`}</p>
+                    <p className="text-[11px] text-neutral-500">Due {formatPkr(a.dueMinor)}</p>
+                  </div>
+                  <MoneyInput
+                    className="w-32"
+                    value={allocMap.get(a.saleId) ?? a.allocatedMinor}
+                    onCommit={(v) => setAllocation(a.saleId, v)}
+                  />
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex items-center justify-between border-t border-neutral-200 px-3 py-2 text-sm">
+            <span className="text-neutral-500">Applied to invoices</span>
+            <span className="font-medium tabular-nums">{formatPkr(Math.min(allocatedSum, amount))}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2 text-sm">
+            <span className="text-neutral-500">Advances</span>
+            <span className="font-medium tabular-nums text-forest-700">{formatPkr(Math.max(0, amount - allocatedSum))}</span>
+          </div>
+          {overDue ? (
+            <p className="px-3 pb-2 text-xs text-rose-600">One or more lines exceed the amount due on that invoice.</p>
+          ) : allocatedSum > amount ? (
+            <p className="px-3 pb-2 text-xs text-rose-600">Allocations exceed the receipt amount.</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
           <Label>Payment method</Label>

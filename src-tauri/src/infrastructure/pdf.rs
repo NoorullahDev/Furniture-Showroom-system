@@ -43,6 +43,31 @@ pub struct InvoiceRecord {
     pub due_minor: i64,
 }
 
+pub struct ReceiptPdf {
+    pub path: String,
+    pub pages: usize,
+    pub bytes: u64,
+}
+
+pub struct ReceiptAllocationLine {
+    pub sale_id: i64,
+    pub sale_number: Option<String>,
+    pub amount_minor: i64,
+}
+
+pub struct ReceiptRecord {
+    pub receipt_number: String,
+    pub payment_date: String,
+    pub customer_name: String,
+    pub method: String,
+    pub cash_account: String,
+    pub amount_minor: i64,
+    pub advance_minor: i64,
+    pub allocations: Vec<ReceiptAllocationLine>,
+    pub shop_name: String,
+    pub shop_address: Option<String>,
+}
+
 fn format_pkr(minor: i64) -> String {
     let major = minor.div_euclid(100);
     let paisa = (minor % 100).abs();
@@ -194,6 +219,130 @@ pub fn generate_invoice_pdf(
     let bytes = fs::metadata(&path)?.len();
 
     Ok(InvoicePdf {
+        pages: 1,
+        bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Generates a payment receipt PDF, mirroring the invoice layout so customer
+/// documents share the same visual identity.
+pub fn generate_receipt_pdf(
+    reports_dir: &Path,
+    record: &ReceiptRecord,
+) -> Result<ReceiptPdf, AppError> {
+    let (doc, page1, layer1) = PdfDocument::new(&record.shop_name, Mm(210.0), Mm(297.0), "Receipt");
+
+    let helvetica = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    let helvetica_bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+
+    let layer = doc.get_page(page1).get_layer(layer1);
+
+    layer.use_text(
+        &record.shop_name,
+        18.0,
+        Mm(20.0),
+        Mm(272.0),
+        &helvetica_bold,
+    );
+    if let Some(address) = &record.shop_address {
+        layer.use_text(address, 9.0, Mm(20.0), Mm(264.0), &helvetica);
+    }
+    layer.use_text(
+        "PAYMENT RECEIPT",
+        14.0,
+        Mm(150.0),
+        Mm(272.0),
+        &helvetica_bold,
+    );
+
+    let header = [
+        ("Receipt No.", record.receipt_number.as_str()),
+        ("Date", record.payment_date.as_str()),
+        ("Customer", record.customer_name.as_str()),
+        ("Payment Method", record.method.as_str()),
+        ("Cash Account", record.cash_account.as_str()),
+    ];
+    let mut y: f32 = 246.0;
+    for (label, value) in header {
+        layer.use_text(label, 10.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(value, 10.0, Mm(80.0), Mm(y), &helvetica_bold);
+        y -= 11.0;
+    }
+
+    y -= 5.0;
+    layer.use_text("Invoice", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
+    layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    y -= 10.0;
+
+    for line in &record.allocations {
+        match &line.sale_number {
+            Some(number) => {
+                layer.use_text(number, 10.0, Mm(20.0), Mm(y), &helvetica);
+            }
+            None => layer.use_text(
+                format!("sale #{}", line.sale_id),
+                10.0,
+                Mm(20.0),
+                Mm(y),
+                &helvetica,
+            ),
+        }
+        layer.use_text(
+            format_pkr(line.amount_minor),
+            10.0,
+            Mm(178.0),
+            Mm(y),
+            &helvetica,
+        );
+        y -= 10.0;
+    }
+
+    let allocated_minor = record.amount_minor - record.advance_minor;
+    let summary = [
+        ("Amount Received", format_pkr(record.amount_minor)),
+        ("Applied to Invoices", format_pkr(allocated_minor)),
+        ("Advance", format_pkr(record.advance_minor)),
+        (
+            "Balance Due",
+            format_pkr(record.amount_minor - allocated_minor - record.advance_minor),
+        ),
+    ];
+    for (label, value) in summary {
+        y -= 2.0;
+        layer.use_text(label, 10.0, Mm(150.0), Mm(y), &helvetica);
+        layer.use_text(&value, 10.0, Mm(178.0), Mm(y), &helvetica);
+    }
+
+    layer.use_text(
+        "Thank you for your payment!",
+        9.0,
+        Mm(20.0),
+        Mm(30.0),
+        &helvetica,
+    );
+    layer.use_text(
+        format!("Powered by {}", record.shop_name),
+        8.0,
+        Mm(20.0),
+        Mm(22.0),
+        &helvetica,
+    );
+
+    let filename = format!("receipt-{}.pdf", uuid::Uuid::now_v7());
+    let path = reports_dir.join(filename);
+    let mut out = BufWriter::new(fs::File::create(&path)?);
+    doc.save(&mut out)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    out.flush()?;
+
+    let bytes = fs::metadata(&path)?.len();
+
+    Ok(ReceiptPdf {
         pages: 1,
         bytes,
         path: path.to_string_lossy().into_owned(),

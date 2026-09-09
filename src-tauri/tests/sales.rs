@@ -254,6 +254,7 @@ async fn create_customer(state: &AppState, owner: &Principal, code: &str) -> i64
             email: None,
             address: None,
             credit_limit_minor: Some(200_000),
+            credit_days: None,
             opening_balance_minor: Some(0),
             is_active: Some(true),
         },
@@ -465,6 +466,7 @@ async fn credit_sale_receipt_allocation_cancellation_keeps_ledger_consistent() {
             amount_minor: 20_000,
             notes: None,
             idempotency_key: Some("rc-cash".into()),
+            allocations: None,
         },
         "corr-3",
     )
@@ -767,6 +769,7 @@ async fn an_advance_receipt_is_consumed_when_a_later_sale_confirms() {
             amount_minor: 5_000,
             notes: Some("advance".into()),
             idempotency_key: Some("rc-adv".into()),
+            allocations: None,
         },
         "corr-1",
     )
@@ -952,6 +955,7 @@ async fn customer_update_persists_credit_limit() {
             email: None,
             address: None,
             credit_limit_minor: Some(500_000),
+            credit_days: None,
             opening_balance_minor: Some(0),
             is_active: Some(true),
         },

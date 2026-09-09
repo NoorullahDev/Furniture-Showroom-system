@@ -1068,6 +1068,7 @@ export type CustomerDto = {
   email?: string | null;
   address?: string | null;
   creditLimitMinor: number;
+  creditDays: number;
   openingBalanceMinor: number;
   balanceMinor: number;
   advanceMinor: number;
@@ -1082,6 +1083,7 @@ export type CustomerInput = {
   email?: string | null;
   address?: string | null;
   creditLimitMinor?: number | null;
+  creditDays?: number | null;
   openingBalanceMinor?: number | null;
   isActive?: boolean | null;
 };
@@ -1226,6 +1228,11 @@ export type SaleCancelInput = {
   reason?: string | null;
 };
 
+export type CustomerReceiptAllocationInput = {
+  saleId: number;
+  amountMinor: number;
+};
+
 export type CustomerReceiptInput = {
   customerId: number;
   paymentMethodId: number;
@@ -1234,6 +1241,7 @@ export type CustomerReceiptInput = {
   amountMinor: number;
   notes?: string | null;
   idempotencyKey?: string | null;
+  allocations?: CustomerReceiptAllocationInput[] | null;
 };
 
 export type SalePaymentAllocationDto = {
@@ -1326,3 +1334,87 @@ export const saleGet = (session: string, saleId: number) =>
 
 export const saleInvoicePdf = (session: string, saleId: number) =>
   runCommand<PdfResult>("sale_invoice_pdf", { session, saleId });
+
+// Phase 7 — Customer statements, receipt allocation preview, due control
+// ---------------------------------------------------------------------------
+
+export type CustomerStatementInput = {
+  customerId: number;
+  fromDate: string;
+  toDate: string;
+};
+
+export type CustomerStatementDto = {
+  customerId: number;
+  customerName: string;
+  fromDate: string;
+  toDate: string;
+  openingBalanceMinor: number;
+  closingBalanceMinor: number;
+  entries: CustomerLedgerEntryDto[];
+};
+
+export type CustomerReceiptPreviewInput = {
+  customerId: number;
+  amountMinor: number;
+};
+
+export type ReceiptAllocationPreviewDto = {
+  saleId: number;
+  saleNumber?: string | null;
+  saleDate: string;
+  dueDate?: string | null;
+  totalMinor: number;
+  dueMinor: number;
+  allocatedMinor: number;
+};
+
+export type ReceiptPreviewDto = {
+  customerId: number;
+  customerName: string;
+  amountMinor: number;
+  allocations: ReceiptAllocationPreviewDto[];
+  advanceMinor: number;
+};
+
+export type ReceivableSaleDto = {
+  saleId: number;
+  saleNumber?: string | null;
+  customerId: number;
+  customerName: string;
+  saleDate: string;
+  dueDate?: string | null;
+  totalMinor: number;
+  paidMinor: number;
+  advanceUsedMinor: number;
+  dueMinor: number;
+  days: number;
+};
+
+export type ReceivableCustomerDto = {
+  customerId: number;
+  customerName: string;
+  phone?: string | null;
+  balanceMinor: number;
+  creditLimitMinor: number;
+  dueMinorTotal: number;
+  overdueMinorTotal: number;
+};
+
+export type ReceivablesDto = {
+  overdue: ReceivableSaleDto[];
+  dueSoon: ReceivableSaleDto[];
+  highBalance: ReceivableCustomerDto[];
+  creditLimitExceptions: ReceivableCustomerDto[];
+};
+
+export const customerStatement = (session: string, input: CustomerStatementInput) =>
+  runCommand<CustomerStatementDto>("customer_statement", { session, input });
+
+export const customerReceiptPreview = (session: string, input: CustomerReceiptPreviewInput) =>
+  runCommand<ReceiptPreviewDto>("customer_receipt_preview", { session, input });
+
+export const customerReceiptPdf = (session: string, paymentId: number) =>
+  runCommand<PdfResult>("customer_receipt_pdf", { session, paymentId });
+
+export const receivables = (session: string) => runCommand<ReceivablesDto>("receivables", { session });

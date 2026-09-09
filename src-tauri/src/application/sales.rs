@@ -716,13 +716,33 @@ pub async fn confirm_sale(
 
                 let sale_number = next_document_number(&mut *tx, "sale").await?;
 
+                let sale_date = row.get::<String, _>(5);
+                let due_date = match customer_id {
+                    Some(cid) => {
+                        let credit_days: i64 = sqlx::query_scalar(
+                            "SELECT credit_days FROM customers WHERE id = ?",
+                        )
+                        .bind(cid)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        sqlx::query_scalar::<_, String>(
+                            "SELECT date(?1, '+' || ?2 || ' days')",
+                        )
+                        .bind(&sale_date)
+                        .bind(credit_days)
+                        .fetch_one(&mut *tx)
+                        .await?
+                    }
+                    None => sale_date.clone(),
+                };
+
                 sqlx::query(
                     "UPDATE sales
                         SET sale_number = ?, status = 'confirmed',
                             idempotency_key = ?,
                             subtotal_minor = ?, total_minor = ?,
                             paid_minor = ?, advance_used_minor = ?,
-                            due_minor = ?, cost_minor = ?,
+                            due_minor = ?, cost_minor = ?, due_date = ?,
                             confirmed_by = ?, confirmed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                       WHERE id = ?",
@@ -735,6 +755,7 @@ pub async fn confirm_sale(
                 .bind(advance)
                 .bind(total - paid - advance)
                 .bind(total_cost)
+                .bind(&due_date)
                 .bind(actor_id)
                 .bind(input.sale_id)
                 .execute(&mut *tx)

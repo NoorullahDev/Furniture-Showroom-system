@@ -95,7 +95,8 @@ pub(crate) async fn record_ledger(
 async fn customer_dto(state: &AppState, customer_id: i64) -> Result<CustomerDto, AppError> {
     let row = sqlx::query(
         "SELECT c.id, c.code, c.name, c.phone, c.email, c.address,
-                c.credit_limit_minor, c.is_active, c.created_at, c.opening_balance_minor
+                c.credit_limit_minor, c.credit_days, c.is_active, c.created_at,
+                c.opening_balance_minor
          FROM customers c WHERE c.id = ?",
     )
     .bind(customer_id)
@@ -115,11 +116,12 @@ async fn customer_dto(state: &AppState, customer_id: i64) -> Result<CustomerDto,
         email: row.try_get(4).ok(),
         address: row.try_get(5).ok(),
         credit_limit_minor: row.get(6),
-        is_active: row.get::<i64, _>(7) != 0,
-        created_at: row.get(8),
+        credit_days: row.get(7),
+        is_active: row.get::<i64, _>(8) != 0,
+        created_at: row.get(9),
         balance_minor: balance,
         advance_minor: advance,
-        opening_balance_minor: row.get::<i64, _>(9),
+        opening_balance_minor: row.get::<i64, _>(10),
     })
 }
 
@@ -148,6 +150,12 @@ pub async fn create(
     if credit_limit < 0 {
         return Err(AppError::Validation(
             "credit limit cannot be negative".into(),
+        ));
+    }
+    let credit_days = input.credit_days.unwrap_or(30);
+    if credit_days < 0 {
+        return Err(AppError::Validation(
+            "credit terms cannot be negative".into(),
         ));
     }
 
@@ -179,8 +187,8 @@ pub async fn create(
                 let id = sqlx::query(
                     "INSERT INTO customers
                        (code, name, phone, email, address,
-                        credit_limit_minor, opening_balance_minor, created_by)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        credit_limit_minor, credit_days, opening_balance_minor, created_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&code)
                 .bind(&name)
@@ -188,6 +196,7 @@ pub async fn create(
                 .bind(email.as_deref())
                 .bind(address.as_deref())
                 .bind(credit_limit)
+                .bind(credit_days)
                 .bind(opening)
                 .bind(actor_id)
                 .execute(&mut *tx)
@@ -251,6 +260,12 @@ pub async fn update(
             "credit limit cannot be negative".into(),
         ));
     }
+    let credit_days = input.credit_days.unwrap_or(30);
+    if credit_days < 0 {
+        return Err(AppError::Validation(
+            "credit terms cannot be negative".into(),
+        ));
+    }
 
     let actor_id = principal.user_id;
     let actor_session = principal.session_id.clone();
@@ -281,7 +296,7 @@ pub async fn update(
                 let updated = sqlx::query(
                     "UPDATE customers
                         SET code = ?, name = ?, phone = ?, email = ?, address = ?,
-                            credit_limit_minor = ?, is_active = ?,
+                            credit_limit_minor = ?, credit_days = ?, is_active = ?,
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                       WHERE id = ?",
                 )
@@ -291,6 +306,7 @@ pub async fn update(
                 .bind(email.as_deref())
                 .bind(address.as_deref())
                 .bind(credit_limit)
+                .bind(credit_days)
                 .bind(if is_active { 1 } else { 0 })
                 .bind(customer_id)
                 .execute(&mut *tx)
@@ -324,7 +340,8 @@ pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<Custome
     principal.require("customer.view")?;
     let rows = sqlx::query(
         "SELECT c.id, c.code, c.name, c.phone, c.email, c.address,
-                c.credit_limit_minor, c.is_active, c.created_at, c.opening_balance_minor,
+                c.credit_limit_minor, c.credit_days, c.is_active, c.created_at,
+                c.opening_balance_minor,
                 COALESCE((SELECT balance_after_minor FROM customer_ledger_entries e
                            WHERE e.customer_id = c.id ORDER BY id DESC LIMIT 1),
                          c.opening_balance_minor) AS balance_minor
@@ -335,7 +352,7 @@ pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<Custome
     Ok(rows
         .into_iter()
         .map(|r| {
-            let balance = r.get::<i64, _>(10);
+            let balance = r.get::<i64, _>(11);
             CustomerDto {
                 id: r.get(0),
                 code: r.get(1),
@@ -344,9 +361,10 @@ pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<Custome
                 email: r.try_get(4).ok(),
                 address: r.try_get(5).ok(),
                 credit_limit_minor: r.get(6),
-                is_active: r.get::<i64, _>(7) != 0,
-                created_at: r.get(8),
-                opening_balance_minor: r.get::<i64, _>(9),
+                credit_days: r.get(7),
+                is_active: r.get::<i64, _>(8) != 0,
+                created_at: r.get(9),
+                opening_balance_minor: r.get::<i64, _>(10),
                 balance_minor: balance,
                 advance_minor: i64::max(0, -balance),
             }
@@ -543,57 +561,134 @@ pub async fn create_receipt(
                 .await?
                 .last_insert_rowid();
 
-                let open: Vec<i64> = sqlx::query_scalar(
-                    "SELECT id FROM sales
-                     WHERE customer_id = ? AND status = 'confirmed' AND due_minor > 0
-                     ORDER BY confirmed_at ASC, id ASC",
-                )
-                .bind(input.customer_id)
-                .fetch_all(&mut *tx)
-                .await?;
-
-                let mut remaining = input.amount_minor;
-                for sale_id in open {
-                    if remaining <= 0 {
-                        break;
-                    }
-                    let due: i64 =
-                        sqlx::query_scalar("SELECT due_minor FROM sales WHERE id = ?")
-                            .bind(sale_id)
-                            .fetch_one(&mut *tx)
+                let advance = match input.allocations.as_ref() {
+                    Some(allocs) if !allocs.is_empty() => {
+                        let alloc_sum: i64 = allocs.iter().map(|a| a.amount_minor).sum();
+                        if alloc_sum > input.amount_minor {
+                            return Err(AppError::Validation(format!(
+                                "allocations {alloc_sum} exceed payment amount {}",
+                                input.amount_minor
+                            )));
+                        }
+                        let mut seen = std::collections::HashSet::new();
+                        for alloc in allocs {
+                            if alloc.amount_minor <= 0 {
+                                return Err(AppError::Validation(
+                                    "allocation amounts must be positive".into(),
+                                ));
+                            }
+                            if !seen.insert(alloc.sale_id) {
+                                return Err(AppError::Validation(format!(
+                                    "duplicate allocation for sale {}",
+                                    alloc.sale_id
+                                )));
+                            }
+                            let sale: Option<(i64, String, i64)> = sqlx::query_as(
+                                "SELECT customer_id, status, due_minor FROM sales WHERE id = ?",
+                            )
+                            .bind(alloc.sale_id)
+                            .fetch_optional(&mut *tx)
                             .await?;
-                    let alloc = std::cmp::min(due, remaining);
-                    sqlx::query(
-                        "UPDATE sales
-                            SET paid_minor = paid_minor + ?, due_minor = due_minor - ?,
-                                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                          WHERE id = ?",
-                    )
-                    .bind(alloc)
-                    .bind(alloc)
-                    .bind(sale_id)
-                    .execute(&mut *tx)
-                    .await?;
-                    sqlx::query(
-                        "INSERT INTO customer_payment_allocations (payment_id, sale_id, amount_minor)
-                         VALUES (?, ?, ?)",
-                    )
-                    .bind(pay_id)
-                    .bind(sale_id)
-                    .bind(alloc)
-                    .execute(&mut *tx)
-                    .await?;
-                    remaining -= alloc;
-                }
-                let advance = remaining;
+                            let Some((cid, status, due)) = sale else {
+                                return Err(AppError::NotFound(format!("sale {}", alloc.sale_id)));
+                            };
+                            if cid != input.customer_id {
+                                return Err(AppError::Validation(format!(
+                                    "sale {} does not belong to this customer",
+                                    alloc.sale_id
+                                )));
+                            }
+                            if status != "confirmed" {
+                                return Err(AppError::Conflict(format!(
+                                    "sale {} is not a confirmed invoice",
+                                    alloc.sale_id
+                                )));
+                            }
+                            if alloc.amount_minor > due {
+                                return Err(AppError::Validation(format!(
+                                    "allocation {} exceeds the due amount {due} on sale {}",
+                                    alloc.amount_minor, alloc.sale_id
+                                )));
+                            }
+                        }
+                        for alloc in allocs {
+                            sqlx::query(
+                                "UPDATE sales
+                                    SET paid_minor = paid_minor + ?, due_minor = due_minor - ?,
+                                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                                  WHERE id = ?",
+                            )
+                            .bind(alloc.amount_minor)
+                            .bind(alloc.amount_minor)
+                            .bind(alloc.sale_id)
+                            .execute(&mut *tx)
+                            .await?;
+                            sqlx::query(
+                                "INSERT INTO customer_payment_allocations
+                                   (payment_id, sale_id, amount_minor)
+                                 VALUES (?, ?, ?)",
+                            )
+                            .bind(pay_id)
+                            .bind(alloc.sale_id)
+                            .bind(alloc.amount_minor)
+                            .execute(&mut *tx)
+                            .await?;
+                        }
+                        input.amount_minor - alloc_sum
+                    }
+                    _ => {
+                        let open: Vec<i64> = sqlx::query_scalar(
+                            "SELECT id FROM sales
+                             WHERE customer_id = ? AND status = 'confirmed' AND due_minor > 0
+                             ORDER BY confirmed_at ASC, id ASC",
+                        )
+                        .bind(input.customer_id)
+                        .fetch_all(&mut *tx)
+                        .await?;
 
-                sqlx::query(
-                    "UPDATE customer_payments SET advance_alloc_minor = ? WHERE id = ?",
-                )
-                .bind(advance)
-                .bind(pay_id)
-                .execute(&mut *tx)
-                .await?;
+                        let mut remaining = input.amount_minor;
+                        for sale_id in open {
+                            if remaining <= 0 {
+                                break;
+                            }
+                            let due: i64 =
+                                sqlx::query_scalar("SELECT due_minor FROM sales WHERE id = ?")
+                                    .bind(sale_id)
+                                    .fetch_one(&mut *tx)
+                                    .await?;
+                            let alloc = std::cmp::min(due, remaining);
+                            sqlx::query(
+                                "UPDATE sales
+                                    SET paid_minor = paid_minor + ?, due_minor = due_minor - ?,
+                                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                                  WHERE id = ?",
+                            )
+                            .bind(alloc)
+                            .bind(alloc)
+                            .bind(sale_id)
+                            .execute(&mut *tx)
+                            .await?;
+                            sqlx::query(
+                                "INSERT INTO customer_payment_allocations
+                                   (payment_id, sale_id, amount_minor)
+                                 VALUES (?, ?, ?)",
+                            )
+                            .bind(pay_id)
+                            .bind(sale_id)
+                            .bind(alloc)
+                            .execute(&mut *tx)
+                            .await?;
+                            remaining -= alloc;
+                        }
+                        remaining
+                    }
+                };
+
+                sqlx::query("UPDATE customer_payments SET advance_alloc_minor = ? WHERE id = ?")
+                    .bind(advance)
+                    .bind(pay_id)
+                    .execute(&mut *tx)
+                    .await?;
 
                 record_cash_entry(
                     &mut *tx,

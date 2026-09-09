@@ -154,6 +154,10 @@ pub fn run() {
             commands::sales::sale_list,
             commands::sales::sale_get,
             commands::sales::sale_invoice_pdf,
+            commands::sales::customer_statement,
+            commands::sales::customer_receipt_preview,
+            commands::sales::customer_receipt_pdf,
+            commands::sales::receivables,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

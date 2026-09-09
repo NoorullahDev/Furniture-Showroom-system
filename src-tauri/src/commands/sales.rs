@@ -3,6 +3,10 @@ use tauri::State;
 use crate::application;
 use crate::commands::authenticated;
 use crate::commands::wrapper::{run_command, run_command_with_correlation};
+use crate::dto::receivables::{
+    CustomerReceiptPreviewInput, CustomerStatementDto, CustomerStatementInput, ReceiptPreviewDto,
+    ReceivablesDto,
+};
 use crate::dto::sales::{
     BundleAvailabilityDto, BundleDto, BundleInput, CustomerDto, CustomerInput,
     CustomerLedgerEntryDto, CustomerPaymentDto, CustomerPaymentVoidInput, CustomerReceiptInput,
@@ -273,6 +277,57 @@ pub async fn sale_invoice_pdf(
     run_command("sale_invoice_pdf", async move {
         let principal = authenticated(&state, &session).await?;
         application::sales::invoice_pdf(&state, &principal, sale_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn customer_statement(
+    state: State<'_, AppState>,
+    session: String,
+    input: CustomerStatementInput,
+) -> Result<CustomerStatementDto, AppErrorDto> {
+    run_command("customer_statement", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::receivables::customer_statement(&state, &principal, input).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn customer_receipt_preview(
+    state: State<'_, AppState>,
+    session: String,
+    input: CustomerReceiptPreviewInput,
+) -> Result<ReceiptPreviewDto, AppErrorDto> {
+    run_command("customer_receipt_preview", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::receivables::receipt_preview(&state, &principal, input).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn customer_receipt_pdf(
+    state: State<'_, AppState>,
+    session: String,
+    payment_id: i64,
+) -> Result<PdfResultDto, AppErrorDto> {
+    run_command("customer_receipt_pdf", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::receivables::customer_receipt_pdf(&state, &principal, payment_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn receivables(
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<ReceivablesDto, AppErrorDto> {
+    run_command("receivables", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::receivables::receivables(&state, &principal).await
     })
     .await
 }

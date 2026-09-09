@@ -10,6 +10,7 @@ pub struct CustomerDto {
     pub email: Option<String>,
     pub address: Option<String>,
     pub credit_limit_minor: i64,
+    pub credit_days: i64,
     pub opening_balance_minor: i64,
     pub balance_minor: i64,
     pub advance_minor: i64,
@@ -30,6 +31,8 @@ pub struct CustomerInput {
     pub address: Option<String>,
     #[serde(default)]
     pub credit_limit_minor: Option<i64>,
+    #[serde(default)]
+    pub credit_days: Option<i64>,
     #[serde(default)]
     pub opening_balance_minor: Option<i64>,
     #[serde(default)]
@@ -232,6 +235,18 @@ pub struct CustomerReceiptInput {
     pub notes: Option<String>,
     #[serde(default)]
     pub idempotency_key: Option<String>,
+    /// Explicit per-invoice allocations. When absent, the receipt applies the
+    /// payment oldest-first across open confirmed sales and the remainder
+    /// becomes an advance on the customer's account.
+    #[serde(default)]
+    pub allocations: Option<Vec<CustomerReceiptAllocationInput>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomerReceiptAllocationInput {
+    pub sale_id: i64,
+    pub amount_minor: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
