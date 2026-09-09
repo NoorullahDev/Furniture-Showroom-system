@@ -144,6 +144,12 @@ pub async fn create(
             "opening balance cannot be negative".into(),
         ));
     }
+    let credit_limit = input.credit_limit_minor.unwrap_or(0);
+    if credit_limit < 0 {
+        return Err(AppError::Validation(
+            "credit limit cannot be negative".into(),
+        ));
+    }
 
     let actor_id = principal.user_id;
     let actor_session = principal.session_id.clone();
@@ -181,7 +187,7 @@ pub async fn create(
                 .bind(phone.as_deref())
                 .bind(email.as_deref())
                 .bind(address.as_deref())
-                .bind(input.credit_limit_minor.unwrap_or(0))
+                .bind(credit_limit)
                 .bind(opening)
                 .bind(actor_id)
                 .execute(&mut *tx)
@@ -239,6 +245,12 @@ pub async fn update(
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("customer name is required".into()));
     }
+    let credit_limit = input.credit_limit_minor.unwrap_or(0);
+    if credit_limit < 0 {
+        return Err(AppError::Validation(
+            "credit limit cannot be negative".into(),
+        ));
+    }
 
     let actor_id = principal.user_id;
     let actor_session = principal.session_id.clone();
@@ -269,7 +281,8 @@ pub async fn update(
                 let updated = sqlx::query(
                     "UPDATE customers
                         SET code = ?, name = ?, phone = ?, email = ?, address = ?,
-                            is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                            credit_limit_minor = ?, is_active = ?,
+                            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                       WHERE id = ?",
                 )
                 .bind(&code)
@@ -277,6 +290,7 @@ pub async fn update(
                 .bind(phone.as_deref())
                 .bind(email.as_deref())
                 .bind(address.as_deref())
+                .bind(credit_limit)
                 .bind(if is_active { 1 } else { 0 })
                 .bind(customer_id)
                 .execute(&mut *tx)

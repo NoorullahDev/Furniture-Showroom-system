@@ -135,7 +135,7 @@ export function SalesPage() {
   const canViewBundles = hasPermission("bundle.view");
   const canPrint = hasPermission("invoice.print");
 
-  const [view, setView] = React.useState<SalesTab>("pos");
+  const [view, setView] = React.useState<SalesTab>(() => (canSell ? "pos" : "sales"));
   const [dialog, setDialog] = React.useState<
     | null
     | "customer"
@@ -170,7 +170,7 @@ export function SalesPage() {
   const salesQuery = useQuery({
     queryKey: ["selling", "sales"],
     queryFn: () => saleList(session),
-    enabled: !!session && canSell,
+    enabled: !!session && (canSell || canPrint),
   });
   const bundlesQuery = useQuery({
     queryKey: ["selling", "bundles"],
@@ -377,7 +377,6 @@ export function SalesPage() {
           session={session}
           customer={activeCustomer}
           onClose={() => setDialog(null)}
-          onDone={done("Receipt recorded")}
           onError={failed}
         />
       )}
@@ -1462,15 +1461,15 @@ function LedgerDialog({
   session,
   customer,
   onClose,
-  onDone,
   onError,
 }: {
   session: string;
   customer: CustomerDto;
   onClose: () => void;
-  onDone: () => void;
   onError: (e: Error) => void;
 }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { hasPermission } = useSession();
   const canReceive = hasPermission("payment.receive");
   const [section, setSection] = React.useState<"ledger" | "receipts">("ledger");
@@ -1490,16 +1489,21 @@ function LedgerDialog({
   const ledger = (ledgerQuery.data ?? []) as CustomerLedgerEntryDto[];
   const receipts = (receiptsQuery.data ?? []) as CustomerPaymentDto[];
 
+  const afterLedgerChange = (message: string) => {
+    void queryClient.invalidateQueries({ queryKey: ["selling"] });
+    void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+    void queryClient.invalidateQueries({ queryKey: ["catalogue"] });
+    toast({ variant: "success", title: message });
+    setMode({ tab: "view" });
+  };
+
   if (mode.tab === "receipt") {
     return (
       <RecordReceiptDialog
         session={session}
         customer={customer}
         onClose={() => setMode({ tab: "view" })}
-        onDone={() => {
-          setMode({ tab: "view" });
-          onDone();
-        }}
+        onDone={() => afterLedgerChange("Receipt recorded")}
         onError={onError}
       />
     );
@@ -1511,10 +1515,7 @@ function LedgerDialog({
         session={session}
         payment={mode.payment}
         onClose={() => setMode({ tab: "view" })}
-        onDone={() => {
-          setMode({ tab: "view" });
-          onDone();
-        }}
+        onDone={() => afterLedgerChange("Receipt voided")}
         onError={onError}
       />
     );

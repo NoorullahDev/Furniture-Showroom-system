@@ -36,6 +36,20 @@ impl Principal {
         }
     }
 
+    /// Pass if the caller holds at least one of the given permissions.
+    pub fn require_any(&self, permissions: &[&str]) -> Result<(), AppError> {
+        if permissions
+            .iter()
+            .any(|p| self.permissions.iter().any(|held| held == p))
+        {
+            Ok(())
+        } else {
+            Err(AppError::Unauthorized(format!(
+                "user lacks any of the permissions {permissions:?}"
+            )))
+        }
+    }
+
     pub fn is_owner(&self) -> bool {
         self.roles.iter().any(|r| r == "owner")
     }

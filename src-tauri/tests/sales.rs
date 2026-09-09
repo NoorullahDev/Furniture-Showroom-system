@@ -902,3 +902,64 @@ async fn confirmed_sale_generates_an_invoice_pdf() {
     assert!(std::path::Path::new(&pdf.report_path).exists());
     assert!(pdf.report_path.ends_with(".pdf"));
 }
+
+#[tokio::test]
+async fn sale_snapshots_the_selected_customer_name() {
+    let dir = temp_dir("cust-name");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "cust-name").await;
+    let product = stock_product(&state, &owner, "SALE-CN", 10, 1_000).await;
+    set_price(&state, product, 3_000).await;
+    let location = main_location(&state).await;
+    let customer = create_customer(&state, &owner, "CUST-NAME").await;
+
+    let sale = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: Some(customer),
+            kind: Some("sale".into()),
+            sale_date: Some("2026-09-05".into()),
+            discount_minor: Some(0),
+            delivery_charge_minor: Some(0),
+            notes: None,
+            items: vec![line(product, 1)],
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(sale.customer_name.as_deref(), Some("Customer CUST-NAME"));
+}
+
+#[tokio::test]
+async fn customer_update_persists_credit_limit() {
+    let dir = temp_dir("cust-limit");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "cust-limit").await;
+    let customer = create_customer(&state, &owner, "CUST-LIMIT").await;
+
+    let updated = application::customers::update(
+        &state,
+        &owner,
+        customer,
+        CustomerInput {
+            code: "CUST-LIMIT".into(),
+            name: "Customer CUST-LIMIT".into(),
+            phone: None,
+            email: None,
+            address: None,
+            credit_limit_minor: Some(500_000),
+            opening_balance_minor: Some(0),
+            is_active: Some(true),
+        },
+        "corr-limit",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(updated.credit_limit_minor, 500_000);
+    assert_eq!(updated.balance_minor, 0);
+}

@@ -286,6 +286,17 @@ pub async fn create_sale(
                     "draft"
                 };
 
+                let customer_name = if let Some(cid) = input.customer_id {
+                    let name: Option<String> =
+                        sqlx::query_scalar("SELECT name FROM customers WHERE id = ?")
+                            .bind(cid)
+                            .fetch_optional(&mut *tx)
+                            .await?;
+                    name.unwrap_or_else(|| "Walk-in".into())
+                } else {
+                    "Walk-in".into()
+                };
+
                 let id = sqlx::query(
                     "INSERT INTO sales
                        (kind, customer_id, customer_name, location_id, sale_date,
@@ -294,12 +305,7 @@ pub async fn create_sale(
                 )
                 .bind(&kind)
                 .bind(input.customer_id)
-                .bind(
-                    input
-                        .customer_id
-                        .map(|_| String::new())
-                        .unwrap_or_else(|| "Walk-in".into()),
-                )
+                .bind(&customer_name)
                 .bind(input.location_id)
                 .bind(&sale_date)
                 .bind(status)
@@ -1088,7 +1094,7 @@ pub async fn cancel_sale(
 }
 
 pub async fn list_sales(state: &AppState, principal: &Principal) -> Result<Vec<SaleDto>, AppError> {
-    principal.require("sale.create")?;
+    principal.require_any(&["sale.create", "invoice.print"])?;
     let rows: Vec<i64> = sqlx::query_scalar("SELECT id FROM sales ORDER BY id DESC LIMIT 500")
         .fetch_all(&state.pool)
         .await?;
@@ -1104,7 +1110,7 @@ pub async fn get_sale(
     principal: &Principal,
     sale_id: i64,
 ) -> Result<SaleDto, AppError> {
-    principal.require("sale.create")?;
+    principal.require_any(&["sale.create", "invoice.print"])?;
     sale_dto(state, sale_id).await
 }
 
