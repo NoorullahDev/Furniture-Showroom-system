@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 7);
+    assert_eq!(info.version, 8);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -31,7 +31,7 @@ async fn db_opens_runs_migrations_and_seeds() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(perm_count, 36);
+    assert_eq!(perm_count, 42);
 
     let owner_perm_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
@@ -91,7 +91,7 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 7);
+    assert_eq!(version_again, 8);
 
     // Phase 7 due-control additions are present.
     let phase7_objects: i64 = sqlx::query_scalar(
@@ -109,6 +109,41 @@ async fn db_opens_runs_migrations_and_seeds() {
     .await
     .unwrap();
     assert_eq!(phase7_columns, 1);
+
+    // Phase 8 fulfilment tables are present.
+    let phase8_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table' AND name IN (
+             'delivery_items', 'sales_return_items', 'credit_notes', 'damage_records'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase8_tables, 4);
+    let phase8_ledger_types: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('customer_ledger_entries')
+         WHERE name = 'entry_type'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase8_ledger_types, 1);
+    let phase8_cash_types: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('cash_entries') WHERE name = 'entry_type'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase8_cash_types, 1);
+    let phase8_sequences: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM document_sequences
+         WHERE document_type IN ('delivery', 'sales_return', 'credit_note', 'damage_record')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase8_sequences, 4);
 
     // Owner role template grants every permission (Phase 2 seed invariant).
     let owner_has_all: i64 = sqlx::query_scalar(

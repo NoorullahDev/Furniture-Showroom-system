@@ -315,6 +315,7 @@ async fn cash_sale_posts_stock_cogs_customer_ledger_and_cash() {
             cash_account_id: Some(cash),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -374,6 +375,7 @@ async fn idempotent_confirm_consumes_exactly_one_number() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -389,6 +391,7 @@ async fn idempotent_confirm_consumes_exactly_one_number() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-3",
     )
@@ -446,6 +449,7 @@ async fn credit_sale_receipt_allocation_cancellation_keeps_ledger_consistent() {
             cash_account_id: None,
             payment_method_id: None,
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -577,6 +581,7 @@ async fn bundle_sale_respects_availability_and_restores_stock_on_cancel() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -641,6 +646,7 @@ async fn insufficient_stock_is_rejected_atomically() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -703,6 +709,7 @@ async fn discount_and_below_cost_pricing_require_override() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )
@@ -739,6 +746,7 @@ async fn discount_and_below_cost_pricing_require_override() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-4",
     )
@@ -805,6 +813,7 @@ async fn an_advance_receipt_is_consumed_when_a_later_sale_confirms() {
             cash_account_id: None,
             payment_method_id: None,
             advance_used_minor: Some(5_000),
+            credit_note_id: None,
         },
         "corr-3",
     )
@@ -842,6 +851,7 @@ async fn an_advance_receipt_is_consumed_when_a_later_sale_confirms() {
             cash_account_id: None,
             payment_method_id: None,
             advance_used_minor: Some(9_000),
+            credit_note_id: None,
         },
         "corr-5",
     )
@@ -892,6 +902,7 @@ async fn confirmed_sale_generates_an_invoice_pdf() {
             cash_account_id: Some(1),
             payment_method_id: Some(1),
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-2",
     )

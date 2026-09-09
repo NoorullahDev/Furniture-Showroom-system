@@ -5,6 +5,7 @@ pub mod catalogue;
 pub mod customers;
 pub mod documents;
 pub mod first_run;
+pub mod fulfilment;
 pub mod inventory;
 pub mod products;
 pub mod proof;

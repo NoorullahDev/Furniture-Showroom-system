@@ -525,6 +525,43 @@ pub async fn confirm_sale(
                             )));
                         }
                     }
+
+                    if let Some(cn) = input.credit_note_id {
+                        let cn_row = sqlx::query(
+                            "SELECT customer_id, amount_minor, status FROM credit_notes WHERE id = ?",
+                        )
+                        .bind(cn)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .ok_or_else(|| AppError::NotFound(format!("credit note {cn}")))?;
+                        let cn_customer: i64 = cn_row.get(0);
+                        let cn_amount: i64 = cn_row.get(1);
+                        let cn_status: String = cn_row.get(2);
+                        if cn_customer != cid {
+                            return Err(AppError::Validation(format!(
+                                "credit note {cn} belongs to a different customer"
+                            )));
+                        }
+                        if cn_status != "open" {
+                            return Err(AppError::Conflict(format!(
+                                "credit note {cn} is not open (status '{cn_status}')"
+                            )));
+                        }
+                        if cn_amount != advance {
+                            return Err(AppError::Validation(format!(
+                                "credit note amount {cn_amount} does not match requested advance {advance}"
+                            )));
+                        }
+                        sqlx::query(
+                            "UPDATE credit_notes SET status = 'applied', sale_id = ?,
+                             applied_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                             WHERE id = ?",
+                        )
+                        .bind(input.sale_id)
+                        .bind(cn)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
                 }
 
                 if paid > 0 {

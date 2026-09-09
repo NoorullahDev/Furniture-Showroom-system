@@ -158,6 +158,22 @@ pub fn run() {
             commands::sales::customer_receipt_preview,
             commands::sales::customer_receipt_pdf,
             commands::sales::receivables,
+            commands::fulfilment::delivery_create,
+            commands::fulfilment::delivery_transition,
+            commands::fulfilment::delivery_reschedule,
+            commands::fulfilment::delivery_list,
+            commands::fulfilment::delivery_get,
+            commands::fulfilment::delivery_note_pdf,
+            commands::fulfilment::sale_return_post,
+            commands::fulfilment::sale_return_void,
+            commands::fulfilment::sale_return_list,
+            commands::fulfilment::sale_return_get,
+            commands::fulfilment::credit_note_list,
+            commands::fulfilment::credit_note_pdf,
+            commands::fulfilment::damage_record,
+            commands::fulfilment::damage_decide,
+            commands::fulfilment::damage_list,
+            commands::fulfilment::damage_get,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

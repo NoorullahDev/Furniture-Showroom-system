@@ -107,7 +107,7 @@ pub(crate) async fn apply_on_hand_delta(
 }
 
 /// Move `qty` units from on_hand to damaged for the given product/location.
-async fn apply_damage_shift(
+pub(crate) async fn apply_damage_shift(
     conn: &mut SqliteConnection,
     product_id: i64,
     location_id: i64,
@@ -129,7 +129,7 @@ async fn apply_damage_shift(
 }
 
 /// Move `qty` units from damaged back to on_hand for the given product/location.
-async fn apply_repair_shift(
+pub(crate) async fn apply_repair_shift(
     conn: &mut SqliteConnection,
     product_id: i64,
     location_id: i64,
@@ -142,6 +142,28 @@ async fn apply_repair_shift(
          WHERE product_id = ? AND location_id = ?",
     )
     .bind(qty)
+    .bind(qty)
+    .bind(product_id)
+    .bind(location_id)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// Remove `qty` units from the damaged bucket only (write-off, supplier
+/// return, or sale of damaged goods). The damaged bucket is never allowed to
+/// go negative, mirroring the guard used by the repair/damage shifts.
+pub(crate) async fn apply_damaged_delta(
+    conn: &mut SqliteConnection,
+    product_id: i64,
+    location_id: i64,
+    qty: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE stock_balances
+         SET damaged = MAX(damaged - ?, 0)
+         WHERE product_id = ? AND location_id = ?",
+    )
     .bind(qty)
     .bind(product_id)
     .bind(location_id)

@@ -186,6 +186,10 @@ pub struct SaleConfirmInput {
     pub payment_method_id: Option<i64>,
     #[serde(default)]
     pub advance_used_minor: Option<i64>,
+    /// Credit note to apply (exchanges): must be open, belong to the sale's
+    /// customer, and its amount must equal `advance_used_minor`.
+    #[serde(default)]
+    pub credit_note_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

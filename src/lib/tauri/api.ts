@@ -1196,6 +1196,7 @@ export type SaleConfirmInput = {
   cashAccountId?: number | null;
   paymentMethodId?: number | null;
   advanceUsedMinor?: number | null;
+  creditNoteId?: number | null;
 };
 
 export type SaleDto = {
@@ -1418,3 +1419,282 @@ export const customerReceiptPdf = (session: string, paymentId: number) =>
   runCommand<PdfResult>("customer_receipt_pdf", { session, paymentId });
 
 export const receivables = (session: string) => runCommand<ReceivablesDto>("receivables", { session });
+
+// Phase 8 — Deliveries, returns/exchanges, damage
+// ---------------------------------------------------------------------------
+
+export type DeliveryItemInput = {
+  saleItemId: number;
+  quantity: number;
+};
+
+export type DeliveryCreateInput = {
+  saleId: number;
+  scheduledAt?: string | null;
+  address?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  driverNote?: string | null;
+  vehicleNote?: string | null;
+  deliveryChargeMinor?: number | null;
+  notes?: string | null;
+  items: DeliveryItemInput[];
+};
+
+export type DeliveryItemDto = {
+  id: number;
+  deliveryId: number;
+  saleItemId: number;
+  productId?: number | null;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitPriceMinor: number;
+  lineTotalMinor: number;
+};
+
+export type DeliveryDto = {
+  id: number;
+  deliveryNumber?: string | null;
+  saleId: number;
+  saleNumber?: string | null;
+  customerId?: number | null;
+  customerName?: string | null;
+  locationId: number;
+  status: string;
+  scheduledAt?: string | null;
+  address?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  driverNote?: string | null;
+  vehicleNote?: string | null;
+  receiverName?: string | null;
+  proofReference?: string | null;
+  deliveryChargeMinor: number;
+  notes?: string | null;
+  rescheduleCount: number;
+  deliveredAt?: string | null;
+  deliveredBy?: number | null;
+  dispatchedAt?: string | null;
+  dispatchedBy?: number | null;
+  failedReason?: string | null;
+  failedAt?: string | null;
+  failedBy?: number | null;
+  cancelledReason?: string | null;
+  cancelledAt?: string | null;
+  cancelledBy?: number | null;
+  items: DeliveryItemDto[];
+  createdBy: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DeliveryTransitionInput = {
+  deliveryId: number;
+  action: string;
+  reason?: string | null;
+  scheduledAt?: string | null;
+  receiverName?: string | null;
+  proofReference?: string | null;
+};
+
+export type DeliveryListInput = {
+  status?: string | null;
+  saleId?: number | null;
+  customerId?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export type DeliveryRescheduleInput = {
+  deliveryId: number;
+  scheduledAt: string;
+  reason?: string | null;
+};
+
+export type ReturnItemInput = {
+  saleItemId: number;
+  quantity: number;
+  classification: string;
+};
+
+export type SaleReturnInput = {
+  saleId: number;
+  refundType: string;
+  returnDate: string;
+  items: ReturnItemInput[];
+  cashAccountId?: number | null;
+  notes?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type SaleReturnItemDto = {
+  id: number;
+  returnId: number;
+  saleItemId: number;
+  productId?: number | null;
+  bundleId?: number | null;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitPriceMinor: number;
+  unitRefundMinor: number;
+  lineRefundMinor: number;
+  classification: string;
+};
+
+export type SaleReturnDto = {
+  id: number;
+  returnNumber?: string | null;
+  saleId: number;
+  saleNumber?: string | null;
+  customerId?: number | null;
+  customerName?: string | null;
+  locationId: number;
+  returnDate: string;
+  status: string;
+  refundType: string;
+  totalMinor: number;
+  totalRefundMinor: number;
+  cashRefundMinor: number;
+  creditNoteMinor: number;
+  notes?: string | null;
+  postedBy?: number | null;
+  postedAt?: string | null;
+  voidedBy?: number | null;
+  voidedAt?: string | null;
+  items: SaleReturnItemDto[];
+  createdAt: string;
+};
+
+export type ReturnVoidInput = {
+  returnId: number;
+  reason?: string | null;
+};
+
+export type ReturnListInput = {
+  saleId?: number | null;
+  customerId?: number | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export type CreditNoteDto = {
+  id: number;
+  creditNumber?: string | null;
+  customerId: number;
+  returnId?: number | null;
+  saleId?: number | null;
+  amountMinor: number;
+  status: string;
+  notes?: string | null;
+  appliedAt?: string | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type CreditNoteListInput = {
+  customerId?: number | null;
+  status?: string | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export type DamageRecordInput = {
+  productId: number;
+  locationId: number;
+  quantity: number;
+  damageDate: string;
+  source: string;
+  reason?: string | null;
+  estimatedLossMinor?: number | null;
+  photoPath?: string | null;
+};
+
+export type DamageDecisionInput = {
+  damageId: number;
+  decision: string;
+  decisionNote?: string | null;
+  linkedSaleId?: number | null;
+};
+
+export type DamageRecordDto = {
+  id: number;
+  damageNumber?: string | null;
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  locationId: number;
+  locationName: string;
+  quantity: number;
+  damageDate: string;
+  source: string;
+  reason?: string | null;
+  estimatedLossMinor: number;
+  photoPath?: string | null;
+  status: string;
+  decision?: string | null;
+  decisionNote?: string | null;
+  linkedSaleId?: number | null;
+  resolvedBy?: number | null;
+  resolvedAt?: string | null;
+  createdBy: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DamageListInput = {
+  productId?: number | null;
+  locationId?: number | null;
+  status?: string | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export const deliveryCreate = (session: string, input: DeliveryCreateInput) =>
+  runCommand<DeliveryDto>("delivery_create", { session, input });
+
+export const deliveryTransition = (session: string, input: DeliveryTransitionInput) =>
+  runCommand<DeliveryDto>("delivery_transition", { session, input });
+
+export const deliveryReschedule = (session: string, input: DeliveryRescheduleInput) =>
+  runCommand<DeliveryDto>("delivery_reschedule", { session, input });
+
+export const deliveryList = (session: string, input: DeliveryListInput) =>
+  runCommand<DeliveryDto[]>("delivery_list", { session, input });
+
+export const deliveryGet = (session: string, deliveryId: number) =>
+  runCommand<DeliveryDto>("delivery_get", { session, deliveryId });
+
+export const deliveryNotePdf = (session: string, deliveryId: number) =>
+  runCommand<PdfResult>("delivery_note_pdf", { session, deliveryId });
+
+export const saleReturnPost = (session: string, input: SaleReturnInput) =>
+  runCommand<SaleReturnDto>("sale_return_post", { session, input });
+
+export const saleReturnVoid = (session: string, input: ReturnVoidInput) =>
+  runCommand<SaleReturnDto>("sale_return_void", { session, input });
+
+export const saleReturnList = (session: string, input: ReturnListInput) =>
+  runCommand<SaleReturnDto[]>("sale_return_list", { session, input });
+
+export const saleReturnGet = (session: string, returnId: number) =>
+  runCommand<SaleReturnDto>("sale_return_get", { session, returnId });
+
+export const creditNoteList = (session: string, input: CreditNoteListInput) =>
+  runCommand<CreditNoteDto[]>("credit_note_list", { session, input });
+
+export const creditNotePdf = (session: string, creditId: number) =>
+  runCommand<PdfResult>("credit_note_pdf", { session, creditId });
+
+export const damageRecord = (session: string, input: DamageRecordInput) =>
+  runCommand<DamageRecordDto>("damage_record", { session, input });
+
+export const damageDecide = (session: string, input: DamageDecisionInput) =>
+  runCommand<DamageRecordDto>("damage_decide", { session, input });
+
+export const damageList = (session: string, input: DamageListInput) =>
+  runCommand<DamageRecordDto[]>("damage_list", { session, input });
+
+export const damageGet = (session: string, damageId: number) =>
+  runCommand<DamageRecordDto>("damage_get", { session, damageId });

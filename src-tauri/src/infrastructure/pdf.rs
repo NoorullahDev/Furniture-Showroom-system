@@ -68,6 +68,51 @@ pub struct ReceiptRecord {
     pub shop_address: Option<String>,
 }
 
+pub struct DeliveryNoteLine {
+    pub article: String,
+    pub name: String,
+    pub quantity: i64,
+    pub unit_price_minor: i64,
+    pub line_total_minor: i64,
+}
+
+pub struct DeliveryNoteRecord {
+    pub number: String,
+    pub delivery_date: String,
+    pub customer_name: Option<String>,
+    pub address: Option<String>,
+    pub contact_phone: Option<String>,
+    pub driver_note: Option<String>,
+    pub vehicle_note: Option<String>,
+    pub items: Vec<DeliveryNoteLine>,
+    pub total_units: i64,
+    pub shop_name: String,
+    pub shop_address: Option<String>,
+}
+
+pub struct DeliveryNotePdf {
+    pub path: String,
+    pub pages: usize,
+    pub bytes: u64,
+}
+
+pub struct CreditNoteRecord {
+    pub number: String,
+    pub note_date: String,
+    pub customer_name: Option<String>,
+    pub return_number: Option<String>,
+    pub amount_minor: i64,
+    pub reason: String,
+    pub shop_name: String,
+    pub shop_address: Option<String>,
+}
+
+pub struct CreditNotePdf {
+    pub path: String,
+    pub pages: usize,
+    pub bytes: u64,
+}
+
 fn format_pkr(minor: i64) -> String {
     let major = minor.div_euclid(100);
     let paisa = (minor % 100).abs();
@@ -343,6 +388,233 @@ pub fn generate_receipt_pdf(
     let bytes = fs::metadata(&path)?.len();
 
     Ok(ReceiptPdf {
+        pages: 1,
+        bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Generates a delivery note PDF, mirroring the invoice layout so delivery
+/// copies share the same visual identity as the customer documents.
+pub fn generate_delivery_note_pdf(
+    reports_dir: &Path,
+    record: &DeliveryNoteRecord,
+) -> Result<DeliveryNotePdf, AppError> {
+    let (doc, page1, layer1) =
+        PdfDocument::new(&record.shop_name, Mm(210.0), Mm(297.0), "Delivery");
+
+    let helvetica = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    let helvetica_bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+
+    let layer = doc.get_page(page1).get_layer(layer1);
+
+    layer.use_text(
+        &record.shop_name,
+        18.0,
+        Mm(20.0),
+        Mm(272.0),
+        &helvetica_bold,
+    );
+    if let Some(address) = &record.shop_address {
+        layer.use_text(address, 9.0, Mm(20.0), Mm(264.0), &helvetica);
+    }
+    layer.use_text("DELIVERY NOTE", 14.0, Mm(150.0), Mm(272.0), &helvetica_bold);
+
+    let mut y: f32 = 248.0;
+    let header = [
+        ("Delivery No.", record.number.as_str()),
+        ("Date", record.delivery_date.as_str()),
+        (
+            "Customer",
+            record
+                .customer_name
+                .as_deref()
+                .unwrap_or("Walk-in Customer"),
+        ),
+        ("Address", record.address.as_deref().unwrap_or("-")),
+        ("Contact", record.contact_phone.as_deref().unwrap_or("-")),
+    ];
+    for (label, value) in header {
+        layer.use_text(label, 10.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(value, 10.0, Mm(75.0), Mm(y), &helvetica_bold);
+        y -= 11.0;
+    }
+
+    let mut y: f32 = 186.0;
+    layer.use_text("Item", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
+    layer.use_text("Qty", 10.0, Mm(130.0), Mm(y), &helvetica_bold);
+    layer.use_text("Price", 10.0, Mm(150.0), Mm(y), &helvetica_bold);
+    layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    y -= 10.0;
+
+    for line in &record.items {
+        layer.use_text(&line.article, 9.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(&line.name, 9.0, Mm(36.0), Mm(y), &helvetica);
+        layer.use_text(
+            line.quantity.to_string(),
+            10.0,
+            Mm(130.0),
+            Mm(y),
+            &helvetica,
+        );
+        layer.use_text(
+            format_pkr(line.unit_price_minor),
+            10.0,
+            Mm(150.0),
+            Mm(y),
+            &helvetica,
+        );
+        layer.use_text(
+            format_pkr(line.line_total_minor),
+            10.0,
+            Mm(178.0),
+            Mm(y),
+            &helvetica,
+        );
+        y -= 10.0;
+    }
+
+    if let Some(note) = &record.driver_note {
+        if !note.is_empty() {
+            layer.use_text("Driver note", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
+            y -= 10.0;
+            layer.use_text(note, 9.0, Mm(20.0), Mm(y), &helvetica);
+            y -= 10.0;
+        }
+    }
+    if let Some(note) = &record.vehicle_note {
+        if !note.is_empty() {
+            layer.use_text("Vehicle note", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
+            y -= 10.0;
+            layer.use_text(note, 9.0, Mm(20.0), Mm(y), &helvetica);
+        }
+    }
+
+    layer.use_text(
+        format!("Total Units: {}", record.total_units),
+        10.0,
+        Mm(20.0),
+        Mm(40.0),
+        &helvetica,
+    );
+    layer.use_text(
+        format!("Powered by {}", record.shop_name),
+        8.0,
+        Mm(20.0),
+        Mm(22.0),
+        &helvetica,
+    );
+
+    let filename = format!("delivery-note-{}.pdf", uuid::Uuid::now_v7());
+    let path = reports_dir.join(filename);
+    let mut out = BufWriter::new(fs::File::create(&path)?);
+    doc.save(&mut out)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    out.flush()?;
+
+    let bytes = fs::metadata(&path)?.len();
+
+    Ok(DeliveryNotePdf {
+        pages: 1,
+        bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Generates a credit note PDF for a customer's return credit balance.
+pub fn generate_credit_note_pdf(
+    reports_dir: &Path,
+    record: &CreditNoteRecord,
+) -> Result<CreditNotePdf, AppError> {
+    let (doc, page1, layer1) =
+        PdfDocument::new(&record.shop_name, Mm(210.0), Mm(297.0), "Credit Note");
+
+    let helvetica = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    let helvetica_bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+
+    let layer = doc.get_page(page1).get_layer(layer1);
+
+    layer.use_text(
+        &record.shop_name,
+        18.0,
+        Mm(20.0),
+        Mm(272.0),
+        &helvetica_bold,
+    );
+    if let Some(address) = &record.shop_address {
+        layer.use_text(address, 9.0, Mm(20.0), Mm(264.0), &helvetica);
+    }
+    layer.use_text("CREDIT NOTE", 14.0, Mm(150.0), Mm(272.0), &helvetica_bold);
+
+    let mut y: f32 = 248.0;
+    let header = [
+        ("Credit Note No.", record.number.as_str()),
+        ("Date", record.note_date.as_str()),
+        (
+            "Customer",
+            record
+                .customer_name
+                .as_deref()
+                .unwrap_or("Walk-in Customer"),
+        ),
+        (
+            "Against Return",
+            record.return_number.as_deref().unwrap_or("-"),
+        ),
+    ];
+    for (label, value) in header {
+        layer.use_text(label, 10.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(value, 10.0, Mm(80.0), Mm(y), &helvetica_bold);
+        y -= 11.0;
+    }
+
+    if !record.reason.is_empty() {
+        layer.use_text("Reason", 10.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(&record.reason, 10.0, Mm(80.0), Mm(y), &helvetica);
+        y -= 11.0;
+    }
+
+    layer.use_text(
+        format!("This note balances {}.", format_pkr(record.amount_minor)),
+        12.0,
+        Mm(20.0),
+        Mm(y - 8.0),
+        &helvetica_bold,
+    );
+
+    layer.use_text(
+        "It may be applied as an advance against a future purchase.",
+        9.0,
+        Mm(20.0),
+        Mm(30.0),
+        &helvetica,
+    );
+    layer.use_text(
+        format!("Powered by {}", record.shop_name),
+        8.0,
+        Mm(20.0),
+        Mm(22.0),
+        &helvetica,
+    );
+
+    let filename = format!("credit-note-{}.pdf", uuid::Uuid::now_v7());
+    let path = reports_dir.join(filename);
+    let mut out = BufWriter::new(fs::File::create(&path)?);
+    doc.save(&mut out)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    out.flush()?;
+
+    let bytes = fs::metadata(&path)?.len();
+
+    Ok(CreditNotePdf {
         pages: 1,
         bytes,
         path: path.to_string_lossy().into_owned(),

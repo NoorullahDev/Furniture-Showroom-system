@@ -26,8 +26,10 @@ pub use image_pipeline::{
 pub use logging::{install as install_logging, redact};
 pub use paths::FilePaths;
 pub use pdf::{
-    generate_invoice_pdf, generate_proof_pdf, generate_receipt_pdf, InvoiceLine, InvoicePdf,
-    InvoiceRecord, ReceiptAllocationLine, ReceiptPdf, ReceiptRecord,
+    generate_credit_note_pdf, generate_delivery_note_pdf, generate_invoice_pdf, generate_proof_pdf,
+    generate_receipt_pdf, CreditNotePdf, CreditNoteRecord, DeliveryNoteLine, DeliveryNotePdf,
+    DeliveryNoteRecord, InvoiceLine, InvoicePdf, InvoiceRecord, ReceiptAllocationLine, ReceiptPdf,
+    ReceiptRecord,
 };
 pub use session::SessionManager;
 pub use throttle::LoginThrottle;

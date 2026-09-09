@@ -294,6 +294,7 @@ async fn make_open_sale(
             cash_account_id: None,
             payment_method_id: None,
             advance_used_minor: Some(0),
+            credit_note_id: None,
         },
         "corr-confirm",
     )
