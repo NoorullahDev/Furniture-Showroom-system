@@ -1298,12 +1298,34 @@ function CustomersTable({
   onLedger: (c: CustomerDto) => void;
   onEdit: (c: CustomerDto) => void;
 }) {
+  const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow message="No customers yet." />;
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? rows.filter(
+        (c) =>
+          c.name.toLowerCase().includes(term) ||
+          (c.phone ?? "").toLowerCase().includes(term),
+      )
+    : rows;
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-      <div className="overflow-x-auto">
-        <Table>
+    <div>
+      <div className="relative mb-3 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search name or phone…"
+          className="pl-8"
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyRow message="No customers match your search." />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+          <div className="overflow-x-auto">
+            <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Code</TableHead>
@@ -1317,7 +1339,7 @@ function CustomersTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((c) => (
+            {filtered.map((c) => (
               <TableRow key={c.id}>
                 <TableCell className="font-medium text-neutral-900">{c.code}</TableCell>
                 <TableCell>{c.name}</TableCell>
@@ -1346,6 +1368,8 @@ function CustomersTable({
           </TableBody>
         </Table>
       </div>
+    </div>
+      )}
     </div>
   );
 }
