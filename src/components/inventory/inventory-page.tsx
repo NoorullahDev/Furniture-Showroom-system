@@ -5,12 +5,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
   Boxes,
+  CheckCircle,
   ClipboardList,
+  FileSpreadsheet,
   Loader2,
   PackageOpen,
   Plus,
   Search,
   Scale,
+  Undo2,
   Wrench,
 } from "lucide-react";
 
@@ -50,15 +53,27 @@ import {
   productList,
   stockAdjust,
   stockBalanceList,
+  stockCountLines,
+  stockCountLineUpdate,
+  stockCountList,
+  stockCountPost,
+  stockCountStart,
   stockDamage,
+  stockLowList,
   stockMovementList,
   stockOpening,
+  stockOpeningBatch,
   stockRelease,
   stockRepair,
   stockReserve,
+  stockReverse,
   stockTransfer,
   stockValuation,
+  type CountSessionDto,
   type LocationDto,
+  type LowStockItemDto,
+  type OpeningBatchInput,
+  type OpeningBatchResultDto,
   type ProductListItemDto,
   type StockBalanceDto,
   type StockMovementDto,
@@ -68,7 +83,7 @@ import { formatDateTime, formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
 
-type Tab = "stock" | "ledger" | "valuation";
+type Tab = "stock" | "ledger" | "valuation" | "low" | "count";
 
 const MOVEMENT_LABELS: Record<string, string> = {
   opening: "Opening stock",
@@ -99,7 +114,7 @@ export function InventoryPage() {
   const [view, setView] = React.useState<Tab>("stock");
   const [locationId, setLocationId] = React.useState<number | null>(null);
   const [dialog, setDialog] = React.useState<
-    null | "opening" | "transfer" | "adjust" | "damage" | "reserve"
+    null | "opening" | "transfer" | "adjust" | "damage" | "reserve" | "count" | "import"
   >(null);
 
   const locationsQuery = useQuery({
@@ -127,6 +142,18 @@ export function InventoryPage() {
     enabled: !!session && canViewValuation,
   });
 
+  const canCount = hasPermission("inventory.count");
+  const lowStockQuery = useQuery({
+    queryKey: ["inventory", "low-stock"],
+    queryFn: () => stockLowList(session),
+    enabled: !!session,
+  });
+  const countSessionsQuery = useQuery({
+    queryKey: ["inventory", "count-sessions"],
+    queryFn: () => stockCountList(session, locationId),
+    enabled: !!session && canCount,
+  });
+
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["inventory"] });
     void queryClient.invalidateQueries({ queryKey: ["catalogue", "products"] });
@@ -136,6 +163,8 @@ export function InventoryPage() {
   const balances = balancesQuery.data ?? [];
   const movements = movementsQuery.data ?? [];
   const valuation = valuationQuery.data ?? [];
+  const lowStock = lowStockQuery.data ?? [];
+  const countSessions = countSessionsQuery.data ?? [];
 
   const totals = React.useMemo(() => {
     const t = (balancesQuery.data ?? []).reduce(
@@ -198,6 +227,14 @@ export function InventoryPage() {
                   <Plus className="h-4 w-4" />
                   Opening stock
                 </Button>
+                <Button variant="outline" onClick={() => setDialog("import")}>
+                  <FileSpreadsheet className="h-4 w-4" />
+                  Import openings
+                </Button>
+                <Button variant="outline" onClick={() => setDialog("count")}>
+                  <CheckCircle className="h-4 w-4" />
+                  New count
+                </Button>
               </>
             )}
           </div>
@@ -220,6 +257,14 @@ export function InventoryPage() {
         <TabButton active={view === "ledger"} onClick={() => setView("ledger")} icon={<ClipboardList className="h-4 w-4" />}>
           Movement ledger
         </TabButton>
+        <TabButton active={view === "low"} onClick={() => setView("low")} icon={<Search className="h-4 w-4" />}>
+          Low stock {lowStock.length > 0 && <Badge variant="danger" className="ml-1 h-5 px-1.5 text-xs">{lowStock.length}</Badge>}
+        </TabButton>
+        {canCount && (
+          <TabButton active={view === "count"} onClick={() => setView("count")} icon={<CheckCircle className="h-4 w-4" />}>
+            Count sessions
+          </TabButton>
+        )}
         {canViewValuation && (
           <TabButton active={view === "valuation"} onClick={() => setView("valuation")} icon={<PackageOpen className="h-4 w-4" />}>
             Valuation (FIFO)
@@ -231,7 +276,26 @@ export function InventoryPage() {
         {view === "stock" && (
           <BalancesTable rows={balances} loading={balancesQuery.isLoading} />
         )}
-        {view === "ledger" && <LedgerTable rows={movements} loading={movementsQuery.isLoading} />}
+        {view === "ledger" && (
+          <LedgerTable
+            rows={movements}
+            loading={movementsQuery.isLoading}
+            session={session}
+            canMutate={canMutate}
+            onReverse={() => invalidate()}
+          />
+        )}
+        {view === "low" && (
+          <LowStockTable rows={lowStock} loading={lowStockQuery.isLoading} />
+        )}
+        {view === "count" && canCount && (
+          <CountSessionsView
+            sessions={countSessions}
+            loading={countSessionsQuery.isLoading}
+            session={session}
+            canMutate={canMutate}
+          />
+        )}
         {view === "valuation" && canViewValuation && (
           <ValuationTable rows={valuation} loading={valuationQuery.isLoading} />
         )}
@@ -253,6 +317,33 @@ export function InventoryPage() {
               return;
             }
             toast({ variant: "error", title: "Opening failed", description: commandErrorMessage(e) });
+          }}
+        />
+      )}
+      {dialog === "import" && canMutate && (
+        <OpeningImportDialog
+          session={session}
+          locations={locations}
+          onClose={() => setDialog(null)}
+          onDone={(result) => {
+            invalidate();
+            setDialog(null);
+            if (result.errors.length > 0) {
+              toast({
+                variant: "error",
+                title: "Import finished with errors",
+                description: `${result.postedCount} posted, ${result.errors.length} errors`,
+              });
+            } else {
+              toast({ variant: "success", title: "Opening stock imported", description: `${result.postedCount} rows posted` });
+            }
+          }}
+          onError={(e) => {
+            if (isSessionError(e)) {
+              refresh();
+              return;
+            }
+            toast({ variant: "error", title: "Import failed", description: commandErrorMessage(e) });
           }}
         />
       )}
@@ -329,6 +420,27 @@ export function InventoryPage() {
               return;
             }
             toast({ variant: "error", title: "Reservation failed", description: commandErrorMessage(e) });
+          }}
+        />
+      )}
+      {dialog === "count" && canCount && (
+        <CountSessionDialog
+          session={session}
+          locations={locations}
+          locationId={locationId}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            void queryClient.invalidateQueries({ queryKey: ["inventory", "count-sessions"] });
+            invalidate();
+            setDialog(null);
+            toast({ variant: "success", title: "Count session created" });
+          }}
+          onError={(e) => {
+            if (isSessionError(e)) {
+              refresh();
+              return;
+            }
+            toast({ variant: "error", title: "Count session failed", description: commandErrorMessage(e) });
           }}
         />
       )}
@@ -456,7 +568,38 @@ function BalancesTable({
   );
 }
 
-function LedgerTable({ rows, loading }: { rows: StockMovementDto[]; loading: boolean }) {
+function LedgerTable({
+  rows,
+  loading,
+  session,
+  canMutate,
+  onReverse,
+}: {
+  rows: StockMovementDto[];
+  loading: boolean;
+  session: string;
+  canMutate: boolean;
+  onReverse: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [reversing, setReversing] = React.useState(false);
+  const { toast } = useToast();
+
+  const reverseMutation = useMutation({
+    mutationFn: (movementId: number) =>
+      stockReverse(session, { movementId, reason: "manual reversal" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      setReversing(false);
+      onReverse();
+      toast({ variant: "success", title: "Movement reversed" });
+    },
+    onError: (e: Error) => {
+      setReversing(false);
+      toast({ variant: "error", title: "Reversal failed", description: e.message });
+    },
+  });
+
   if (loading) return <LoadingRow />;
   if (rows.length === 0) {
     return <EmptyRow message="No stock movements recorded yet." />;
@@ -474,11 +617,13 @@ function LedgerTable({ rows, loading }: { rows: StockMovementDto[]; loading: boo
               <TableHead>Location</TableHead>
               <TableHead className="text-right">Qty</TableHead>
               <TableHead>Reason</TableHead>
+              {canMutate && <TableHead className="w-20" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((m) => {
               const positive = m.quantityDelta >= 0;
+              const isReversed = rows.some((r) => r.reversalOfId === m.id);
               return (
                 <TableRow key={m.id}>
                   <TableCell className="whitespace-nowrap text-neutral-500">
@@ -488,9 +633,12 @@ function LedgerTable({ rows, loading }: { rows: StockMovementDto[]; loading: boo
                     {m.moveNumber ?? `#${m.id}`}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={positive ? "success" : "warning"}>
-                      {MOVEMENT_LABELS[m.movementType] ?? m.movementType}
-                    </Badge>
+                    <div className="flex items-center gap-1.5">
+                      <Badge variant={positive ? "success" : "warning"}>
+                        {MOVEMENT_LABELS[m.movementType] ?? m.movementType}
+                      </Badge>
+                      {isReversed && <Badge variant="neutral" className="text-[10px]">Reversed</Badge>}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="grid gap-0.5">
@@ -509,6 +657,24 @@ function LedgerTable({ rows, loading }: { rows: StockMovementDto[]; loading: boo
                     {m.quantityDelta}
                   </TableCell>
                   <TableCell className="max-w-52 truncate text-neutral-500">{m.reason}</TableCell>
+                  {canMutate && (
+                    <TableCell>
+                      {!isReversed && !m.reversalOfId && m.movementType !== "cancellation_reversal" && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Reverse this movement"
+                          disabled={reversing}
+                          onClick={() => {
+                            setReversing(true);
+                            reverseMutation.mutate(m.id);
+                          }}
+                        >
+                          <Undo2 className="h-3.5 w-3.5 text-neutral-500" />
+                        </Button>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             })}
@@ -556,6 +722,501 @@ function ValuationTable({ rows, loading }: { rows: ValuationLineDto[]; loading: 
         </Table>
       </div>
     </div>
+  );
+}
+
+function LowStockTable({ rows, loading }: { rows: LowStockItemDto[]; loading: boolean }) {
+  if (loading) return <LoadingRow />;
+  if (rows.length === 0) return <EmptyRow message="No products are below their minimum stock level." />;
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Product</TableHead>
+              <TableHead className="text-right">Minimum</TableHead>
+              <TableHead className="text-right">Available</TableHead>
+              <TableHead className="text-right">On hand</TableHead>
+              <TableHead className="text-right">Short by</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((item) => (
+              <TableRow key={item.productId}>
+                <TableCell>
+                  <div className="grid gap-0.5">
+                    <span className="font-medium text-neutral-900">{item.productName}</span>
+                    <span className="text-[11px] text-neutral-500">{item.articleNumber}</span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-right tabular-nums">{item.minimumStock}</TableCell>
+                <TableCell className="text-right tabular-nums text-rose-600 font-semibold">{item.totalAvailable}</TableCell>
+                <TableCell className="text-right tabular-nums">{item.totalOnHand}</TableCell>
+                <TableCell className="text-right tabular-nums font-semibold text-rose-600">
+                  {item.minimumStock - item.totalAvailable}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function CountSessionsView({
+  sessions,
+  loading,
+  session: sessionToken,
+  canMutate,
+}: {
+  sessions: CountSessionDto[];
+  loading: boolean;
+  session: string;
+  canMutate: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [selectedSession, setSelectedSession] = React.useState<number | null>(null);
+
+  const postMutation = useMutation({
+    mutationFn: (sessionId: number) => stockCountPost(sessionToken, { sessionId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      toast({ variant: "success", title: "Count corrections posted" });
+    },
+    onError: (e: Error) => {
+      toast({ variant: "error", title: "Post count failed", description: e.message });
+    },
+  });
+
+if (selectedSession) {
+    const current = sessions.find((s) => s.id === selectedSession);
+    return (
+      <CountLinesPanel
+        session={current ?? null}
+        sessionId={selectedSession}
+        sessionToken={sessionToken}
+        back={() => setSelectedSession(null)}
+        onDone={() => {
+          void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+          setSelectedSession(null);
+          toast({ variant: "success", title: "Count corrections posted" });
+        }}
+      />
+    );
+  }
+
+  if (loading) return <LoadingRow />;
+  if (sessions.length === 0) {
+    return (
+      <EmptyRow message="No count sessions found. Start a new physical count to compare expected vs. actual stock." />
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Session</TableHead>
+              <TableHead>Location</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead>Posted</TableHead>
+              <TableHead className="w-32">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sessions.map((s) => (
+              <TableRow key={s.id}>
+                <TableCell className="font-medium text-neutral-700">
+                  {s.sessionNumber ?? `#${s.id}`}
+                </TableCell>
+                <TableCell>{s.locationName}</TableCell>
+                <TableCell>
+                  <Badge variant={s.status === "posted" ? "success" : s.status === "open" ? "warning" : "neutral"}>
+                    {s.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-neutral-500">{formatDateTime(s.createdAt)}</TableCell>
+                <TableCell className="text-neutral-500">
+                  {s.postedAt ? formatDateTime(s.postedAt) : "—"}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-1.5">
+                    <Button variant="outline" size="sm" onClick={() => setSelectedSession(s.id)}>
+                      {s.status === "open" ? "Enter counts" : "View"}
+                    </Button>
+                    {canMutate && s.status === "open" && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={postMutation.isPending}
+                        onClick={() => postMutation.mutate(s.id)}
+                      >
+                        Post
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function CountLinesPanel({
+  session,
+  sessionId,
+  sessionToken,
+  onDone,
+  back,
+}: {
+  session: CountSessionDto | null;
+  sessionId: number;
+  sessionToken: string;
+  onDone: () => void;
+  back: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [counts, setCounts] = React.useState<Record<number, number>>({});
+
+  const linesQuery = useQuery({
+    queryKey: ["inventory", "count-lines", sessionId],
+    queryFn: () => stockCountLines(sessionToken, sessionId),
+    enabled: !!sessionToken,
+  });
+  const lines = linesQuery.data ?? [];
+
+  const mutation = useMutation({
+    mutationFn: ({ productId, countedQty }: { productId: number; countedQty: number }) =>
+      stockCountLineUpdate(sessionToken, { sessionId, productId, countedQty }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["inventory", "count-lines", sessionId] });
+    },
+    onError: (e: Error) => {
+      toast({ variant: "error", title: "Failed to save count", description: e.message });
+    },
+  });
+
+  const postMutation = useMutation({
+    mutationFn: () => stockCountPost(sessionToken, { sessionId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      toast({ variant: "success", title: "Count corrections posted" });
+      onDone();
+    },
+    onError: (e: Error) => {
+      toast({ variant: "error", title: "Post count failed", description: e.message });
+    },
+  });
+
+  if (linesQuery.isLoading) return <LoadingRow />;
+
+  const isOpen = session?.status === "open";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-base font-semibold text-neutral-900">
+            {session?.sessionNumber ?? `Session #${sessionId}`}
+          </h3>
+          <p className="text-sm text-neutral-500">
+            {session?.locationName ?? ""} · {isOpen ? "counting in progress" : session?.status}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={back}>
+            Back to sessions
+          </Button>
+          {isOpen && (
+            <Button variant="primary" size="sm" disabled={postMutation.isPending} onClick={() => postMutation.mutate()}>
+              Post corrections
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {lines.length === 0 ? (
+        <EmptyRow message="No products have stock at this location to count." />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-right">Expected</TableHead>
+                  {isOpen && <TableHead className="text-right">Counted</TableHead>}
+                  <TableHead className="text-right">Variance</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lines.map((line) => {
+                  const counted = counts[line.productId] ?? line.countedQty;
+                  return (
+                    <TableRow key={line.id}>
+                      <TableCell>
+                        <div className="grid gap-0.5">
+                          <span className="font-medium text-neutral-900">{line.productName}</span>
+                          <span className="text-[11px] text-neutral-500">{line.articleNumber}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{line.expectedQty}</TableCell>
+                      {isOpen && (
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            min={0}
+                            className="ml-auto h-8 w-20 text-right tabular-nums"
+                            value={String(counted)}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setCounts((prev) => ({ ...prev, [line.productId]: v }));
+                              if (Number.isFinite(v) && v >= 0) {
+                                mutation.mutate({ productId: line.productId, countedQty: v });
+                              }
+                            }}
+                          />
+                        </TableCell>
+                      )}
+                      <TableCell
+                        className={cn(
+                          "text-right font-semibold tabular-nums",
+                          (counted - line.expectedQty) < 0 ? "text-rose-600" : (counted - line.expectedQty) > 0 ? "text-forest-700" : "text-neutral-500",
+                        )}
+                      >
+                        {counted - line.expectedQty > 0 ? "+" : ""}
+                        {counted - line.expectedQty}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CountSessionDialog({
+  session,
+  locations,
+  locationId,
+  onClose,
+  onDone,
+  onError,
+}: {
+  session: string;
+  locations: LocationDto[];
+  locationId: number | null;
+  onClose: () => void;
+  onDone: () => void;
+  onError: (e: Error) => void;
+}) {
+  const [locId, setLocId] = React.useState(locationId);
+  const [notes, setNotes] = React.useState("");
+  const mutation = useMutation({
+    mutationFn: () =>
+      stockCountStart(session, { locationId: locId!, notes: notes || undefined }),
+    onSuccess: () => onDone(),
+    onError,
+  });
+
+  return (
+    <StockDialog
+      title="Start stock count"
+      description="Create a new physical count session. Expected quantities will be pre-populated from current stock balances."
+      onSubmit={() => {
+        if (locId) mutation.mutate();
+      }}
+      busy={mutation.isPending}
+      submitLabel="Start count"
+      onClose={onClose}
+    >
+      <div className="grid gap-4">
+        <div>
+          <Label>Location</Label>
+          <Select value={locId ? String(locId) : ""} onValueChange={(v) => setLocId(Number(v))}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select location" />
+            </SelectTrigger>
+            <SelectContent>
+              {locations.map((l) => (
+                <SelectItem key={l.id} value={String(l.id)}>
+                  {l.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label>Notes (optional)</Label>
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. weekly count" />
+        </div>
+      </div>
+    </StockDialog>
+  );
+}
+
+function OpeningImportDialog({
+  session,
+  locations,
+  onClose,
+  onDone,
+  onError,
+}: Omit<DialogProps, "onDone"> & { onDone: (result: OpeningBatchResultDto) => void }) {
+  const [raw, setRaw] = React.useState("");
+  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const [result, setResult] = React.useState<OpeningBatchResultDto | null>(null);
+
+  const parsed = React.useMemo(() => {
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, i) => {
+        const parts = line.split(",").map((p) => p.trim());
+        return {
+          rowIndex: i,
+          articleNumber: parts[0] ?? "",
+          locationId,
+          quantity: parts[1] === undefined ? 0 : Number(parts[1]),
+          unitCostMinor: parts[2] === undefined || parts[2] === "" ? undefined : Number(parts[2]),
+        };
+      });
+  }, [raw, locationId]);
+
+  const validationErrors = React.useMemo(() => {
+    const errors: { rowIndex: number; message: string }[] = [];
+    if (!locationId) errors.push({ rowIndex: -1, message: "choose a location" });
+    parsed.forEach((r) => {
+      if (!r.articleNumber) errors.push({ rowIndex: r.rowIndex, message: "missing article number" });
+      else if (!/^[A-Za-z0-9 ._-]+$/.test(r.articleNumber))
+        errors.push({ rowIndex: r.rowIndex, message: "invalid article number" });
+      if (!Number.isFinite(r.quantity) || r.quantity <= 0)
+        errors.push({ rowIndex: r.rowIndex, message: "quantity must be a positive number" });
+      if (r.unitCostMinor !== undefined && (!Number.isFinite(r.unitCostMinor) || r.unitCostMinor < 0))
+        errors.push({ rowIndex: r.rowIndex, message: "unit cost must be zero or positive" });
+    });
+    return errors;
+  }, [parsed, locationId]);
+
+  const payload = React.useMemo<OpeningBatchInput | null>(() => {
+    if (validationErrors.length > 0 || parsed.length === 0) return null;
+    return {
+      rows: parsed.map((r) => ({
+        articleNumber: r.articleNumber,
+        locationId: locationId!,
+        quantity: r.quantity,
+        unitCostMinor: r.unitCostMinor,
+      })),
+    };
+  }, [parsed, validationErrors, locationId]);
+
+  const submitMutation = useMutation({
+    mutationFn: () => stockOpeningBatch(session, payload!),
+    onSuccess: (res) => {
+      setResult(res);
+      if (res.errors.length === 0) onDone(res);
+    },
+    onError,
+  });
+
+  return (
+    <StockDialog
+      title="Import opening stock"
+      description="One row per line: ArticleNumber, Quantity, UnitCostMinor (optional). Location applies to all rows."
+      onSubmit={() => submitMutation.mutate()}
+      busy={submitMutation.isPending}
+      submitLabel="Post rows"
+      onClose={onClose}
+      submitDisabled={!payload || submitMutation.isPending}
+    >
+      <div className="grid gap-4">
+        <div className="grid gap-1.5">
+          <Label>Rows</Label>
+          <textarea
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            placeholder={"CHAIR-001,5,2500\nSOFA-200,1,18000"}
+            rows={6}
+            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 font-mono text-xs text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-forest-500"
+          />
+          <p className="text-xs text-neutral-500">
+            Columns: articleNumber, quantity, unitCostMinor. Only existing active products are matched.
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Location</Label>
+          <Select value={locationId ? String(locationId) : ""} onValueChange={(v) => setLocationId(Number(v))}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select location" />
+            </SelectTrigger>
+            <SelectContent>
+              {locations.map((l) => (
+                <SelectItem key={l.id} value={String(l.id)}>
+                  {l.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {validationErrors.length > 0 && (
+          <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
+            <p className="font-medium text-rose-700">Fix before posting</p>
+            <ul className="mt-1 list-inside list-disc space-y-0.5 text-rose-600">
+              {validationErrors.slice(0, 6).map((v) => (
+                <li key={v.rowIndex}>
+                  {v.rowIndex === -1 ? "—" : `Row ${v.rowIndex + 1}`}: {v.message}
+                </li>
+              ))}
+              {validationErrors.length > 6 && <li>…and {validationErrors.length - 6} more</li>}
+            </ul>
+          </div>
+        )}
+        {payload && payload.rows.length > 0 && (
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs">
+            <p className="font-medium text-neutral-700">
+              {payload.rows.length} row{payload.rows.length === 1 ? "" : "s"} ready to post
+            </p>
+            <ul className="mt-1 max-h-32 list-inside list-disc space-y-0.5 text-neutral-600">
+              {payload.rows.slice(0, 8).map((r, i) => (
+                <li key={i}>
+                  {r.articleNumber} × {r.quantity} @ {r.unitCostMinor == null ? "—" : `${(r.unitCostMinor / 100).toFixed(2)}`}
+                </li>
+              ))}
+              {payload.rows.length > 8 && <li>…and {payload.rows.length - 8} more</li>}
+            </ul>
+          </div>
+        )}
+        {result && result.errors.length > 0 && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs">
+            <p className="font-medium text-amber-700">
+              {result.postedCount} posted, {result.errors.length} failed
+            </p>
+            <ul className="mt-1 list-inside list-disc space-y-0.5 text-amber-600">
+              {result.errors.slice(0, 6).map((e, i) => (
+                <li key={e.rowIndex + i}>
+                  Row {e.rowIndex + 1} ({e.articleNumber}): {e.error}
+                </li>
+              ))}
+              {result.errors.length > 6 && <li>…and {result.errors.length - 6} more</li>}
+            </ul>
+          </div>
+        )}
+      </div>
+    </StockDialog>
   );
 }
 
@@ -1001,6 +1662,7 @@ function StockDialog({
   busy,
   submitLabel,
   onClose,
+  submitDisabled,
 }: {
   title: string;
   description: string;
@@ -1009,6 +1671,7 @@ function StockDialog({
   busy: boolean;
   submitLabel: string;
   onClose: () => void;
+  submitDisabled?: boolean;
 }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1029,7 +1692,7 @@ function StockDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || submitDisabled}>
               {busy && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
               {submitLabel}
             </Button>

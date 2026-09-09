@@ -4,8 +4,10 @@ use crate::application;
 use crate::commands::authenticated;
 use crate::commands::wrapper::{run_command, run_command_with_correlation};
 use crate::dto::inventory::{
-    AdjustStockInput, DamageStockInput, LocationDto, PostStockInput, ReleaseStockInput,
-    StockBalanceDto, StockMovementDto, TransferStockInput, ValuationLineDto,
+    AdjustStockInput, CountLineDto, CountLineInput, CountSessionDto, DamageStockInput, LocationDto,
+    LowStockItemDto, OpeningBatchInput, OpeningBatchResultDto, PostCountInput, PostStockInput,
+    ReleaseStockInput, ReverseMovementInput, StartCountInput, StockBalanceDto, StockMovementDto,
+    TransferStockInput, ValuationLineDto,
 };
 use crate::dto::AppErrorDto;
 use crate::error::new_correlation_id;
@@ -158,6 +160,118 @@ pub async fn stock_release(
     run_command_with_correlation("stock_release", correlation_id.clone(), async move {
         let principal = authenticated(&state, &session).await?;
         application::inventory::post_release(&state, &principal, input, &correlation_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_reverse(
+    state: State<'_, AppState>,
+    session: String,
+    input: ReverseMovementInput,
+) -> Result<StockMovementDto, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("stock_reverse", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::reverse_movement(&state, &principal, input, &correlation_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_low_list(
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<Vec<LowStockItemDto>, AppErrorDto> {
+    run_command("stock_low_list", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::list_low_stock(&state, &principal).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_count_start(
+    state: State<'_, AppState>,
+    session: String,
+    input: StartCountInput,
+) -> Result<CountSessionDto, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("stock_count_start", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::start_count(&state, &principal, input, &correlation_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_count_line_update(
+    state: State<'_, AppState>,
+    session: String,
+    input: CountLineInput,
+) -> Result<CountLineDto, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation(
+        "stock_count_line_update",
+        correlation_id.clone(),
+        async move {
+            let principal = authenticated(&state, &session).await?;
+            application::inventory::add_count_line(&state, &principal, input, &correlation_id).await
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_count_lines(
+    state: State<'_, AppState>,
+    session: String,
+    session_id: i64,
+) -> Result<Vec<CountLineDto>, AppErrorDto> {
+    run_command("stock_count_lines", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::list_count_lines(&state, &principal, session_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_count_post(
+    state: State<'_, AppState>,
+    session: String,
+    input: PostCountInput,
+) -> Result<Vec<StockMovementDto>, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("stock_count_post", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::post_count(&state, &principal, input, &correlation_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_count_list(
+    state: State<'_, AppState>,
+    session: String,
+    location_id: Option<i64>,
+) -> Result<Vec<CountSessionDto>, AppErrorDto> {
+    run_command("stock_count_list", async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::list_count_sessions(&state, &principal, location_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn stock_opening_batch(
+    state: State<'_, AppState>,
+    session: String,
+    input: OpeningBatchInput,
+) -> Result<OpeningBatchResultDto, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("stock_opening_batch", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::inventory::post_opening_batch(&state, &principal, input, &correlation_id).await
     })
     .await
 }

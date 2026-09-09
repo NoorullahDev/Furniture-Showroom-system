@@ -3,7 +3,10 @@ use std::path::PathBuf;
 
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
-use furniture_shop_lib::dto::inventory::{AdjustStockInput, PostStockInput, TransferStockInput};
+use furniture_shop_lib::dto::inventory::{
+    AdjustStockInput, CountLineInput, PostCountInput, PostStockInput, ReverseMovementInput,
+    StartCountInput, TransferStockInput,
+};
 use furniture_shop_lib::error::AppError;
 use furniture_shop_lib::infrastructure as infra;
 use furniture_shop_lib::state::AppState;
@@ -610,6 +613,293 @@ async fn reserve_and_release_round_trip() {
     .await
     .unwrap();
     assert_eq!(reserved, 0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn reversal_restores_net_position() {
+    let dir = temp_dir("reversal");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "reversal").await;
+    let product = create_product(&state, "REV-01").await;
+    let loc = location_by_name(&state, "Main Showroom").await;
+
+    let mv = application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: product,
+            location_id: loc,
+            quantity: 10,
+            unit_cost_minor: Some(500),
+            reason: Some("original".into()),
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, loc).await, 10);
+
+    let rev = application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: mv.id,
+            reason: Some("mistake".into()),
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, loc).await, 0);
+    assert_eq!(rev.quantity_delta, -10);
+    assert_eq!(rev.reversal_of_id, Some(mv.id));
+    assert!(rev.move_number.as_deref().unwrap().starts_with("REV-"));
+
+    let err = application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: mv.id,
+            reason: None,
+        },
+        "corr-3",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AppError::Validation(_)));
+
+    let ledger: i64 = sqlx::query_scalar(
+        "SELECT SUM(quantity_delta) FROM stock_movements WHERE product_id = ? AND location_id = ?",
+    )
+    .bind(product)
+    .bind(loc)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(ledger, 0, "reversed ledger reconciles to zero");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn reversal_of_transfer_balances_both_locations() {
+    let dir = temp_dir("reversal-transfer");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "reversal-tr").await;
+    let product = create_product(&state, "REV-TR01").await;
+    let from = location_by_name(&state, "Main Showroom").await;
+    let to = location_by_name(&state, "Store/Stockroom").await;
+
+    application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: product,
+            location_id: from,
+            quantity: 10,
+            unit_cost_minor: None,
+            reason: None,
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+
+    let trfs = application::inventory::post_transfer(
+        &state,
+        &owner,
+        TransferStockInput {
+            product_id: product,
+            from_location_id: from,
+            to_location_id: to,
+            quantity: 4,
+            reason: None,
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, from).await, 6);
+    assert_eq!(on_hand(&state, product, to).await, 4);
+
+    let rev = application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: trfs[0].id,
+            reason: Some("cancel out leg".into()),
+        },
+        "corr-3",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, from).await, 10);
+    assert_eq!(on_hand(&state, product, to).await, 4);
+    assert_eq!(rev.reversal_of_id, Some(trfs[0].id));
+
+    application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: trfs[1].id,
+            reason: None,
+        },
+        "corr-4",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, from).await, 10);
+    assert_eq!(on_hand(&state, product, to).await, 0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn low_stock_lists_products_below_minimum() {
+    let dir = temp_dir("low-stock");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "lowstock").await;
+
+    let low = create_product(&state, "LOW-01").await;
+    sqlx::query("UPDATE products SET minimum_stock = 5 WHERE article_number = 'LOW-01'")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let loc = location_by_name(&state, "Main Showroom").await;
+    application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: low,
+            location_id: loc,
+            quantity: 2,
+            unit_cost_minor: None,
+            reason: None,
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+
+    let ok = create_product(&state, "LOW-02").await;
+    sqlx::query("UPDATE products SET minimum_stock = 3 WHERE article_number = 'LOW-02'")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: ok,
+            location_id: loc,
+            quantity: 10,
+            unit_cost_minor: None,
+            reason: None,
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+
+    let low_list = application::inventory::list_low_stock(&state, &owner)
+        .await
+        .unwrap();
+    let ids: Vec<i64> = low_list.iter().map(|l| l.product_id).collect();
+    assert!(ids.contains(&low), "low-stock product must appear");
+    assert!(!ids.contains(&ok), "adequate-stock product must not appear");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn count_session_lifecycle() {
+    let dir = temp_dir("count-session");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "count").await;
+    let product = create_product(&state, "CNT-01").await;
+    let loc = location_by_name(&state, "Main Showroom").await;
+
+    application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: product,
+            location_id: loc,
+            quantity: 10,
+            unit_cost_minor: Some(200),
+            reason: None,
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, loc).await, 10);
+
+    let session = application::inventory::start_count(
+        &state,
+        &owner,
+        StartCountInput {
+            location_id: loc,
+            notes: Some("weekly count".into()),
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+    assert_eq!(session.status, "open");
+    assert!(session
+        .session_number
+        .as_deref()
+        .unwrap()
+        .starts_with("CNT-"));
+
+    let lines = application::inventory::list_count_lines(&state, &owner, session.id)
+        .await
+        .unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].expected_qty, 10);
+    assert_eq!(lines[0].product_id, product);
+
+    let _ = application::inventory::add_count_line(
+        &state,
+        &owner,
+        CountLineInput {
+            session_id: session.id,
+            product_id: product,
+            counted_qty: 9,
+        },
+        "corr-3",
+    )
+    .await
+    .unwrap();
+
+    let lines = application::inventory::list_count_lines(&state, &owner, session.id)
+        .await
+        .unwrap();
+    assert_eq!(lines[0].counted_qty, 9);
+    assert_eq!(lines[0].variance_qty, -1);
+
+    let adjustments = application::inventory::post_count(
+        &state,
+        &owner,
+        PostCountInput {
+            session_id: session.id,
+        },
+        "corr-4",
+    )
+    .await
+    .unwrap();
+    assert_eq!(adjustments.len(), 1);
+    assert_eq!(adjustments[0].quantity_delta, -1);
+    assert_eq!(on_hand(&state, product, loc).await, 9);
+
+    let sessions = application::inventory::list_count_sessions(&state, &owner, None)
+        .await
+        .unwrap();
+    let posted = sessions.iter().find(|s| s.id == session.id).unwrap();
+    assert_eq!(posted.status, "posted");
 
     let _ = fs::remove_dir_all(&dir);
 }

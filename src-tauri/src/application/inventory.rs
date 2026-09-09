@@ -3,7 +3,9 @@ use sqlx::Row;
 
 use crate::application::auth::Principal;
 use crate::dto::inventory::{
-    AdjustStockInput, DamageStockInput, LocationDto, PostStockInput, ReleaseStockInput,
+    AdjustStockInput, CountLineDto, CountLineInput, CountSessionDto, DamageStockInput, LocationDto,
+    LowStockItemDto, OpeningBatchErrorDto, OpeningBatchInput, OpeningBatchResultDto,
+    PostCountInput, PostStockInput, ReleaseStockInput, ReverseMovementInput, StartCountInput,
     StockBalanceDto, StockMovementDto, TransferStockInput, ValuationLineDto,
 };
 use crate::error::AppError;
@@ -1252,4 +1254,614 @@ pub async fn valuation(
             value_minor: r.try_get(5).unwrap_or_default(),
         })
         .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Movement reversal
+// ---------------------------------------------------------------------------
+
+pub async fn reverse_movement(
+    state: &AppState,
+    principal: &Principal,
+    input: ReverseMovementInput,
+    correlation_id: &str,
+) -> Result<StockMovementDto, AppError> {
+    principal.require("inventory.create")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+
+    let result = state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            let reason = input.reason.clone().unwrap_or_default();
+            Box::pin(async move {
+                let orig: Option<(i64, i64, i64, String, Option<i64>)> = sqlx::query_as(
+                    "SELECT id, product_id, location_id, movement_type, reversal_of_id
+                     FROM stock_movements WHERE id = ?",
+                )
+                .bind(input.movement_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+                let Some((orig_id, product_id, location_id, _orig_type, existing_reversal)) = orig
+                else {
+                    return Err(AppError::NotFound(format!(
+                        "stock movement {}",
+                        input.movement_id
+                    )));
+                };
+
+                if existing_reversal.is_some() {
+                    return Err(AppError::Validation(format!(
+                        "movement {orig_id} has already been reversed"
+                    )));
+                }
+
+                // Also guard: a movement can only be reversed once — check if any
+                // existing reversal already points to this movement.
+                let already_reversed: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM stock_movements WHERE reversal_of_id = ? LIMIT 1",
+                )
+                .bind(orig_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if already_reversed.is_some() {
+                    return Err(AppError::Validation(format!(
+                        "movement {orig_id} has already been reversed"
+                    )));
+                }
+
+                let orig_delta: i64 =
+                    sqlx::query_scalar("SELECT quantity_delta FROM stock_movements WHERE id = ?")
+                        .bind(orig_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+
+                let seq = next_move_seq(&mut *tx, location_id).await?;
+                let move_number = format!("REV-{seq:06}");
+                let reversal_delta = -orig_delta;
+
+                let reversal_id = sqlx::query(
+                    "INSERT INTO stock_movements (
+                        product_id, location_id, movement_type, quantity_delta,
+                        move_number, reason, created_by, reversal_of_id
+                     ) VALUES (?, ?, 'cancellation_reversal', ?, ?, ?, ?, ?)",
+                )
+                .bind(product_id)
+                .bind(location_id)
+                .bind(reversal_delta)
+                .bind(&move_number)
+                .bind(&reason)
+                .bind(actor_id)
+                .bind(orig_id)
+                .execute(&mut *tx)
+                .await?
+                .last_insert_rowid();
+
+                apply_on_hand_delta(&mut *tx, product_id, location_id, reversal_delta).await?;
+
+                audits
+                    .record(
+                        &mut *tx,
+                        AuditInput {
+                            user_id: Some(actor_id),
+                            session_id: Some(actor_session),
+                            action: "inventory.reverse".into(),
+                            entity_type: Some("stock_movement".into()),
+                            entity_id: Some(reversal_id.to_string()),
+                            after_json: Some(
+                                serde_json::json!({
+                                    "original_movement_id": orig_id,
+                                    "reversal_movement_id": reversal_id,
+                                    "reversal_delta": reversal_delta,
+                                    "move_number": move_number,
+                                })
+                                .to_string(),
+                            ),
+                            correlation_id: Some(correlation),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+                Ok(reversal_id)
+            })
+        })
+        .await?;
+
+    get_movement(state, principal, result).await
+}
+
+// ---------------------------------------------------------------------------
+// Low-stock list
+// ---------------------------------------------------------------------------
+
+pub async fn list_low_stock(
+    state: &AppState,
+    _principal: &Principal,
+) -> Result<Vec<LowStockItemDto>, AppError> {
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        "SELECT p.id, p.article_number, p.name, pi.thumbnail_path,
+                p.minimum_stock,
+                COALESCE(SUM(b.on_hand - b.reserved - b.damaged), 0) AS total_available,
+                COALESCE(SUM(b.on_hand), 0) AS total_on_hand
+         FROM products p
+         LEFT JOIN stock_balances b ON b.product_id = p.id
+         LEFT JOIN product_images pi ON pi.product_id = p.id AND pi.is_primary = 1
+         WHERE p.archived_at IS NULL AND p.track_stock = 1
+         GROUP BY p.id
+         HAVING total_available < p.minimum_stock AND p.minimum_stock > 0
+         ORDER BY (p.minimum_stock - total_available) DESC",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| LowStockItemDto {
+            product_id: r.try_get(0).unwrap_or_default(),
+            article_number: r.try_get(1).unwrap_or_default(),
+            product_name: r.try_get(2).unwrap_or_default(),
+            thumbnail_path: r
+                .try_get::<Option<String>, _>(3)
+                .ok()
+                .flatten()
+                .filter(|s| !s.is_empty()),
+            minimum_stock: r.try_get(4).unwrap_or_default(),
+            total_available: r.try_get(5).unwrap_or_default(),
+            total_on_hand: r.try_get(6).unwrap_or_default(),
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Stock-count sessions
+// ---------------------------------------------------------------------------
+
+pub async fn start_count(
+    state: &AppState,
+    principal: &Principal,
+    input: StartCountInput,
+    correlation_id: &str,
+) -> Result<CountSessionDto, AppError> {
+    principal.require("inventory.count")?;
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            let notes = input.notes.clone().unwrap_or_default();
+            Box::pin(async move {
+                require_active_location(&mut *tx, input.location_id).await?;
+
+                let open: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM inventory_count_sessions
+                     WHERE location_id = ? AND status = 'open'",
+                )
+                .bind(input.location_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if let Some(open_id) = open {
+                    return Err(AppError::Validation(format!(
+                        "a count session ({open_id}) is already open at this location"
+                    )));
+                }
+
+                sqlx::query(
+                    "UPDATE locations SET session_num_seq = session_num_seq + 1,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+                )
+                .bind(input.location_id)
+                .execute(&mut *tx)
+                .await?;
+                let seq: i64 =
+                    sqlx::query_scalar("SELECT session_num_seq FROM locations WHERE id = ?")
+                        .bind(input.location_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                let session_number = format!("CNT-{seq:06}");
+
+                let session_id = sqlx::query(
+                    "INSERT INTO inventory_count_sessions (
+                        location_id, session_number, notes, created_by
+                     ) VALUES (?, ?, ?, ?)",
+                )
+                .bind(input.location_id)
+                .bind(&session_number)
+                .bind(&notes)
+                .bind(actor_id)
+                .execute(&mut *tx)
+                .await?
+                .last_insert_rowid();
+
+                sqlx::query(
+                    "INSERT INTO inventory_count_lines (session_id, product_id, expected_qty, counted_qty, variance_qty)
+                     SELECT ?, b.product_id, (b.on_hand - b.reserved - b.damaged), 0, 0
+                     FROM stock_balances b
+                     JOIN products p ON p.id = b.product_id
+                     WHERE b.location_id = ? AND b.on_hand > 0 AND p.archived_at IS NULL",
+                )
+                .bind(session_id)
+                .bind(input.location_id)
+                .execute(&mut *tx)
+                .await?;
+
+                audits
+                    .record(
+                        &mut *tx,
+                        AuditInput {
+                            user_id: Some(actor_id),
+                            session_id: Some(actor_session),
+                            action: "inventory.count_start".into(),
+                            entity_type: Some("inventory_count_session".into()),
+                            entity_id: Some(session_id.to_string()),
+                            after_json: Some(
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "session_number": session_number,
+                                    "location_id": input.location_id,
+                                })
+                                .to_string(),
+                            ),
+                            correlation_id: Some(correlation),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                Ok(CountSessionDto {
+                    id: session_id,
+                    location_id: input.location_id,
+                    location_name: None,
+                    session_number: Some(session_number),
+                    status: "open".into(),
+                    notes: Some(notes),
+                    created_by: actor_id,
+                    created_at: String::new(),
+                    posted_at: None,
+                })
+            })
+        })
+        .await
+}
+
+pub async fn add_count_line(
+    state: &AppState,
+    principal: &Principal,
+    input: CountLineInput,
+    _correlation_id: &str,
+) -> Result<CountLineDto, AppError> {
+    principal.require("inventory.count")?;
+
+    let session: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT id, location_id FROM inventory_count_sessions WHERE id = ? AND status = 'open'",
+    )
+    .bind(input.session_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    if session.is_none() {
+        return Err(AppError::NotFound(format!(
+            "open count session {}",
+            input.session_id
+        )));
+    }
+
+    sqlx::query(
+        "INSERT INTO inventory_count_lines (session_id, product_id, expected_qty, counted_qty, variance_qty)
+         VALUES (?, ?, 0, ?, ?)
+         ON CONFLICT (session_id, product_id) DO UPDATE SET
+           counted_qty = excluded.counted_qty,
+           variance_qty = excluded.counted_qty - expected_qty",
+    )
+    .bind(input.session_id)
+    .bind(input.product_id)
+    .bind(input.counted_qty)
+    .bind(input.counted_qty)
+    .execute(&state.pool)
+    .await?;
+
+    let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT id, session_id, product_id, expected_qty, counted_qty
+         FROM inventory_count_lines WHERE session_id = ? AND product_id = ?",
+    )
+    .bind(input.session_id)
+    .bind(input.product_id)
+    .fetch_optional(&state.pool)
+    .await?;
+
+    let (id, session_id, product_id, expected_qty, counted_qty) =
+        row.ok_or_else(|| AppError::NotFound("count line".into()))?;
+    Ok(CountLineDto {
+        id,
+        session_id,
+        product_id,
+        article_number: None,
+        product_name: None,
+        expected_qty,
+        counted_qty,
+        variance_qty: counted_qty - expected_qty,
+    })
+}
+
+pub async fn list_count_lines(
+    state: &AppState,
+    _principal: &Principal,
+    session_id: i64,
+) -> Result<Vec<CountLineDto>, AppError> {
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        "SELECT cl.id, cl.session_id, cl.product_id, p.article_number, p.name,
+                cl.expected_qty, cl.counted_qty, cl.variance_qty
+         FROM inventory_count_lines cl
+         JOIN products p ON p.id = cl.product_id
+         WHERE cl.session_id = ?
+         ORDER BY p.article_number",
+    )
+    .bind(session_id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| CountLineDto {
+            id: r.try_get(0).unwrap_or_default(),
+            session_id: r.try_get(1).unwrap_or_default(),
+            product_id: r.try_get(2).unwrap_or_default(),
+            article_number: r.try_get(3).ok(),
+            product_name: r.try_get(4).ok(),
+            expected_qty: r.try_get(5).unwrap_or_default(),
+            counted_qty: r.try_get(6).unwrap_or_default(),
+            variance_qty: r.try_get(7).unwrap_or_default(),
+        })
+        .collect())
+}
+
+pub async fn post_count(
+    state: &AppState,
+    principal: &Principal,
+    input: PostCountInput,
+    correlation_id: &str,
+) -> Result<Vec<StockMovementDto>, AppError> {
+    principal.require("inventory.count")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+
+    let posted_ids = state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            let session_id_for_reason = input.session_id;
+            Box::pin(async move {
+                let session: Option<(i64, i64, String, Option<String>)> = sqlx::query_as(
+                    "SELECT id, location_id, session_number, notes
+                     FROM inventory_count_sessions WHERE id = ? AND status = 'open'",
+                )
+                .bind(input.session_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+
+                let Some((_sid, location_id, _session_number, _notes)) = session else {
+                    return Err(AppError::NotFound(format!(
+                        "open count session {}",
+                        input.session_id
+                    )));
+                };
+
+                let lines: Vec<(i64, i64, i64, i64)> = sqlx::query_as(
+                    "SELECT product_id, expected_qty, counted_qty, variance_qty
+                     FROM inventory_count_lines
+                     WHERE session_id = ? AND variance_qty != 0",
+                )
+                .bind(input.session_id)
+                .fetch_all(&mut *tx)
+                .await?;
+
+                let mut posted_ids = Vec::new();
+                for (product_id, _expected, _counted, variance) in &lines {
+                    let seq = next_move_seq(&mut *tx, location_id).await?;
+                    let move_number = format!("ADJ-{seq:06}");
+
+                    let movement_id = sqlx::query(
+                        "INSERT INTO stock_movements (
+                            product_id, location_id, movement_type, quantity_delta,
+                            move_number, reason, created_by
+                         ) VALUES (?, ?, 'stock_count_correction', ?, ?, ?, ?)",
+                    )
+                    .bind(product_id)
+                    .bind(location_id)
+                    .bind(variance)
+                    .bind(&move_number)
+                    .bind(format!(
+                        "count correction for session {session_id_for_reason}"
+                    ))
+                    .bind(actor_id)
+                    .execute(&mut *tx)
+                    .await?
+                    .last_insert_rowid();
+
+                    apply_on_hand_delta(&mut *tx, *product_id, location_id, *variance).await?;
+
+                    if *variance < 0 {
+                        let _ = withdraw_cost_layers(
+                            &mut *tx,
+                            *product_id,
+                            variance.unsigned_abs() as i64,
+                        )
+                        .await?;
+                    }
+
+                    posted_ids.push(movement_id);
+                }
+
+                sqlx::query(
+                    "UPDATE inventory_count_sessions SET status = 'posted',
+                     posted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                     WHERE id = ?",
+                )
+                .bind(session_id_for_reason)
+                .execute(&mut *tx)
+                .await?;
+
+                audits
+                    .record(
+                        &mut *tx,
+                        AuditInput {
+                            user_id: Some(actor_id),
+                            session_id: Some(actor_session),
+                            action: "inventory.count_post".into(),
+                            entity_type: Some("inventory_count_session".into()),
+                            entity_id: Some(session_id_for_reason.to_string()),
+                            after_json: Some(
+                                serde_json::json!({
+                                    "session_id": session_id_for_reason,
+                                    "corrections_posted": posted_ids.len(),
+                                })
+                                .to_string(),
+                            ),
+                            correlation_id: Some(correlation),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                Ok(posted_ids)
+            })
+        })
+        .await?;
+
+    let mut results = Vec::with_capacity(posted_ids.len());
+    for mv_id in &posted_ids {
+        let mv = get_movement(state, principal, *mv_id).await?;
+        results.push(mv);
+    }
+    Ok(results)
+}
+
+pub async fn list_count_sessions(
+    state: &AppState,
+    _principal: &Principal,
+    location_id: Option<i64>,
+) -> Result<Vec<CountSessionDto>, AppError> {
+    let mut sql = String::from(
+        "SELECT cs.id, cs.location_id, l.name, cs.session_number, cs.status,
+                cs.notes, cs.created_by, cs.created_at, cs.posted_at
+         FROM inventory_count_sessions cs
+         JOIN locations l ON l.id = cs.location_id",
+    );
+    if location_id.is_some() {
+        sql.push_str(" WHERE cs.location_id = ?");
+    }
+    sql.push_str(" ORDER BY cs.created_at DESC LIMIT 50");
+
+    let mut query = sqlx::query(&sql);
+    if let Some(lid) = location_id {
+        query = query.bind(lid);
+    }
+    let rows: Vec<sqlx::sqlite::SqliteRow> = query.fetch_all(&state.pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| CountSessionDto {
+            id: r.try_get(0).unwrap_or_default(),
+            location_id: r.try_get(1).unwrap_or_default(),
+            location_name: r.try_get(2).ok(),
+            session_number: r.try_get(3).ok(),
+            status: r.try_get(4).unwrap_or_default(),
+            notes: r.try_get(5).ok(),
+            created_by: r.try_get(6).unwrap_or_default(),
+            created_at: r.try_get(7).unwrap_or_default(),
+            posted_at: r.try_get(8).ok(),
+        })
+        .collect())
+}
+
+// ---------------------------------------------------------------------------
+// Opening-stock batch import
+// ---------------------------------------------------------------------------
+
+pub async fn post_opening_batch(
+    state: &AppState,
+    principal: &Principal,
+    input: OpeningBatchInput,
+    correlation_id: &str,
+) -> Result<OpeningBatchResultDto, AppError> {
+    principal.require("inventory.create")?;
+
+    // Resolve article numbers to product IDs first so article mismatches are
+    // reported without posting anything.
+    let mut resolved = Vec::with_capacity(input.rows.len());
+    let mut errors = Vec::new();
+
+    for (idx, row) in input.rows.iter().enumerate() {
+        if row.quantity <= 0 {
+            errors.push(OpeningBatchErrorDto {
+                row_index: idx,
+                article_number: row.article_number.clone(),
+                error: "quantity must be positive".into(),
+            });
+            continue;
+        }
+        let norm = row.article_number.trim().to_uppercase();
+        if norm.is_empty() {
+            errors.push(OpeningBatchErrorDto {
+                row_index: idx,
+                article_number: row.article_number.clone(),
+                error: "missing article number".into(),
+            });
+            continue;
+        }
+        let product_id: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM products WHERE article_number_norm = ? AND archived_at IS NULL",
+        )
+        .bind(&norm)
+        .fetch_optional(&state.pool)
+        .await?;
+        let Some(pid) = product_id else {
+            errors.push(OpeningBatchErrorDto {
+                row_index: idx,
+                article_number: row.article_number.clone(),
+                error: format!("no active product with article '{}'", row.article_number),
+            });
+            continue;
+        };
+        resolved.push((idx, pid, row));
+    }
+
+    let mut posted_count: i64 = 0;
+    for (idx, pid, row) in resolved {
+        let result = post_opening(
+            state,
+            principal,
+            PostStockInput {
+                product_id: pid,
+                location_id: row.location_id,
+                quantity: row.quantity,
+                unit_cost_minor: row.unit_cost_minor,
+                reason: row.reason.clone(),
+            },
+            correlation_id,
+        )
+        .await;
+        match result {
+            Ok(_) => {
+                posted_count += 1;
+            }
+            Err(e) => {
+                errors.push(OpeningBatchErrorDto {
+                    row_index: idx,
+                    article_number: row.article_number.clone(),
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(OpeningBatchResultDto {
+        posted_count,
+        error_count: errors.len() as i64,
+        errors,
+    })
 }

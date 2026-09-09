@@ -107,6 +107,14 @@ pub fn run() {
             commands::inventory::stock_repair,
             commands::inventory::stock_reserve,
             commands::inventory::stock_release,
+            commands::inventory::stock_reverse,
+            commands::inventory::stock_low_list,
+            commands::inventory::stock_count_start,
+            commands::inventory::stock_count_line_update,
+            commands::inventory::stock_count_lines,
+            commands::inventory::stock_count_post,
+            commands::inventory::stock_count_list,
+            commands::inventory::stock_opening_batch,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

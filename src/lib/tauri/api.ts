@@ -663,3 +663,106 @@ export const stockReserve = (session: string, input: ReleaseStockInput) =>
 
 export const stockRelease = (session: string, input: ReleaseStockInput) =>
   runCommand<StockMovementDto>("stock_release", { session, input });
+
+// --- Phase 4 additions: reversal, low-stock, count sessions, batch import ----
+
+export type ReverseMovementInput = {
+  movementId: number;
+  reason?: string | null;
+};
+
+export type LowStockItemDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  thumbnailPath: string | null;
+  minimumStock: number;
+  totalAvailable: number;
+  totalOnHand: number;
+};
+
+export type CountSessionDto = {
+  id: number;
+  locationId: number;
+  locationName: string | null;
+  sessionNumber: string | null;
+  status: string;
+  notes: string | null;
+  createdBy: number;
+  createdAt: string;
+  postedAt: string | null;
+};
+
+export type CountLineDto = {
+  id: number;
+  sessionId: number;
+  productId: number;
+  articleNumber: string | null;
+  productName: string | null;
+  expectedQty: number;
+  countedQty: number;
+  varianceQty: number;
+};
+
+export type StartCountInput = {
+  locationId: number;
+  notes?: string | null;
+};
+
+export type CountLineInput = {
+  sessionId: number;
+  productId: number;
+  countedQty: number;
+};
+
+export type PostCountInput = {
+  sessionId: number;
+};
+
+export type OpeningBatchRowInput = {
+  articleNumber: string;
+  locationId: number;
+  quantity: number;
+  unitCostMinor?: number | null;
+  reason?: string | null;
+};
+
+export type OpeningBatchInput = {
+  rows: OpeningBatchRowInput[];
+};
+
+export type OpeningBatchErrorDto = {
+  rowIndex: number;
+  articleNumber: string;
+  error: string;
+};
+
+export type OpeningBatchResultDto = {
+  postedCount: number;
+  errorCount: number;
+  errors: OpeningBatchErrorDto[];
+};
+
+export const stockReverse = (session: string, input: ReverseMovementInput) =>
+  runCommand<StockMovementDto>("stock_reverse", { session, input });
+
+export const stockLowList = (session: string) =>
+  runCommand<LowStockItemDto[]>("stock_low_list", { session });
+
+export const stockCountStart = (session: string, input: StartCountInput) =>
+  runCommand<CountSessionDto>("stock_count_start", { session, input });
+
+export const stockCountLineUpdate = (session: string, input: CountLineInput) =>
+  runCommand<CountLineDto>("stock_count_line_update", { session, input });
+
+export const stockCountLines = (session: string, sessionId: number) =>
+  runCommand<CountLineDto[]>("stock_count_lines", { session, sessionId });
+
+export const stockCountPost = (session: string, input: PostCountInput) =>
+  runCommand<StockMovementDto[]>("stock_count_post", { session, input });
+
+export const stockCountList = (session: string, locationId?: number | null) =>
+  runCommand<CountSessionDto[]>("stock_count_list", { session, locationId: locationId ?? null });
+
+export const stockOpeningBatch = (session: string, input: OpeningBatchInput) =>
+  runCommand<OpeningBatchResultDto>("stock_opening_batch", { session, input });

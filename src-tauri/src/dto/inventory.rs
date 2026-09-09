@@ -111,3 +111,106 @@ pub struct ReleaseStockInput {
     #[serde(default)]
     pub reason: Option<String>,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReverseMovementInput {
+    pub movement_id: i64,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LowStockItemDto {
+    pub product_id: i64,
+    pub article_number: String,
+    pub product_name: String,
+    pub thumbnail_path: Option<String>,
+    pub minimum_stock: i64,
+    pub total_available: i64,
+    pub total_on_hand: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartCountInput {
+    pub location_id: i64,
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountSessionDto {
+    pub id: i64,
+    pub location_id: i64,
+    pub location_name: Option<String>,
+    pub session_number: Option<String>,
+    pub status: String,
+    pub notes: Option<String>,
+    pub created_by: i64,
+    pub created_at: String,
+    pub posted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountLineInput {
+    pub session_id: i64,
+    pub product_id: i64,
+    pub counted_qty: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CountLineDto {
+    pub id: i64,
+    pub session_id: i64,
+    pub product_id: i64,
+    pub article_number: Option<String>,
+    pub product_name: Option<String>,
+    pub expected_qty: i64,
+    pub counted_qty: i64,
+    pub variance_qty: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostCountInput {
+    pub session_id: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningBatchRowInput {
+    pub article_number: String,
+    pub location_id: i64,
+    pub quantity: i64,
+    #[serde(default)]
+    pub unit_cost_minor: Option<i64>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningBatchInput {
+    pub rows: Vec<OpeningBatchRowInput>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningBatchResultDto {
+    pub posted_count: i64,
+    pub error_count: i64,
+    pub errors: Vec<OpeningBatchErrorDto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpeningBatchErrorDto {
+    pub row_index: usize,
+    pub article_number: String,
+    pub error: String,
+}
