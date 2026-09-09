@@ -1,6 +1,8 @@
 pub mod audit;
 pub mod auth;
+pub mod catalogue;
 pub mod first_run;
+pub mod products;
 pub mod proof;
 pub mod roles;
 pub mod settings;

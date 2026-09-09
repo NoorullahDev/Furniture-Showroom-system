@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 2);
+    assert_eq!(info.version, 3);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -50,6 +50,26 @@ async fn db_opens_runs_migrations_and_seeds() {
         .unwrap();
     assert_eq!(loc_count, 1);
 
+    // Phase 3 catalogue seeds (units) are present and idempotent.
+    let unit_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM units")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(unit_count, 5);
+
+    // Catalogue tables exist with the expected live-unique article index.
+    let product_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type IN ('table', 'index') AND name IN (
+             'categories', 'product_types', 'units', 'products',
+             'product_images', 'product_attributes', 'uq_products_article_live'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(product_tables, 7);
+
     // Rerun migrations: must be a no-op.
     infra::db::MIGRATOR.run(&pool).await.unwrap();
     let version_again: i64 =
@@ -57,7 +77,7 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 2);
+    assert_eq!(version_again, 3);
 
     // Owner role template grants every permission (Phase 2 seed invariant).
     let owner_has_all: i64 = sqlx::query_scalar(

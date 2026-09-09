@@ -12,6 +12,7 @@ pub async fn audit_query(
     session: String,
     action: Option<String>,
     entity_type: Option<String>,
+    entity_id: Option<String>,
     user_id: Option<i64>,
     from: Option<String>,
     to: Option<String>,
@@ -26,6 +27,7 @@ pub async fn audit_query(
             &application::audit::AuditFilter {
                 action,
                 entity_type,
+                entity_id,
                 user_id,
                 from,
                 to,

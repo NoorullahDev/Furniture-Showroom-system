@@ -28,8 +28,9 @@ import { UserManagement } from "@/components/users/user-management";
 import { RoleManagement } from "@/components/roles/role-management";
 import { AuditViewer } from "@/components/audit/audit-viewer";
 import { SettingsPage } from "@/components/settings/settings-page";
+import { CataloguePage } from "@/components/catalogue/catalogue-page";
 
-export type ShellView = "dashboard" | "users" | "roles" | "audit" | "settings";
+export type ShellView = "dashboard" | "catalogue" | "users" | "roles" | "audit" | "settings";
 
 const IDLE_LOCK_MS = 10 * 60 * 1000; // 10 minutes without activity.
 
@@ -46,6 +47,10 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Overview",
     items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard, view: "dashboard" }],
+  },
+  {
+    label: "Catalogue",
+    items: [{ id: "catalogue", label: "Catalogue", icon: Package, view: "catalogue" }],
   },
   {
     label: "Administration",
@@ -72,7 +77,6 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Operations (coming soon)",
     items: [
       { id: "sales", label: "Sales", icon: ShoppingCart, phase: "P6" },
-      { id: "catalogue", label: "Catalogue", icon: Package, phase: "P3" },
       { id: "inventory", label: "Inventory", icon: Boxes, phase: "P4" },
       { id: "purchases", label: "Purchases", icon: Truck, phase: "P5" },
       { id: "customers", label: "Customers", icon: Users, phase: "P6" },
@@ -89,6 +93,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
 
 const VIEW_TITLES: Record<ShellView, string> = {
   dashboard: "Dashboard",
+  catalogue: "Catalogue",
   users: "Users",
   roles: "Roles & permissions",
   audit: "Audit log",
@@ -289,6 +294,7 @@ export function AppShell() {
 
         <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
           {view === "dashboard" && <DashboardView />}
+          {view === "catalogue" && <CataloguePage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}

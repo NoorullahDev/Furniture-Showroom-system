@@ -23,6 +23,11 @@ export function asCommandError(e: unknown): CommandError {
   return toCommandError(e);
 }
 
+/** Human-readable message from a thrown command error. */
+export function commandErrorMessage(e: unknown): string {
+  return toCommandError(e).message || "Unexpected error";
+}
+
 export async function runCommand<T>(
   command: string,
   args?: Record<string, unknown>,

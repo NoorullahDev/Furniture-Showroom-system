@@ -1,5 +1,6 @@
 pub mod audit;
 mod backup;
+pub mod base64;
 pub mod clock;
 pub mod db;
 pub mod fonts;
@@ -15,10 +16,13 @@ pub mod write_coordinator;
 
 pub use audit::{AuditInput, AuditService};
 pub use backup::{create_backup, list_backups};
+pub use base64::{encode as base64_encode, image_mime};
 pub use clock::{Clock, SystemClock};
 pub use db::{integrity_check, open, DbInfo, IntegrityInfo};
 pub use id::{IdGenerator, UuidIdGenerator};
-pub use image_pipeline::{import_image, ImportedImage};
+pub use image_pipeline::{
+    discard_generated_images, import_image, ImportedImage, MAX_PRODUCT_IMAGES,
+};
 pub use logging::{install as install_logging, redact};
 pub use paths::FilePaths;
 pub use pdf::generate_proof_pdf;

@@ -6,6 +6,7 @@ use crate::state::AppState;
 pub struct AuditFilter {
     pub action: Option<String>,
     pub entity_type: Option<String>,
+    pub entity_id: Option<String>,
     pub user_id: Option<i64>,
     pub from: Option<String>,
     pub to: Option<String>,
@@ -18,6 +19,7 @@ pub struct AuditFilter {
 const FILTER_CLAUSE: &str = "
   WHERE ( ? IS NULL OR action = ? )
     AND ( ? IS NULL OR entity_type = ? )
+    AND ( ? IS NULL OR entity_id = ? )
     AND ( ? IS NULL OR user_id = ? )
     AND ( ? IS NULL OR created_at >= ? )
     AND ( ? IS NULL OR created_at <= ? )";
@@ -76,6 +78,8 @@ pub async fn query_audit(
         .bind(filter.action.clone())
         .bind(filter.entity_type.clone())
         .bind(filter.entity_type.clone())
+        .bind(filter.entity_id.clone())
+        .bind(filter.entity_id.clone())
         .bind(filter.user_id)
         .bind(filter.user_id)
         .bind(from.clone())
@@ -97,6 +101,8 @@ pub async fn query_audit(
         .bind(filter.action.clone())
         .bind(filter.entity_type.clone())
         .bind(filter.entity_type.clone())
+        .bind(filter.entity_id.clone())
+        .bind(filter.entity_id.clone())
         .bind(filter.user_id)
         .bind(filter.user_id)
         .bind(from.clone())
