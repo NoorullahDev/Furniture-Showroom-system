@@ -6,6 +6,7 @@ use crate::infrastructure::redact;
 
 pub mod catalogue;
 pub mod inventory;
+pub mod purchases;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 4);
+    assert_eq!(info.version, 5);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -31,7 +31,7 @@ async fn db_opens_runs_migrations_and_seeds() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(perm_count, 25);
+    assert_eq!(perm_count, 29);
 
     let owner_perm_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
@@ -91,7 +91,7 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 4);
+    assert_eq!(version_again, 5);
 
     // Owner role template grants every permission (Phase 2 seed invariant).
     let owner_has_all: i64 = sqlx::query_scalar(

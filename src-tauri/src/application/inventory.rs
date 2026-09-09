@@ -16,7 +16,10 @@ use crate::state::AppState;
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn require_positive(conn: &mut SqliteConnection, product_id: i64) -> Result<(), AppError> {
+pub(crate) async fn require_positive(
+    conn: &mut SqliteConnection,
+    product_id: i64,
+) -> Result<(), AppError> {
     let exists: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM products WHERE id = ? AND archived_at IS NULL")
             .bind(product_id)
@@ -28,7 +31,7 @@ async fn require_positive(conn: &mut SqliteConnection, product_id: i64) -> Resul
     Ok(())
 }
 
-async fn require_active_location(
+pub(crate) async fn require_active_location(
     conn: &mut SqliteConnection,
     location_id: i64,
 ) -> Result<(), AppError> {
@@ -64,7 +67,10 @@ async fn allow_negative_stock(conn: &mut SqliteConnection) -> Result<bool, AppEr
 
 /// Increment the location's move_num_seq and return the new value. Called
 /// inside a transaction so no two threads can see the same number.
-async fn next_move_seq(conn: &mut SqliteConnection, location_id: i64) -> Result<i64, AppError> {
+pub(crate) async fn next_move_seq(
+    conn: &mut SqliteConnection,
+    location_id: i64,
+) -> Result<i64, AppError> {
     sqlx::query(
         "UPDATE locations SET move_num_seq = move_num_seq + 1,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
@@ -80,7 +86,7 @@ async fn next_move_seq(conn: &mut SqliteConnection, location_id: i64) -> Result<
 }
 
 /// Ensure a stock_balances row exists, then apply a signed delta to on_hand.
-async fn apply_on_hand_delta(
+pub(crate) async fn apply_on_hand_delta(
     conn: &mut SqliteConnection,
     product_id: i64,
     location_id: i64,
@@ -145,7 +151,7 @@ async fn apply_repair_shift(
 }
 
 /// Post a single FIFO cost layer for a receipt movement.
-async fn post_cost_layer(
+pub(crate) async fn post_cost_layer(
     conn: &mut SqliteConnection,
     product_id: i64,
     qty: i64,
@@ -168,7 +174,7 @@ async fn post_cost_layer(
 /// Withdraw `qty` from the oldest available cost layers (FIFO). Returns the
 /// weighted-average unit cost of the withdrawn quantity, used for issue
 /// movements.
-async fn withdraw_cost_layers(
+pub(crate) async fn withdraw_cost_layers(
     conn: &mut SqliteConnection,
     product_id: i64,
     mut qty: i64,

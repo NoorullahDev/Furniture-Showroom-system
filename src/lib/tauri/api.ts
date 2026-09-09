@@ -766,3 +766,292 @@ export const stockCountList = (session: string, locationId?: number | null) =>
 
 export const stockOpeningBatch = (session: string, input: OpeningBatchInput) =>
   runCommand<OpeningBatchResultDto>("stock_opening_batch", { session, input });
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Suppliers, purchases, payables, and cash
+// ---------------------------------------------------------------------------
+
+export type SupplierDto = {
+  id: number;
+  code: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  openingBalanceMinor: number;
+  balanceMinor: number;
+  isActive: boolean;
+  createdAt: string;
+};
+
+export type SupplierInput = {
+  code: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  openingBalanceMinor?: number | null;
+  isActive?: boolean | null;
+};
+
+export type SupplierLedgerEntryDto = {
+  id: number;
+  entryType: string;
+  documentType?: string | null;
+  documentId?: number | null;
+  amountMinor: number;
+  balanceAfterMinor: number;
+  notes?: string | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type PaymentMethodDto = {
+  id: number;
+  code: string;
+  name: string;
+  isActive: boolean;
+};
+
+export type CashAccountDto = {
+  id: number;
+  code: string;
+  name: string;
+  kind: string;
+  openingBalanceMinor: number;
+  balanceMinor: number;
+  isActive: boolean;
+};
+
+export type CashAccountInput = {
+  code: string;
+  name: string;
+  kind?: string | null;
+  openingBalanceMinor?: number | null;
+};
+
+export type CashEntryDto = {
+  id: number;
+  cashAccountId: number;
+  entryType: string;
+  amountMinor: number;
+  referenceType?: string | null;
+  referenceId?: number | null;
+  reason?: string | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type PurchaseItemInput = {
+  productId: number;
+  quantity: number;
+  unitCostMinor: number;
+};
+
+export type PurchaseCreateInput = {
+  supplierId: number;
+  locationId: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  purchaseDate?: string | null;
+  notes?: string | null;
+  items: PurchaseItemInput[];
+};
+
+export type PurchasePostInput = {
+  purchaseId: number;
+  idempotencyKey?: string | null;
+  paidMinor?: number | null;
+  cashAccountId?: number | null;
+  paymentMethodId?: number | null;
+};
+
+export type PurchaseItemDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitCostMinor: number;
+  lineTotalMinor: number;
+};
+
+export type PurchaseDto = {
+  id: number;
+  purchaseNumber?: string | null;
+  supplierId: number;
+  supplierName: string;
+  locationId: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  purchaseDate: string;
+  status: string;
+  totalMinor: number;
+  paidMinor: number;
+  dueMinor: number;
+  notes?: string | null;
+  items: PurchaseItemDto[];
+  createdAt: string;
+  postedAt?: string | null;
+};
+
+export type PayableAgingRowDto = {
+  purchaseId: number;
+  purchaseNumber?: string | null;
+  supplierId: number;
+  supplierName: string;
+  invoiceDate: string;
+  dueMinor: number;
+  ageDays: number;
+  bucket: string;
+};
+
+export type SupplierPaymentInput = {
+  supplierId: number;
+  paymentMethodId: number;
+  cashAccountId: number;
+  paymentDate: string;
+  amountMinor: number;
+  notes?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type PaymentAllocationDto = {
+  purchaseId: number;
+  purchaseNumber?: string | null;
+  amountMinor: number;
+};
+
+export type SupplierPaymentDto = {
+  id: number;
+  paymentNumber?: string | null;
+  supplierId: number;
+  supplierName: string;
+  paymentMethodId: number;
+  paymentMethodName: string;
+  cashAccountId: number;
+  cashAccountName: string;
+  paymentDate: string;
+  amountMinor: number;
+  status: string;
+  notes?: string | null;
+  allocations: PaymentAllocationDto[];
+  createdAt: string;
+  voidedAt?: string | null;
+};
+
+export type SupplierPaymentVoidInput = {
+  paymentId: number;
+  reason?: string | null;
+};
+
+export type SupplierReturnItemInput = {
+  productId: number;
+  quantity: number;
+  unitCostMinor: number;
+};
+
+export type SupplierReturnCreateInput = {
+  supplierId: number;
+  purchaseId?: number | null;
+  locationId: number;
+  returnDate: string;
+  refundMinor?: number | null;
+  notes?: string | null;
+  items: SupplierReturnItemInput[];
+};
+
+export type SupplierReturnPostInput = {
+  returnId: number;
+  idempotencyKey?: string | null;
+};
+
+export type SupplierReturnItemDto = {
+  productId: number;
+  articleNumber: string;
+  productName: string;
+  quantity: number;
+  unitCostMinor: number;
+  lineTotalMinor: number;
+};
+
+export type SupplierReturnDto = {
+  id: number;
+  returnNumber?: string | null;
+  supplierId: number;
+  supplierName: string;
+  purchaseId?: number | null;
+  locationId: number;
+  returnDate: string;
+  status: string;
+  totalMinor: number;
+  refundMinor: number;
+  dueReductionMinor: number;
+  notes?: string | null;
+  items: SupplierReturnItemDto[];
+  createdAt: string;
+  postedAt?: string | null;
+};
+
+export const supplierList = (session: string) =>
+  runCommand<SupplierDto[]>("supplier_list", { session });
+
+export const supplierCreate = (session: string, input: SupplierInput) =>
+  runCommand<SupplierDto>("supplier_create", { session, input });
+
+export const supplierUpdate = (session: string, supplierId: number, input: SupplierInput) =>
+  runCommand<SupplierDto>("supplier_update", { session, supplierId, input });
+
+export const supplierGet = (session: string, supplierId: number) =>
+  runCommand<SupplierDto>("supplier_get", { session, supplierId });
+
+export const supplierLedger = (session: string, supplierId: number) =>
+  runCommand<SupplierLedgerEntryDto[]>("supplier_ledger", { session, supplierId });
+
+export const paymentMethodList = (session: string) =>
+  runCommand<PaymentMethodDto[]>("payment_method_list", { session });
+
+export const cashAccountList = (session: string) =>
+  runCommand<CashAccountDto[]>("cash_account_list", { session });
+
+export const cashAccountCreate = (session: string, input: CashAccountInput) =>
+  runCommand<CashAccountDto>("cash_account_create", { session, input });
+
+export const cashEntryList = (session: string, accountId?: number | null, limit?: number | null) =>
+  runCommand<CashEntryDto[]>("cash_entry_list", {
+    session,
+    accountId: accountId ?? null,
+    limit: limit ?? null,
+  });
+
+export const purchaseCreate = (session: string, input: PurchaseCreateInput) =>
+  runCommand<PurchaseDto>("purchase_create", { session, input });
+
+export const purchasePost = (session: string, input: PurchasePostInput) =>
+  runCommand<PurchaseDto>("purchase_post", { session, input });
+
+export const purchaseList = (session: string) =>
+  runCommand<PurchaseDto[]>("purchase_list", { session });
+
+export const purchaseGet = (session: string, purchaseId: number) =>
+  runCommand<PurchaseDto>("purchase_get", { session, purchaseId });
+
+export const payableAging = (session: string) =>
+  runCommand<PayableAgingRowDto[]>("payable_aging", { session });
+
+export const supplierPaymentCreate = (session: string, input: SupplierPaymentInput) =>
+  runCommand<SupplierPaymentDto>("supplier_payment_create", { session, input });
+
+export const supplierPaymentVoid = (session: string, input: SupplierPaymentVoidInput) =>
+  runCommand<SupplierPaymentDto>("supplier_payment_void", { session, input });
+
+export const supplierPaymentList = (session: string) =>
+  runCommand<SupplierPaymentDto[]>("supplier_payment_list", { session });
+
+export const supplierReturnCreate = (session: string, input: SupplierReturnCreateInput) =>
+  runCommand<SupplierReturnDto>("supplier_return_create", { session, input });
+
+export const supplierReturnPost = (session: string, input: SupplierReturnPostInput) =>
+  runCommand<SupplierReturnDto>("supplier_return_post", { session, input });
+
+export const supplierReturnList = (session: string) =>
+  runCommand<SupplierReturnDto[]>("supplier_return_list", { session });

@@ -30,11 +30,13 @@ import { AuditViewer } from "@/components/audit/audit-viewer";
 import { SettingsPage } from "@/components/settings/settings-page";
 import { CataloguePage } from "@/components/catalogue/catalogue-page";
 import { InventoryPage } from "@/components/inventory/inventory-page";
+import { PurchasesPage } from "@/components/purchases/purchases-page";
 
 export type ShellView =
   | "dashboard"
   | "catalogue"
   | "inventory"
+  | "purchases"
   | "users"
   | "roles"
   | "audit"
@@ -86,10 +88,13 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
+    label: "Purchasing",
+    items: [{ id: "purchases", label: "Purchases", icon: Truck, view: "purchases" }],
+  },
+  {
     label: "Operations (coming soon)",
     items: [
       { id: "sales", label: "Sales", icon: ShoppingCart, phase: "P6" },
-      { id: "purchases", label: "Purchases", icon: Truck, phase: "P5" },
       { id: "customers", label: "Customers", icon: Users, phase: "P6" },
     ],
   },
@@ -106,6 +111,7 @@ const VIEW_TITLES: Record<ShellView, string> = {
   dashboard: "Dashboard",
   catalogue: "Catalogue",
   inventory: "Inventory",
+  purchases: "Purchases",
   users: "Users",
   roles: "Roles & permissions",
   audit: "Audit log",
@@ -308,6 +314,7 @@ export function AppShell() {
           {view === "dashboard" && <DashboardView />}
           {view === "catalogue" && <CataloguePage />}
           {view === "inventory" && <InventoryPage />}
+          {view === "purchases" && <PurchasesPage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}

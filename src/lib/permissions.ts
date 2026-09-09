@@ -40,6 +40,31 @@ export const PERMISSION_GROUPS: { group: string; permissions: PermissionDef[] }[
     ],
   },
   {
+    group: "Purchasing",
+    permissions: [
+      {
+        code: "supplier.create",
+        label: "Create suppliers",
+        description: "Add and edit supplier profiles.",
+      },
+      {
+        code: "purchase.create",
+        label: "Create purchases",
+        description: "Record and post supplier purchases.",
+      },
+      {
+        code: "supplier.return",
+        label: "Post supplier returns",
+        description: "Return goods to suppliers.",
+      },
+      {
+        code: "payable.view",
+        label: "View payables",
+        description: "See supplier balances, statements, and aging.",
+      },
+    ],
+  },
+  {
     group: "Inventory",
     permissions: [
       {

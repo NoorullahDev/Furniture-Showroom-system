@@ -5,8 +5,10 @@ pub mod first_run;
 pub mod inventory;
 pub mod products;
 pub mod proof;
+pub mod purchases;
 pub mod roles;
 pub mod settings;
+pub mod suppliers;
 pub mod users;
 pub mod wrapper;
 
