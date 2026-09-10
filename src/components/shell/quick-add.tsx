@@ -63,6 +63,7 @@ type QuickAction = {
   description: string;
   icon: React.ElementType;
   permissionAny?: string[];
+  permissionAll?: string[];
   form?: Exclude<ShortForm, null>;
   view?: ShellView;
 };
@@ -90,6 +91,7 @@ const ACTIONS: QuickAction[] = [
     description: "Record a receipt from a customer",
     icon: Banknote,
     permissionAny: ["payment.receive"],
+    permissionAll: ["payable.view"],
     form: "receipt",
   },
   {
@@ -106,6 +108,7 @@ const ACTIONS: QuickAction[] = [
     description: "Post an expense from a cash account",
     icon: Wallet,
     permissionAny: ["expense.create"],
+    permissionAll: ["expense.view", "payable.view"],
     form: "expense",
   },
   {
@@ -794,7 +797,9 @@ export function QuickAddPalette({
   const visible = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return ACTIONS.filter((a) => {
-      const allowed = !a.permissionAny || a.permissionAny.some((p) => hasPermission(p));
+      const any = !a.permissionAny || a.permissionAny.some((p) => hasPermission(p));
+      const all = !a.permissionAll || a.permissionAll.every((p) => hasPermission(p));
+      const allowed = any && all;
       if (!allowed) return false;
       if (!q) return true;
       return `${a.label} ${a.description}`.toLowerCase().includes(q);

@@ -106,7 +106,7 @@ pub async fn global_search(
         _ => 99,
     };
 
-    hits.sort_by_key(|h| (kind_order(h.kind), h.rank, h.title.to_lowercase()));
+    hits.sort_by_key(|h| (h.rank, kind_order(h.kind), h.title.to_lowercase()));
 
     let results = hits
         .into_iter()
@@ -161,7 +161,7 @@ async fn search_products(
                 r.try_get(0)?,
                 r.try_get(1)?,
                 Some(format!("Article {}", r.try_get::<String, _>(2)?)),
-                Some(r.try_get::<String, _>(2)?),
+                None,
                 r.try_get::<bool, _>(3)? || r.try_get::<bool, _>(4)?,
                 r.try_get::<bool, _>(5)? || r.try_get::<bool, _>(6)?,
             ))

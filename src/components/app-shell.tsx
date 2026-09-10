@@ -244,12 +244,16 @@ export function AppShell() {
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (e.shiftKey && key === "a") {
         e.preventDefault();
-        setQuickAddOpen(true);
-      } else if (mod && e.key.toLowerCase() === "k") {
+        setSearchOpen(false);
+        setQuickAddOpen((o) => !o);
+      } else if (key === "k") {
         e.preventDefault();
-        setSearchOpen(true);
+        setQuickAddOpen(false);
+        setSearchOpen((o) => !o);
       }
     };
     window.addEventListener("keydown", onKey);

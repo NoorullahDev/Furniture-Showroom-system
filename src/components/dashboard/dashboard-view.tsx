@@ -315,6 +315,7 @@ export function DashboardView({ onNavigate }: { onNavigate: (view: ShellView) =>
     tone: "danger" | "warning";
     view: ShellView;
     count: number;
+    badge?: string;
   }[] = [];
 
   if (data) {
@@ -347,6 +348,7 @@ export function DashboardView({ onNavigate }: { onNavigate: (view: ShellView) =>
         tone: "danger",
         view: "sales",
         count: data.overdueDuesMinor,
+        badge: `${formatPkr(data.overdueDuesMinor)}`,
       });
     if (data.openDamageCount > 0)
       attention.push({
@@ -412,7 +414,7 @@ export function DashboardView({ onNavigate }: { onNavigate: (view: ShellView) =>
         title="Dashboard"
         subtitle={
           data
-            ? `Updated ${formatDateTime(data.asOf)} · today figures are local-day based`
+            ? `Updated ${formatDateTime(data.asOf)} · daily, month and trend figures use document dates`
             : "Daily command center"
         }
         actions={
@@ -592,7 +594,7 @@ export function DashboardView({ onNavigate }: { onNavigate: (view: ShellView) =>
                       </span>
                     </span>
                     <Badge variant={item.tone === "danger" ? "danger" : "warning"}>
-                      {item.count}
+                      {item.badge ?? String(item.count)}
                     </Badge>
                   </button>
                 </li>

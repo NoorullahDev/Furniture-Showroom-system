@@ -345,8 +345,77 @@ async fn search_customers_requires_customer_view() {
 }
 
 // ---------------------------------------------------------------------------
-// Sale and invoice-number search require sale.create/invoice.print.
+// Exact document-number matches rank before substring product matches, so
+// searching an invoice number finds the document first (plan §16 "Rank exact
+// article and document-number matches first").
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn exact_document_reference_ranks_before_product_substring() {
+    let dir = temp_dir("rank-first");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "owner").await;
+
+    // A product whose name contains the invoice number only as a substring
+    // (rank 2). It must not outrank the exact sale-number match.
+    let product = stock_product(&state, &owner, "SOFA-S1", 5, 500).await;
+    sqlx::query("UPDATE products SET name = ? WHERE id = ?")
+        .bind("S-000001 accessory set")
+        .bind(product)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+
+    set_price(&state, product, 4000).await;
+    application::customers::create(
+        &state,
+        &owner,
+        CustomerInput {
+            code: "C-RANK".into(),
+            name: "Ranking customer".into(),
+            phone: None,
+            email: None,
+            address: None,
+            credit_limit_minor: Some(500_000),
+            credit_days: None,
+            opening_balance_minor: Some(0),
+            is_active: Some(true),
+        },
+        "corr-cust",
+    )
+    .await
+    .unwrap();
+    let cust_id: i64 = sqlx::query_scalar("SELECT id FROM customers WHERE code = 'C-RANK'")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    confirm_credit_sale(&state, &owner, cust_id, product).await;
+
+    let sale_number: String =
+        sqlx::query_scalar("SELECT sale_number FROM sales ORDER BY id DESC LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+
+    let r = application::search::global_search(&state, &owner, &sale_number)
+        .await
+        .unwrap();
+    assert!(!r.results.is_empty());
+    assert_eq!(
+        r.results[0].kind, "sale",
+        "exact sale number must lead results"
+    );
+    assert_eq!(r.results[0].rank, 0, "exact sale match must be rank 0");
+    if let Some(product_hit) = r.results.iter().find(|h| h.kind == "product") {
+        assert!(
+            product_hit.rank > 0,
+            "substring product must be ranked below the exact document"
+        );
+    }
+
+    state.pool.close().await;
+    let _ = fs::remove_dir_all(&dir);
+}
 
 #[tokio::test]
 async fn search_sales_requires_sale_permission() {
