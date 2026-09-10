@@ -185,6 +185,8 @@ pub fn run() {
             commands::expenses::profit_summary,
             commands::dashboard::dashboard_summary,
             commands::search::global_search,
+            commands::reports::report_export,
+            commands::reports::open_file,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

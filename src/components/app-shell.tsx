@@ -39,6 +39,7 @@ import { PurchasesPage } from "@/components/purchases/purchases-page";
 import { SalesPage } from "@/components/sales/sales-page";
 import { FulfilmentPage } from "@/components/fulfilment/fulfilment-page";
 import { ExpensesPage } from "@/components/expenses/expenses-page";
+import { ReportsPage } from "@/components/reports/reports-page";
 
 export type { ShellView } from "@/lib/shell";
 
@@ -107,7 +108,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Office (coming soon)",
     items: [
-      { id: "reports", label: "Reports", icon: FileText, phase: "P11" },
+      { id: "reports", label: "Reports", icon: FileText, view: "reports", permission: "reports.view" },
       { id: "invoices", label: "Invoices", icon: ReceiptText, phase: "P6" },
     ],
   },
@@ -124,6 +125,7 @@ const VIEW_TITLES: Record<ShellView, string> = {
   users: "Users",
   roles: "Roles & permissions",
   audit: "Audit log",
+  reports: "Reports",
   settings: "Settings",
 };
 
@@ -348,6 +350,7 @@ export function AppShell() {
           {view === "sales" && <SalesPage />}
           {view === "fulfilment" && <FulfilmentPage />}
           {view === "finance" && <ExpensesPage />}
+          {view === "reports" && <ReportsPage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}

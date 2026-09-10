@@ -9,6 +9,7 @@ pub mod inventory;
 pub mod products;
 pub mod proof;
 pub mod purchases;
+pub mod reports;
 pub mod roles;
 pub mod sales;
 pub mod search;

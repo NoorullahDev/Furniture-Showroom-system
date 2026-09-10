@@ -6,6 +6,15 @@ use printpdf::{BuiltinFont, Mm, PdfDocument};
 
 use crate::error::AppError;
 
+const PAGE_W: f32 = 210.0;
+const PAGE_H: f32 = 297.0;
+const MARGIN_LEFT: f32 = 15.0;
+const MARGIN_RIGHT: f32 = 15.0;
+const CONTENT_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
+const HEADER_TOP_Y: f32 = 280.0;
+const ROW_HEIGHT: f32 = 7.0;
+const PAGE_BREAK_Y: f32 = 35.0;
+
 pub struct ProofPdf {
     pub path: String,
     pub pages: usize,
@@ -744,6 +753,168 @@ pub fn generate_proof_pdf(reports_dir: &Path, fonts_dir: &Path) -> Result<ProofP
 
     Ok(ProofPdf {
         pages: 1,
+        bytes,
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+#[derive(Clone)]
+pub struct ReportPdfColumn {
+    pub header: String,
+    pub width_ratio: f32,
+    pub align_left: bool,
+}
+
+pub struct ReportPdfInput {
+    pub title: String,
+    pub shop_name: String,
+    pub shop_address: Option<String>,
+    pub filter_summary: String,
+    pub generated_at: String,
+    pub columns: Vec<ReportPdfColumn>,
+    pub rows: Vec<Vec<String>>,
+    pub totals: Option<Vec<String>>,
+}
+
+pub struct ReportPdf {
+    pub path: String,
+    pub pages: usize,
+    pub bytes: u64,
+}
+
+fn draw_header(
+    layer: &printpdf::PdfLayerReference,
+    input: &ReportPdfInput,
+    helvetica: &printpdf::IndirectFontRef,
+    helvetica_bold: &printpdf::IndirectFontRef,
+) {
+    layer.use_text(
+        &input.shop_name,
+        16.0,
+        Mm(MARGIN_LEFT),
+        Mm(HEADER_TOP_Y),
+        helvetica_bold,
+    );
+    if let Some(addr) = &input.shop_address {
+        layer.use_text(
+            addr,
+            8.0,
+            Mm(MARGIN_LEFT),
+            Mm(HEADER_TOP_Y - 8.0),
+            helvetica,
+        );
+    }
+    layer.use_text(
+        &input.title,
+        13.0,
+        Mm(MARGIN_LEFT),
+        Mm(HEADER_TOP_Y - 18.0),
+        helvetica_bold,
+    );
+    layer.use_text(
+        &input.filter_summary,
+        8.0,
+        Mm(MARGIN_LEFT),
+        Mm(HEADER_TOP_Y - 26.0),
+        helvetica,
+    );
+    layer.use_text(
+        format!("Generated: {}", input.generated_at),
+        7.0,
+        Mm(130.0),
+        Mm(HEADER_TOP_Y - 26.0),
+        helvetica,
+    );
+}
+
+fn draw_column_headers(
+    layer: &printpdf::PdfLayerReference,
+    input: &ReportPdfInput,
+    y: f32,
+    col_x: &[f32],
+    helvetica_bold: &printpdf::IndirectFontRef,
+) {
+    for (i, col) in input.columns.iter().enumerate() {
+        layer.use_text(&col.header, 8.0, Mm(col_x[i]), Mm(y), helvetica_bold);
+    }
+}
+
+pub fn generate_report_pdf(
+    input: &ReportPdfInput,
+    _fonts_dir: &Path,
+    reports_dir: &Path,
+) -> Result<ReportPdf, AppError> {
+    let (doc, page1, layer1) = PdfDocument::new(&input.shop_name, Mm(PAGE_W), Mm(PAGE_H), "Report");
+
+    let helvetica = doc
+        .add_builtin_font(BuiltinFont::Helvetica)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    let helvetica_bold = doc
+        .add_builtin_font(BuiltinFont::HelveticaBold)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+
+    let total_ratio: f32 = input.columns.iter().map(|c| c.width_ratio).sum();
+    let mut col_x: Vec<f32> = Vec::with_capacity(input.columns.len());
+    let mut x = MARGIN_LEFT;
+    for col in &input.columns {
+        col_x.push(x);
+        x += CONTENT_W * (col.width_ratio / total_ratio);
+    }
+
+    let mut page_count: usize = 1;
+    let mut layer = doc.get_page(page1).get_layer(layer1);
+
+    draw_header(&layer, input, &helvetica, &helvetica_bold);
+
+    let mut y = HEADER_TOP_Y - 36.0;
+    draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
+    y -= ROW_HEIGHT;
+
+    for row in &input.rows {
+        if y < PAGE_BREAK_Y {
+            page_count += 1;
+            let (page_ref, layer_ref) =
+                doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("Report p{page_count}"));
+            layer = doc.get_page(page_ref).get_layer(layer_ref);
+            draw_header(&layer, input, &helvetica, &helvetica_bold);
+            y = HEADER_TOP_Y - 36.0;
+            draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
+            y -= ROW_HEIGHT;
+        }
+        for (i, cell) in row.iter().enumerate() {
+            layer.use_text(cell, 8.0, Mm(col_x[i]), Mm(y), &helvetica);
+        }
+        y -= ROW_HEIGHT;
+    }
+
+    if let Some(totals) = &input.totals {
+        if y < PAGE_BREAK_Y + ROW_HEIGHT {
+            page_count += 1;
+            let (page_ref, layer_ref) =
+                doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("Report p{page_count}"));
+            layer = doc.get_page(page_ref).get_layer(layer_ref);
+            draw_header(&layer, input, &helvetica, &helvetica_bold);
+            y = HEADER_TOP_Y - 36.0;
+            draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
+            y -= ROW_HEIGHT;
+        }
+        y -= 2.0;
+        for (i, cell) in totals.iter().enumerate() {
+            layer.use_text(cell, 9.0, Mm(col_x[i]), Mm(y), &helvetica_bold);
+        }
+    }
+
+    let filename = format!("report-{}.pdf", uuid::Uuid::now_v7());
+    let path = reports_dir.join(filename);
+    let mut out = BufWriter::new(fs::File::create(&path)?);
+    doc.save(&mut out)
+        .map_err(|e| AppError::Pdf(e.to_string()))?;
+    out.flush()?;
+
+    let bytes = fs::metadata(&path)?.len();
+
+    Ok(ReportPdf {
+        pages: page_count,
         bytes,
         path: path.to_string_lossy().into_owned(),
     })

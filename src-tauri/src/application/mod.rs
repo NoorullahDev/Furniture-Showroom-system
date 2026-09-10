@@ -13,6 +13,7 @@ pub mod products;
 pub mod proof;
 pub mod purchases;
 pub mod receivables;
+pub mod reports;
 pub mod roles;
 pub mod sales;
 pub mod search;

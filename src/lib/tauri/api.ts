@@ -1923,3 +1923,31 @@ export type SearchResultsDto = {
 
 export const globalSearch = (session: string, query: string) =>
   runCommand<SearchResultsDto>("global_search", { session, query });
+
+// Phase 11 — Reports, PDF/CSV export
+// ---------------------------------------------------------------------------
+
+export type ReportFilterInput = {
+  fromDate?: string | null;
+  toDate?: string | null;
+  cashAccountId?: number | null;
+  categoryId?: number | null;
+  status?: string | null;
+};
+
+export type ReportExportResult = {
+  reportPath: string;
+  format: string;
+  rowCount: number;
+  generatedAt: string;
+};
+
+export const reportExport = (
+  session: string,
+  reportType: string,
+  filter: ReportFilterInput,
+  format: "csv" | "pdf",
+) =>
+  runCommand<ReportExportResult>("report_export", { session, reportType, filter, format });
+
+export const openFile = (path: string) => runCommand<void>("open_file", { path });
