@@ -50,6 +50,7 @@ import {
   damageRecord,
   DamageRecordDto,
   deliveryCreate,
+  deliveryGet,
   deliveryList,
   deliveryNotePdf,
   deliveryTransition,
@@ -73,6 +74,7 @@ type Tab = "deliveries" | "returns" | "damage";
 type PageDialog =
   | null
   | { kind: "create-delivery" }
+  | { kind: "delivery-detail"; delivery: DeliveryDto }
   | { kind: "transition"; delivery: DeliveryDto }
   | { kind: "post-return" }
   | { kind: "void-return"; ret: SaleReturnDto }
@@ -275,6 +277,7 @@ function DeliveriesView({
   canCreate,
   canUpdate,
   onTransition,
+  onDetail,
 }: {
   session: string;
   deliveries: DeliveryDto[];
@@ -282,6 +285,7 @@ function DeliveriesView({
   canCreate: boolean;
   canUpdate: boolean;
   onTransition: (d: DeliveryDto) => void;
+  onDetail: (d: DeliveryDto) => void;
 }) {
   if (loading) return <LoadingRow />;
   if (deliveries.length === 0)
@@ -347,6 +351,14 @@ function DeliveriesView({
                 <td className="px-4 py-2">
                   <div className="flex items-center justify-end gap-1">
                     <DeliveryPrint session={session} deliveryId={d.id} />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onDetail(d)}
+                    >
+                      View
+                    </Button>
                     {canUpdate && deliveryActionsFor(d.status).length > 0 && (
                       <Button
                         type="button"
@@ -770,6 +782,139 @@ function TransitionDialog({
   );
 }
 
+function DeliveryDetailDialog({
+  session,
+  deliveryId,
+  onClose,
+}: {
+  session: string;
+  deliveryId: number;
+  onClose: () => void;
+}) {
+  const delivery = useQuery({
+    queryKey: ["fulfilment", "delivery", deliveryId],
+    queryFn: () => deliveryGet(session, deliveryId),
+    enabled: session !== "",
+  });
+  const d = delivery.data;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{d?.deliveryNumber ?? `Delivery #${deliveryId}`}</DialogTitle>
+          <DialogDescription>
+            {d ? (
+              <>
+                Sale {d.saleNumber ?? `#${d.saleId}`}
+                <span className="ml-2">
+                  <StatusBadge status={d.status} />
+                </span>
+              </>
+            ) : (
+              "Loading…"
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {d && (
+          <div className="grid max-h-[60vh] gap-4 overflow-y-auto">
+            <div className="grid gap-2 text-sm">
+              {d.customerName && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Customer</span>
+                  <span className="font-medium">{d.customerName}</span>
+                </div>
+              )}
+              {d.contactName && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Contact</span>
+                  <span className="font-medium">{d.contactName}{d.contactPhone ? ` · ${d.contactPhone}` : ""}</span>
+                </div>
+              )}
+              {d.address && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Address</span>
+                  <span>{d.address}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-[120px_1fr]">
+                <span className="text-neutral-500">Scheduled</span>
+                <span className="font-medium">
+                  {d.scheduledAt ? formatDateTime(d.scheduledAt) : "—"}
+                  {d.rescheduleCount > 0 && (
+                    <span className="ml-1 text-amber-600">rescheduled ×{d.rescheduleCount}</span>
+                  )}
+                </span>
+              </div>
+              <div className="grid grid-cols-[120px_1fr]">
+                <span className="text-neutral-500">Charge</span>
+                <span className="tabular-nums">{d.deliveryChargeMinor > 0 ? formatPkr(d.deliveryChargeMinor) : "—"}</span>
+              </div>
+              {d.driverNote && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Driver note</span>
+                  <span>{d.driverNote}</span>
+                </div>
+              )}
+              {d.vehicleNote && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Vehicle note</span>
+                  <span>{d.vehicleNote}</span>
+                </div>
+              )}
+              {d.receiverName && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Received by</span>
+                  <span className="font-medium">{d.receiverName}{d.proofReference ? ` · ${d.proofReference}` : ""}</span>
+                </div>
+              )}
+              {(d.failedReason || d.cancelledReason) && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Outcome note</span>
+                  <span className="text-amber-700">{d.failedReason ?? d.cancelledReason}</span>
+                </div>
+              )}
+              {d.notes && (
+                <div className="grid grid-cols-[120px_1fr]">
+                  <span className="text-neutral-500">Notes</span>
+                  <span>{d.notes}</span>
+                </div>
+              )}
+            </div>
+            {d.items.length > 0 && (
+              <div className="overflow-hidden rounded-lg border border-neutral-200">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-neutral-200 bg-neutral-50 text-left text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
+                      <th className="px-3 py-2">Item</th>
+                      <th className="px-3 py-2 text-right">Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {d.items.map((i) => (
+                      <tr key={i.id} className="border-b border-neutral-100 last:border-0">
+                        <td className="px-3 py-2">{i.productName}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{i.quantity}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <DeliveryPrint session={session} deliveryId={d.id} />
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PostReturnDialog({
   session,
   sales,
@@ -1089,13 +1234,15 @@ function DecideDamageDialog({
 }) {
   const [decision, setDecision] = React.useState<string>("repair");
   const [note, setNote] = React.useState("");
+  const [linkedSale, setLinkedSale] = React.useState("");
   const mutation = usePostMutation(
     () =>
       damageDecide(session, {
         damageId: damage.id,
         decision,
         decisionNote: note || null,
-        linkedSaleId: null,
+        linkedSaleId:
+          decision === "damaged_sale" ? Number(linkedSale) || null : null,
       }),
     onDone,
     onError,
@@ -1118,10 +1265,23 @@ function DecideDamageDialog({
           <SelectContent>
             <SelectItem value="repair">Repair — back to sellable</SelectItem>
             <SelectItem value="supplier_return">Return to supplier</SelectItem>
+            <SelectItem value="damaged_sale">Sell at discount (linked sale)</SelectItem>
             <SelectItem value="write_off">Write off</SelectItem>
           </SelectContent>
         </Select>
       </div>
+      {decision === "damaged_sale" && (
+        <div className="grid gap-1.5">
+          <Label>Linked sale ID</Label>
+          <Input
+            type="number"
+            min={1}
+            value={linkedSale}
+            onChange={(e) => setLinkedSale(e.target.value)}
+            placeholder="Sale ID confirming the damaged stock"
+          />
+        </div>
+      )}
       <div className="grid gap-1.5">
         <Label>Decision note</Label>
         <Input value={note} onChange={(e) => setNote(e.target.value)} />
@@ -1299,6 +1459,7 @@ export function FulfilmentPage() {
             canCreate={canCreateDelivery}
             canUpdate={canUpdateDelivery}
             onTransition={(d) => setDialog({ kind: "transition", delivery: d })}
+            onDetail={(d) => setDialog({ kind: "delivery-detail", delivery: d })}
           />
         )}
         {view === "returns" && canReturn && (
@@ -1321,6 +1482,9 @@ export function FulfilmentPage() {
       )}
       {dialog?.kind === "transition" && (
         <TransitionDialog session={session} delivery={dialog.delivery} onClose={() => setDialog(null)} onDone={done("Delivery updated")} onError={failed} />
+      )}
+      {dialog?.kind === "delivery-detail" && (
+        <DeliveryDetailDialog session={session} deliveryId={dialog.delivery.id} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === "post-return" && (
         <PostReturnDialog session={session} sales={sales} accounts={accounts} onClose={() => setDialog(null)} onDone={done("Return posted")} onError={failed} />

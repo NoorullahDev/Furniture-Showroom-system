@@ -411,6 +411,85 @@ async fn idempotent_confirm_consumes_exactly_one_number() {
 }
 
 #[tokio::test]
+async fn walkin_paid_sale_cancel_refunds_cash() {
+    let dir = temp_dir("walkin-cancel");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "walkin-cancel").await;
+    let product = stock_product(&state, &owner, "SALE-W", 10, 1000).await;
+    set_price(&state, product, 10_000).await;
+    let location = main_location(&state).await;
+    let cash = funded_cash(&state, &owner, "WCASH").await;
+
+    let sale = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: None,
+            kind: None,
+            sale_date: None,
+            discount_minor: None,
+            delivery_charge_minor: None,
+            notes: None,
+            items: vec![line(product, 1)],
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+    application::sales::confirm_sale(
+        &state,
+        &owner,
+        SaleConfirmInput {
+            sale_id: sale.id,
+            idempotency_key: Some("walkin-cnf".into()),
+            paid_minor: Some(10_000),
+            cash_account_id: Some(cash),
+            payment_method_id: Some(1),
+            advance_used_minor: Some(0),
+            credit_note_id: None,
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        cash_balance(&state, cash).await,
+        1_010_000,
+        "walk-in sale payment credits cash"
+    );
+    assert_eq!(on_hand(&state, product, location).await, 9);
+
+    application::sales::cancel_sale(
+        &state,
+        &owner,
+        SaleCancelInput {
+            sale_id: sale.id,
+            reason: Some("customer changed mind".into()),
+        },
+        "corr-3",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        cash_balance(&state, cash).await,
+        1_000_000,
+        "cancelling a walk-in sale refunds the cash"
+    );
+    assert_eq!(on_hand(&state, product, location).await, 10);
+    let paid: i64 = sqlx::query_scalar("SELECT paid_minor FROM sales WHERE id = ?")
+        .bind(sale.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(paid, 0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn credit_sale_receipt_allocation_cancellation_keeps_ledger_consistent() {
     let dir = temp_dir("credit");
     let state = open_state(&dir).await;

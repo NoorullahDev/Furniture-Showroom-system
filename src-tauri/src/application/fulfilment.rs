@@ -1171,6 +1171,13 @@ pub async fn post_return(
                 let collected = paid + advance;
                 let refundable = (collected + r_total - total).max(0);
 
+                if customer_id.is_none() && !cash_mode && refundable > 0 {
+                    return Err(AppError::Validation(format!(
+                        "cannot refund walk-in sale {sale_number} as {} — credit notes require a customer; refund to cash instead",
+                        input.refund_type
+                    )));
+                }
+
                 // Validate the refund position before consuming any document numbers.
                 let cash_account_id = if cash_mode {
                     if refundable > 0 {
@@ -1279,17 +1286,6 @@ pub async fn post_return(
                     .await?;
 
                     if cash_mode && refundable > 0 {
-                        record_cash_entry(
-                            &mut *tx,
-                            cash_account_id.unwrap_or(0),
-                            "sale_refund",
-                            -refundable,
-                            "sales_return",
-                            return_id,
-                            &format!("refund for {return_number}"),
-                            actor_id,
-                        )
-                        .await?;
                         record_ledger(
                             &mut *tx,
                             cid,
@@ -1302,6 +1298,20 @@ pub async fn post_return(
                         )
                         .await?;
                     }
+                }
+
+                if cash_mode && refundable > 0 {
+                    record_cash_entry(
+                        &mut *tx,
+                        cash_account_id.unwrap_or(0),
+                        "sale_refund",
+                        -refundable,
+                        "sales_return",
+                        return_id,
+                        &format!("refund for {return_number}"),
+                        actor_id,
+                    )
+                    .await?;
                 }
 
                 let credit_note_minor = if !cash_mode && refundable > 0 {
@@ -1576,20 +1586,6 @@ pub async fn void_return(
 
                 if let Some(cid) = customer_id {
                     if cash_refund > 0 {
-                        let account = cash_account_id.ok_or_else(|| {
-                            AppError::Internal("cash return missing cash account".into())
-                        })?;
-                        record_cash_entry(
-                            &mut *tx,
-                            account,
-                            "return_void",
-                            cash_refund,
-                            "sales_return",
-                            input.return_id,
-                            &reason,
-                            actor_id,
-                        )
-                        .await?;
                         record_ledger(
                             &mut *tx,
                             cid,
@@ -1633,6 +1629,23 @@ pub async fn void_return(
                     .bind(restored)
                     .bind(sale_id)
                     .execute(&mut *tx)
+                    .await?;
+                }
+
+                if cash_refund > 0 {
+                    let account = cash_account_id.ok_or_else(|| {
+                        AppError::Internal("cash return missing cash account".into())
+                    })?;
+                    record_cash_entry(
+                        &mut *tx,
+                        account,
+                        "return_void",
+                        cash_refund,
+                        "sales_return",
+                        input.return_id,
+                        &reason,
+                        actor_id,
+                    )
                     .await?;
                 }
 

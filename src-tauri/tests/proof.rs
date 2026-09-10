@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 8);
+    assert_eq!(info.version, 9);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -91,7 +91,16 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 8);
+    assert_eq!(version_again, 9);
+
+    // Phase 9 walk-in payment account column is present.
+    let phase9_note: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('sales') WHERE name = 'payment_cash_account_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_note, 1);
 
     // Phase 7 due-control additions are present.
     let phase7_objects: i64 = sqlx::query_scalar(

@@ -585,6 +585,12 @@ pub async fn confirm_sale(
                     }
                 }
 
+                if customer_id.is_none() && advance > 0 {
+                    return Err(AppError::Validation(
+                        "advance payments require a customer".into(),
+                    ));
+                }
+
                 let discount = row.get::<i64, _>(7);
                 if discount > 0 && !has_override {
                     return Err(AppError::Unauthorized(
@@ -780,6 +786,7 @@ pub async fn confirm_sale(
                             subtotal_minor = ?, total_minor = ?,
                             paid_minor = ?, advance_used_minor = ?,
                             due_minor = ?, cost_minor = ?, due_date = ?,
+                            payment_cash_account_id = ?,
                             confirmed_by = ?, confirmed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                       WHERE id = ?",
@@ -793,6 +800,7 @@ pub async fn confirm_sale(
                 .bind(total - paid - advance)
                 .bind(total_cost)
                 .bind(&due_date)
+                .bind(if paid > 0 { input.cash_account_id } else { None })
                 .bind(actor_id)
                 .bind(input.sale_id)
                 .execute(&mut *tx)
@@ -846,18 +854,6 @@ pub async fn confirm_sale(
                         .execute(&mut *tx)
                         .await?;
 
-                        record_cash_entry(
-                            &mut *tx,
-                            input.cash_account_id.unwrap_or(0),
-                            "sale_payment",
-                            paid,
-                            "sale",
-                            input.sale_id,
-                            &format!("sale {sale_number}"),
-                            actor_id,
-                        )
-                        .await?;
-
                         record_ledger(
                             &mut *tx,
                             cid,
@@ -898,6 +894,20 @@ pub async fn confirm_sale(
                         )
                         .await?;
                     }
+                }
+
+                if paid > 0 {
+                    record_cash_entry(
+                        &mut *tx,
+                        input.cash_account_id.unwrap_or(0),
+                        "sale_payment",
+                        paid,
+                        "sale",
+                        input.sale_id,
+                        &format!("sale {sale_number}"),
+                        actor_id,
+                    )
+                    .await?;
                 }
 
                 state_audit(
@@ -944,8 +954,8 @@ pub async fn cancel_sale(
             Box::pin(async move {
                 let row = sqlx::query(
                     "SELECT id, customer_id, location_id, sale_date, status, total_minor,
-                            paid_minor, advance_used_minor, sale_number
-                     FROM sales WHERE id = ?",
+                        paid_minor, advance_used_minor, sale_number, payment_cash_account_id
+                 FROM sales WHERE id = ?",
                 )
                 .bind(input.sale_id)
                 .fetch_optional(&mut *tx)
@@ -962,8 +972,10 @@ pub async fn cancel_sale(
 
                 let location_id = row.get::<i64, _>(2);
                 let total = row.get::<i64, _>(5);
+                let paid_minor = row.get::<i64, _>(6);
                 let advance = row.get::<i64, _>(7);
                 let sale_number = row.get::<String, _>(8);
+                let payment_cash_account_id = row.get::<Option<i64>, _>(9);
 
                 let items: Vec<(Option<i64>, Option<i64>, i64, i64)> = sqlx::query(
                     "SELECT product_id, bundle_id, quantity, unit_cost_minor
@@ -1074,6 +1086,33 @@ pub async fn cancel_sale(
                     .bind(pay_id)
                     .execute(&mut *tx)
                     .await?;
+                }
+
+                // Walk-in sales (no customer) have no customer_payments row, so
+                // refund the cash account the sale was paid from directly.
+                if payments.is_empty() && customer_id.is_none() {
+                    if let Some(account_id) = payment_cash_account_id {
+                        if paid_minor > 0 {
+                            crate::application::cash::require_cash_balance(
+                                &mut *tx,
+                                account_id,
+                                -paid_minor,
+                                "sale cancellation refund",
+                            )
+                            .await?;
+                            record_cash_entry(
+                                &mut *tx,
+                                account_id,
+                                "sale_refund",
+                                -paid_minor,
+                                "sale",
+                                input.sale_id,
+                                &format!("cancel sale {sale_number}"),
+                                actor_id,
+                            )
+                            .await?;
+                        }
+                    }
                 }
 
                 if let Some(cid) = customer_id {

@@ -963,6 +963,150 @@ async fn void_return_reverses_stock_cash_ledger_and_due() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn walkin_cash_return_posts_and_voids_cash_refund_without_customer() {
+    let dir = temp_dir("walkin-return");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "walkin-return").await;
+    let product = stock_product(&state, &owner, "RET-04", 10, 5_000).await;
+    set_price(&state, product, 10_000).await;
+    let location = main_location(&state).await;
+    let cash = funded_cash(&state, &owner, "WALKIN").await;
+
+    // Walk-in sale: no customer attached. Cash refund must still hit the account.
+    let sale = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: None,
+            kind: Some("sale".into()),
+            sale_date: Some("2026-09-05".into()),
+            discount_minor: Some(0),
+            delivery_charge_minor: Some(0),
+            notes: None,
+            items: vec![line(product, 2)],
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+    confirm_paid(&state, &owner, sale.id, 20_000, cash).await;
+    let sale_item = sold_sale_item(&state, sale.id).await;
+
+    assert_eq!(cash_balance(&state, cash).await, 1_020_000);
+
+    let ret = application::fulfilment::post_return(
+        &state,
+        &owner,
+        SaleReturnInput {
+            sale_id: sale.id,
+            refund_type: "cash".into(),
+            return_date: "2026-09-10".into(),
+            items: vec![ReturnItemInput {
+                sale_item_id: sale_item,
+                quantity: 1,
+                classification: "sellable".into(),
+            }],
+            cash_account_id: Some(cash),
+            notes: None,
+            idempotency_key: Some("key-walkin".into()),
+        },
+        "corr-ret",
+    )
+    .await
+    .expect("walk-in cash return");
+
+    assert_eq!(ret.total_minor, 10_000);
+    assert_eq!(ret.cash_refund_minor, 10_000);
+    assert_eq!(
+        cash_balance(&state, cash).await,
+        1_020_000 - 10_000,
+        "cash refund posted even without a customer"
+    );
+
+    // Voiding the return restores the cash amount.
+    application::fulfilment::void_return(
+        &state,
+        &owner,
+        ReturnVoidInput {
+            return_id: ret.id,
+            reason: Some("reversed".into()),
+        },
+        "corr-void",
+    )
+    .await
+    .expect("void walk-in return");
+    assert_eq!(
+        cash_balance(&state, cash).await,
+        1_020_000,
+        "cash refund reversed on void"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn walkin_credit_refund_is_rejected() {
+    let dir = temp_dir("walkin-credit");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "walkin-credit").await;
+    let product = stock_product(&state, &owner, "RET-05", 5, 5_000).await;
+    set_price(&state, product, 10_000).await;
+    let location = main_location(&state).await;
+    let cash = funded_cash(&state, &owner, "WALKINCR").await;
+
+    let sale = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: None,
+            kind: Some("sale".into()),
+            sale_date: Some("2026-09-05".into()),
+            discount_minor: Some(0),
+            delivery_charge_minor: Some(0),
+            notes: None,
+            items: vec![line(product, 1)],
+        },
+        "corr-1",
+    )
+    .await
+    .unwrap();
+    confirm_paid(&state, &owner, sale.id, 10_000, cash).await;
+    let sale_item = sold_sale_item(&state, sale.id).await;
+
+    let err = application::fulfilment::post_return(
+        &state,
+        &owner,
+        SaleReturnInput {
+            sale_id: sale.id,
+            refund_type: "credit".into(),
+            return_date: "2026-09-10".into(),
+            items: vec![ReturnItemInput {
+                sale_item_id: sale_item,
+                quantity: 1,
+                classification: "sellable".into(),
+            }],
+            cash_account_id: None,
+            notes: None,
+            idempotency_key: None,
+        },
+        "corr-ret",
+    )
+    .await;
+    assert!(
+        matches!(err, Err(AppError::Validation(_))),
+        "credit refunds need a customer, got {err:?}"
+    );
+
+    // Stock and cash must be untouched.
+    assert_eq!(on_hand(&state, product, location).await, 4);
+    assert_eq!(cash_balance(&state, cash).await, 1_010_000);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ---------------------------------------------------------------------------
 // Damage records
 // ---------------------------------------------------------------------------
