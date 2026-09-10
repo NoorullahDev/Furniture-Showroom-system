@@ -89,6 +89,29 @@ pub fn list_backups(backups_dir: &Path) -> Result<Vec<BackupEntryDto>, AppError>
     Ok(entries)
 }
 
+/// Removes a single backup file. The caller must pass a bare file name; the
+/// resolved path is validated to stay inside `backups_dir`.
+pub fn delete_backup(backups_dir: &Path, name: &str) -> Result<(), AppError> {
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return Err(AppError::Validation("invalid backup name".into()));
+    }
+    let path = backups_dir.join(name);
+    if !path.exists() {
+        return Err(AppError::NotFound(format!(
+            "backup `{name}` does not exist"
+        )));
+    }
+    fs::remove_file(&path)?;
+    Ok(())
+}
+
+/// Re-verifies a backup file by opening it read-only and running a quick
+/// integrity probe. Used before restore so a corrupt archive is never swapped
+/// over the live database.
+pub fn verify_backup_file(path: &Path) -> Result<bool, AppError> {
+    integrity_check(path)
+}
+
 fn sha256_file(path: &Path) -> Result<String, AppError> {
     let bytes = fs::read(path)?;
     let mut hasher = Sha256::new();

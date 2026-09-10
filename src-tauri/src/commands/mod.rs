@@ -6,6 +6,7 @@ pub mod expenses;
 pub mod first_run;
 pub mod fulfilment;
 pub mod inventory;
+pub mod maintenance;
 pub mod products;
 pub mod proof;
 pub mod purchases;

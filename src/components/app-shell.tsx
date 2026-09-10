@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Boxes,
   ClipboardCheck,
+  HardDrive,
   FileText,
   LayoutDashboard,
   Lock,
@@ -40,6 +41,7 @@ import { SalesPage } from "@/components/sales/sales-page";
 import { FulfilmentPage } from "@/components/fulfilment/fulfilment-page";
 import { ExpensesPage } from "@/components/expenses/expenses-page";
 import { ReportsPage } from "@/components/reports/reports-page";
+import { MaintenancePage } from "@/components/maintenance/maintenance-page";
 
 export type { ShellView } from "@/lib/shell";
 
@@ -86,6 +88,7 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
         permission: "audit.view",
       },
       { id: "settings", label: "Settings", icon: Settings, view: "settings" },
+      { id: "maintenance", label: "Backup & maintenance", icon: HardDrive, view: "maintenance", permission: "backup.create" },
     ],
   },
   {
@@ -127,6 +130,7 @@ const VIEW_TITLES: Record<ShellView, string> = {
   audit: "Audit log",
   reports: "Reports",
   settings: "Settings",
+  maintenance: "Backup & maintenance",
 };
 
 function useIdleLock(onIdle: () => void) {
@@ -355,6 +359,7 @@ export function AppShell() {
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}
           {view === "settings" && <SettingsPage />}
+          {view === "maintenance" && <MaintenancePage />}
         </main>
       </div>
 

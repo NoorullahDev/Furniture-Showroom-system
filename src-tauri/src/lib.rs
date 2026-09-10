@@ -27,6 +27,11 @@ pub fn run() {
             infrastructure::install_logging(&paths.logs_dir, verbose)
                 .map_err(|e| format!("failed to initialize logging: {e}"))?;
 
+            let restored = infrastructure::restore::perform_pending_restore(&paths)?;
+            if let Some(ref name) = restored {
+                tracing::info!(backup = %name, "pending restore applied");
+            }
+
             let (pool, db_info) = tauri::async_runtime::block_on(infrastructure::db::open(&paths))?;
             tracing::info!(
                 db_path = %paths.db_path.display(),
@@ -187,6 +192,12 @@ pub fn run() {
             commands::search::global_search,
             commands::reports::report_export,
             commands::reports::open_file,
+            commands::maintenance::maintenance_status,
+            commands::maintenance::backup_create,
+            commands::maintenance::backup_list,
+            commands::maintenance::backup_delete,
+            commands::maintenance::backup_restore,
+            commands::maintenance::maintenance_integrity,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

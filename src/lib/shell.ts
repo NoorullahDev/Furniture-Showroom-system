@@ -10,4 +10,5 @@ export type ShellView =
   | "roles"
   | "audit"
   | "reports"
-  | "settings";
+  | "settings"
+  | "maintenance";

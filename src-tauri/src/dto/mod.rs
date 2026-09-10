@@ -9,6 +9,7 @@ pub mod dashboard;
 pub mod expenses;
 pub mod fulfilment;
 pub mod inventory;
+pub mod maintenance;
 pub mod purchases;
 pub mod receivables;
 pub mod reports;

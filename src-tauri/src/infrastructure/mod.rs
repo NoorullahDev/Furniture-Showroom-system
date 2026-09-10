@@ -1,9 +1,10 @@
 pub mod audit;
-mod backup;
+pub mod backup;
 pub mod base64;
 pub mod clock;
 pub mod csv_export;
 pub mod db;
+pub mod disk_size;
 pub mod fonts;
 pub mod id;
 mod image_pipeline;
@@ -11,12 +12,13 @@ pub mod logging;
 pub mod password;
 mod paths;
 mod pdf;
+pub mod restore;
 pub mod session;
 pub mod throttle;
 pub mod write_coordinator;
 
 pub use audit::{AuditInput, AuditService};
-pub use backup::{create_backup, list_backups};
+pub use backup::{create_backup, delete_backup, list_backups, verify_backup_file};
 pub use base64::{encode as base64_encode, image_mime};
 pub use clock::{Clock, SystemClock};
 pub use csv_export::{write_csv, CsvTable};

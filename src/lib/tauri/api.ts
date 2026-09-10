@@ -1952,3 +1952,58 @@ export const reportExport = (
 
 export const openFile = (session: string, path: string) =>
   runCommand<void>("open_file", { session, path });
+
+// --- Maintenance / Backup ---
+
+export type MaintenanceStatus = {
+  appVersion: string;
+  dbSizeBytes: number;
+  imagesSizeBytes: number;
+  backupsSizeBytes: number;
+  freeDiskBytes: number | null;
+  schemaVersion: number;
+  pendingMigrations: number;
+  lastBackupName: string | null;
+  lastBackupAt: string | null;
+  lastIntegrityAt: string | null;
+  lastIntegrityOk: boolean | null;
+};
+
+export type BackupListItem = {
+  name: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+  kind: string;
+  createdBy: string | null;
+  verified: boolean;
+};
+
+export type RestoreResult = {
+  restartRequired: boolean;
+  safetyBackupName: string | null;
+};
+
+export type IntegrityResult = {
+  pageIntegrityOk: boolean;
+  foreignKeyViolations: number;
+  checkedAt: string;
+};
+
+export const maintenanceStatus = (session: string) =>
+  runCommand<MaintenanceStatus>("maintenance_status", { session });
+
+export const backupCreate = (session: string) =>
+  runCommand<BackupResult>("backup_create", { session });
+
+export const backupList = (session: string) =>
+  runCommand<BackupListItem[]>("backup_list", { session });
+
+export const backupDelete = (session: string, name: string) =>
+  runCommand<void>("backup_delete", { session, name });
+
+export const backupRestore = (session: string, name: string) =>
+  runCommand<RestoreResult>("backup_restore", { session, name });
+
+export const maintenanceIntegrity = (session: string) =>
+  runCommand<IntegrityResult>("maintenance_integrity", { session });
