@@ -1,7 +1,7 @@
 use tauri::State;
 
-use crate::commands::{authenticated, authed};
 use crate::commands::wrapper::run_command;
+use crate::commands::{authed, authenticated};
 use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput};
 use crate::dto::AppErrorDto;
 use crate::state::AppState;
@@ -33,7 +33,9 @@ pub async fn open_file(
         // notes). The containment check resolves symlinks and rejects escapes.
         let _principal = authenticated(&state, &session).await?;
         let target = std::path::PathBuf::from(&path);
-        state.paths.ensure_member(&state.paths.reports_dir, &target)?;
+        state
+            .paths
+            .ensure_member(&state.paths.reports_dir, &target)?;
         opener::open(&target)
             .map_err(|e| crate::error::AppError::Io(std::io::Error::other(e.to_string())))
     })
