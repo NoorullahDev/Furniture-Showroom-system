@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 10);
+    assert_eq!(info.version, 11);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -91,7 +91,23 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 10);
+    assert_eq!(version_again, 11);
+
+    // Phase 10 dashboard/search composite indexes are present.
+    let phase10_indexes: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'index' AND name IN (
+             'idx_sales_status_date', 'idx_sales_returns_status_date',
+             'idx_customer_payments_status_date', 'idx_supplier_payments_status_date',
+             'idx_customers_name', 'idx_customers_phone',
+             'idx_suppliers_name', 'idx_suppliers_phone',
+             'idx_audit_actor_created'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase10_indexes, 9);
 
     // Walk-in payment account column (migration 0009) is present.
     let phase9_note: i64 = sqlx::query_scalar(

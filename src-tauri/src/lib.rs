@@ -183,6 +183,8 @@ pub fn run() {
             commands::expenses::owner_transaction_post,
             commands::expenses::owner_transaction_list,
             commands::expenses::profit_summary,
+            commands::dashboard::dashboard_summary,
+            commands::search::global_search,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

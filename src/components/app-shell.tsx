@@ -25,7 +25,10 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSession } from "@/components/session/session-provider";
+import type { ShellView } from "@/lib/shell";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
+import { QuickAddPalette } from "@/components/shell/quick-add";
+import { SearchOverlay } from "@/components/shell/search-overlay";
 import { UserManagement } from "@/components/users/user-management";
 import { RoleManagement } from "@/components/roles/role-management";
 import { AuditViewer } from "@/components/audit/audit-viewer";
@@ -37,18 +40,7 @@ import { SalesPage } from "@/components/sales/sales-page";
 import { FulfilmentPage } from "@/components/fulfilment/fulfilment-page";
 import { ExpensesPage } from "@/components/expenses/expenses-page";
 
-export type ShellView =
-  | "dashboard"
-  | "catalogue"
-  | "inventory"
-  | "purchases"
-  | "sales"
-  | "fulfilment"
-  | "finance"
-  | "users"
-  | "roles"
-  | "audit"
-  | "settings";
+export type { ShellView } from "@/lib/shell";
 
 const IDLE_LOCK_MS = 10 * 60 * 1000; // 10 minutes without activity.
 
@@ -241,11 +233,28 @@ export function AppShell() {
   const { profile, lock, logout, busy } = useSession();
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [view, setView] = React.useState<ShellView>("dashboard");
+  const [quickAddOpen, setQuickAddOpen] = React.useState(false);
+  const [searchOpen, setSearchOpen] = React.useState(false);
 
   const onIdle = React.useCallback(() => {
     void lock();
   }, [lock]);
   useIdleLock(onIdle);
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.shiftKey && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        setQuickAddOpen(true);
+      } else if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const initial = (profile?.fullName || profile?.username || "?")
     .split(/\s+/)
@@ -328,7 +337,7 @@ export function AppShell() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-          {view === "dashboard" && <DashboardView />}
+          {view === "dashboard" && <DashboardView onNavigate={setView} />}
           {view === "catalogue" && <CataloguePage />}
           {view === "inventory" && <InventoryPage />}
           {view === "purchases" && <PurchasesPage />}
@@ -341,6 +350,17 @@ export function AppShell() {
           {view === "settings" && <SettingsPage />}
         </main>
       </div>
+
+      <QuickAddPalette
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        onNavigate={setView}
+      />
+      <SearchOverlay
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        onNavigate={setView}
+      />
     </div>
   );
 }

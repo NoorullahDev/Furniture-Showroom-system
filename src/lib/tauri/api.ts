@@ -1851,3 +1851,75 @@ export const profitSummary = (
     fromDate: fromDate || null,
     toDate: toDate || null,
   });
+
+// Phase 10 — Dashboard summary and global search
+// ---------------------------------------------------------------------------
+
+export type DashboardActivityDto = {
+  id: number;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  username?: string | null;
+  createdAt: string;
+};
+
+export type DashboardTrendDayDto = {
+  day: string;
+  salesCount: number;
+  salesMinor: number;
+  receiptsMinor: number;
+  expensesMinor: number;
+};
+
+export type DashboardSummaryDto = {
+  asOf: string;
+  todaySalesCount: number;
+  todaySalesMinor: number;
+  todayReceiptsMinor: number;
+  todayExpensesMinor: number;
+  netCashMinor: number;
+  duesMinor: number;
+  overdueDuesMinor: number;
+  payablesMinor: number;
+  stockValueMinor?: number | null;
+  lowStockCount: number;
+  pendingDeliveries: number;
+  openDamageCount: number;
+  monthGrossProfitMinor?: number | null;
+  monthRevenueMinor: number;
+  monthExpensesMinor: number;
+  trend: DashboardTrendDayDto[];
+  recentActivity: DashboardActivityDto[];
+};
+
+export const dashboardSummary = (session: string) =>
+  runCommand<DashboardSummaryDto>("dashboard_summary", { session });
+
+export type SearchResultKind =
+  | "product"
+  | "customer"
+  | "supplier"
+  | "sale"
+  | "purchase"
+  | "supplier_payment"
+  | "delivery"
+  | "receipt"
+  | "expense";
+
+export type SearchResultDto = {
+  kind: SearchResultKind;
+  id: number;
+  title: string;
+  subtitle?: string | null;
+  refNumber?: string | null;
+  rank: number;
+};
+
+export type SearchResultsDto = {
+  query: string;
+  results: SearchResultDto[];
+};
+
+export const globalSearch = (session: string, query: string) =>
+  runCommand<SearchResultsDto>("global_search", { session, query });

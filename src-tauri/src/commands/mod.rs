@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod auth;
 pub mod catalogue;
+pub mod dashboard;
 pub mod expenses;
 pub mod first_run;
 pub mod fulfilment;
@@ -10,6 +11,7 @@ pub mod proof;
 pub mod purchases;
 pub mod roles;
 pub mod sales;
+pub mod search;
 pub mod settings;
 pub mod suppliers;
 pub mod users;
