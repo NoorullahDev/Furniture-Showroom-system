@@ -56,12 +56,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::proof::proof_app_info,
-            commands::proof::proof_generate_pdf,
-            commands::proof::proof_import_image,
-            commands::proof::proof_create_backup,
-            commands::proof::proof_list_backups,
-            commands::proof::proof_open_path,
             commands::settings::settings_get,
             commands::settings::settings_set,
             commands::first_run::first_run_status,

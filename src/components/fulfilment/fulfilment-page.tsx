@@ -57,9 +57,9 @@ import {
   DeliveryDto,
   locationList,
   LocationDto,
+  openFile,
   productList,
   ProductListItemDto,
-  proofOpenPath,
   saleReturnList,
   saleReturnPost,
   saleReturnVoid,
@@ -248,7 +248,7 @@ function DeliveryPrint({ session, deliveryId }: { session: string; deliveryId: n
       label="Delivery note"
       onClick={async () => {
         const pdf = await deliveryNotePdf(session, deliveryId);
-        await proofOpenPath(pdf.reportPath);
+        await openFile(session, pdf.reportPath);
       }}
     />
   );
@@ -260,7 +260,7 @@ function CreditNotePrint({ session, creditId }: { session: string; creditId: num
       label="Credit note"
       onClick={async () => {
         const pdf = await creditNotePdf(session, creditId);
-        await proofOpenPath(pdf.reportPath);
+        await openFile(session, pdf.reportPath);
       }}
     />
   );

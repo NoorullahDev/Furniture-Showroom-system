@@ -42,31 +42,10 @@ impl AppErrorDto {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AppInfoDto {
-    pub app_name: String,
-    pub version: String,
-    pub data_dir: String,
-    pub db_path: String,
-    pub db_version: i64,
-    pub pending_migrations: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PdfResultDto {
     pub report_path: String,
     pub pages: usize,
     pub bytes: u64,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImageImportResultDto {
-    pub original_path: String,
-    pub stored_name: String,
-    pub width: u32,
-    pub height: u32,
-    pub thumbnail_bytes: u64,
 }
 
 #[derive(Debug, Serialize)]

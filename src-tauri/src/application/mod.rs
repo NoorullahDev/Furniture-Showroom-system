@@ -11,7 +11,6 @@ pub mod fulfilment;
 pub mod inventory;
 pub mod maintenance;
 pub mod products;
-pub mod proof;
 pub mod purchases;
 pub mod receivables;
 pub mod reports;

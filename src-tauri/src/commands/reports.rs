@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::commands::authed;
+use crate::commands::{authenticated, authed};
 use crate::commands::wrapper::run_command;
 use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput};
 use crate::dto::AppErrorDto;
@@ -28,8 +28,13 @@ pub async fn open_file(
     path: String,
 ) -> Result<(), AppErrorDto> {
     run_command("open_file", async move {
-        let _principal = authed(&state, &session, "reports.view").await?;
-        opener::open(&path)
+        // Any active session may open a file that already lives inside the
+        // approved reports directory (reports, invoices, receipts, delivery
+        // notes). The containment check resolves symlinks and rejects escapes.
+        let _principal = authenticated(&state, &session).await?;
+        let target = std::path::PathBuf::from(&path);
+        state.paths.ensure_member(&state.paths.reports_dir, &target)?;
+        opener::open(&target)
             .map_err(|e| crate::error::AppError::Io(std::io::Error::other(e.to_string())))
     })
     .await

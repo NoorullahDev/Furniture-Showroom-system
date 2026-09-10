@@ -61,15 +61,6 @@ export type AuditPage = {
   items: AuditEvent[];
 };
 
-export type AppInfo = {
-  appName: string;
-  version: string;
-  dataDir: string;
-  dbPath: string;
-  dbVersion: number;
-  pendingMigrations: number;
-};
-
 // --- First-run setup ---------------------------------------------------------
 
 export type FirstRunCompleteInput = {
@@ -215,48 +206,13 @@ export const auditQuery = (session: string, filter: AuditFilter) =>
 export const settingsGet = (session: string, key: string) =>
   runCommand<string | null>("settings_get", { session, key });
 
-// --- Proof / system (Phase 1 dashboard) --------------------------------------
-
-export const proofAppInfo = () => runCommand<AppInfo>("proof_app_info");
+// --- Generated documents (open in OS default app) ------------------------------
 
 export type PdfResult = {
   reportPath: string;
   pages: number;
   bytes: number;
 };
-
-export const proofGeneratePdf = () => runCommand<PdfResult>("proof_generate_pdf");
-
-export type ImportResult = {
-  originalPath: string;
-  storedName: string;
-  width: number;
-  height: number;
-  thumbnailBytes: number;
-};
-
-export const proofImportImage = (path: string) =>
-  runCommand<ImportResult>("proof_import_image", { path });
-
-export type BackupResult = {
-  backupPath: string;
-  sha256: string;
-  verified: boolean;
-  bytes: number;
-};
-
-export type BackupEntry = {
-  name: string;
-  sizeBytes: number;
-  sha256: string;
-  createdAt: string;
-};
-
-export const proofCreateBackup = () => runCommand<BackupResult>("proof_create_backup");
-
-export const proofListBackups = () => runCommand<BackupEntry[]>("proof_list_backups");
-
-export const proofOpenPath = (path: string) => runCommand<void>("proof_open_path", { path });
 
 // --- Catalogue: categories, product types, units ------------------------------
 
@@ -1967,6 +1923,13 @@ export type MaintenanceStatus = {
   lastBackupAt: string | null;
   lastIntegrityAt: string | null;
   lastIntegrityOk: boolean | null;
+};
+
+export type BackupResult = {
+  backupPath: string;
+  sha256: string;
+  verified: boolean;
+  bytes: number;
 };
 
 export type BackupListItem = {

@@ -70,9 +70,9 @@ import {
   customerStatement,
   customerUpdate,
   locationList,
+  openFile,
   paymentMethodList,
   productList,
-  proofOpenPath,
   receivables,
   saleCancel,
   saleConfirm,
@@ -1083,7 +1083,7 @@ function PrintInvoiceButton({
     setBusy(true);
     try {
       const pdf = await saleInvoicePdf(session, saleId);
-      await proofOpenPath(pdf.reportPath);
+      await openFile(session, pdf.reportPath);
       if (onClose) onClose();
     } catch (e) {
       toast({ variant: "error", title: "Could not generate invoice", description: commandErrorMessage(e) });
@@ -1117,7 +1117,7 @@ function PrintReceiptButton({
     setBusy(true);
     try {
       const pdf = await customerReceiptPdf(session, paymentId);
-      await proofOpenPath(pdf.reportPath);
+      await openFile(session, pdf.reportPath);
     } catch (e) {
       toast({ variant: "error", title: "Could not generate receipt", description: commandErrorMessage(e) });
       onError?.(e as Error);
