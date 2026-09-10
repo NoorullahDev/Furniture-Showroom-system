@@ -32,10 +32,23 @@ import { useToast } from "@/components/ui/toast";
 import {
   reportExport,
   openFile,
+  saleList,
+  stockValuation,
+  receivables,
+  payableAging,
+  profitSummary,
+  expenseList,
   type ReportFilterInput,
 } from "@/lib/tauri/api";
+import { formatPkr } from "@/lib/format";
 
-type ReportType = "sales_summary" | "stock_valuation" | "customer_dues" | "supplier_payables" | "profit_loss" | "expense_report";
+type ReportType =
+  | "sales_summary"
+  | "stock_valuation"
+  | "customer_dues"
+  | "supplier_payables"
+  | "profit_loss"
+  | "expense_report";
 
 type ReportMeta = {
   id: ReportType;
@@ -90,7 +103,8 @@ const REPORTS: ReportMeta[] = [
   {
     id: "supplier_payables",
     title: "Supplier Payables",
-    description: "Supplier name, purchase number, invoice date, due, and age in days.",
+    description:
+      "Supplier name, purchase number, invoice date, due, and age in days.",
     icon: Truck,
     columns: [
       { header: "Supplier", key: "supplier" },
@@ -103,7 +117,8 @@ const REPORTS: ReportMeta[] = [
   {
     id: "profit_loss",
     title: "Profit & Loss",
-    description: "Revenue, COGS, gross profit, expenses, damage loss, net profit, margin.",
+    description:
+      "Revenue, COGS, gross profit, expenses, damage loss, net profit, margin.",
     icon: TrendingUp,
     columns: [
       { header: "Line Item", key: "lineItem" },
@@ -113,7 +128,8 @@ const REPORTS: ReportMeta[] = [
   {
     id: "expense_report",
     title: "Expense Report",
-    description: "Expense number, category, amount, date, account, description, status.",
+    description:
+      "Expense number, category, amount, date, account, description, status.",
     icon: ReceiptText,
     columns: [
       { header: "Expense #", key: "expenseNumber" },
@@ -135,6 +151,12 @@ function dateNdaysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
+}
+
+function inRange(dateStr: string, from: string | null, to: string | null): boolean {
+  if (from && dateStr < from) return false;
+  if (to && dateStr > to) return false;
+  return true;
 }
 
 type Preset = { label: string; from: string | null; to: string | null };
@@ -244,7 +266,10 @@ function ReportTable({
       <TableHeader>
         <TableRow>
           {meta.columns.map((col) => (
-            <TableHead key={col.key} className={col.alignRight ? "text-right" : ""}>
+            <TableHead
+              key={col.key}
+              className={col.alignRight ? "text-right" : ""}
+            >
               {col.header}
             </TableHead>
           ))}
@@ -254,7 +279,10 @@ function ReportTable({
         {rows.map((row, i) => (
           <TableRow key={i}>
             {meta.columns.map((col) => (
-              <TableCell key={col.key} className={col.alignRight ? "text-right tabular-nums" : ""}>
+              <TableCell
+                key={col.key}
+                className={col.alignRight ? "text-right tabular-nums" : ""}
+              >
                 {row[col.key] ?? ""}
               </TableCell>
             ))}
@@ -263,6 +291,113 @@ function ReportTable({
       </TableBody>
     </Table>
   );
+}
+
+// ── Fetch + transform logic per report type ──────────────────────────────────
+
+async function fetchReportData(
+  reportType: ReportType,
+  session: string,
+  filter: ReportFilterInput,
+): Promise<{ rows: Record<string, string>[]; rowCount: number }> {
+  const from = filter.fromDate ?? null;
+  const to = filter.toDate ?? null;
+
+  switch (reportType) {
+    case "sales_summary": {
+      const sales = await saleList(session);
+      const filtered = sales.filter((s) => inRange(s.saleDate, from, to));
+      const rows = filtered.map((s) => ({
+        date: s.saleDate,
+        saleNumber: s.saleNumber ?? "",
+        customer: s.customerName ?? "Walk-in",
+        total: formatPkr(s.totalMinor),
+        paid: formatPkr(s.paidMinor + s.advanceUsedMinor),
+        due: formatPkr(s.dueMinor),
+        status: s.status,
+      }));
+      return { rows, rowCount: rows.length };
+    }
+    case "stock_valuation": {
+      const items = await stockValuation(session);
+      const rows = items.map((v) => ({
+        article: v.articleNumber,
+        product: v.productName,
+        qty: v.sellableQty.toLocaleString(),
+        unitCost: formatPkr(v.unitCostMinor),
+        value: formatPkr(v.valueMinor),
+      }));
+      return { rows, rowCount: rows.length };
+    }
+    case "customer_dues": {
+      const data = await receivables(session);
+      const rows = data.highBalance.map((c) => ({
+        customer: c.customerName,
+        phone: c.phone ?? "",
+        balance: formatPkr(c.balanceMinor),
+        due: formatPkr(c.dueMinorTotal),
+        overdue: formatPkr(c.overdueMinorTotal),
+      }));
+      return { rows, rowCount: rows.length };
+    }
+    case "supplier_payables": {
+      const data = await payableAging(session);
+      const rows = data.map((p) => ({
+        supplier: p.supplierName,
+        purchaseNumber: p.purchaseNumber ?? "",
+        invoiceDate: p.invoiceDate,
+        due: formatPkr(p.dueMinor),
+        days: p.ageDays.toLocaleString(),
+      }));
+      return { rows, rowCount: rows.length };
+    }
+    case "profit_loss": {
+      const data = await profitSummary(session, from, to);
+      const margin =
+        data.revenueMinor > 0
+          ? `${((data.operationalProfitMinor / data.revenueMinor) * 100).toFixed(1)}%`
+          : "N/A";
+      const rows = [
+        { lineItem: "Revenue", amount: formatPkr(data.revenueMinor) },
+        { lineItem: "Cost of Goods Sold", amount: formatPkr(data.cogsMinor) },
+        {
+          lineItem: "Gross Profit",
+          amount: formatPkr(data.grossProfitMinor),
+        },
+        { lineItem: "Expenses", amount: formatPkr(data.expensesMinor) },
+        {
+          lineItem: "Damage Loss",
+          amount: formatPkr(data.damageLossMinor),
+        },
+        {
+          lineItem: "Net Profit",
+          amount: formatPkr(data.operationalProfitMinor),
+        },
+        { lineItem: "Margin", amount: margin },
+      ];
+      return { rows, rowCount: rows.length };
+    }
+    case "expense_report": {
+      const expenses = await expenseList(session, {
+        fromDate: from,
+        toDate: to,
+        categoryId: filter.categoryId ?? null,
+        cashAccountId: filter.cashAccountId ?? null,
+        status: filter.status ?? null,
+        limit: 1000,
+      });
+      const rows = expenses.map((e) => ({
+        expenseNumber: e.expenseNumber ?? "",
+        category: e.categoryName,
+        amount: formatPkr(e.amountMinor),
+        date: e.expenseDate,
+        account: e.cashAccountName,
+        description: e.description,
+        status: e.status,
+      }));
+      return { rows, rowCount: rows.length };
+    }
+  }
 }
 
 export function ReportsPage() {
@@ -276,18 +411,9 @@ export function ReportsPage() {
 
   const meta = selected ? REPORTS.find((r) => r.id === selected)! : null;
 
-  // Re-fetch when selected or filter changes
   const reportQuery = useQuery({
-    queryKey: ["reports", selected, filter],
-    queryFn: async () => {
-      // We use reportExport with csv to get data, but actually we need the data as rows.
-      // Since the backend doesn't have a data-only endpoint, we'll fetch the raw data
-      // by calling the relevant existing commands and transforming them.
-      //
-      // For now, use the export command which returns file path — we'll show empty table
-      // and let the user export directly. A future enhancement can add a data endpoint.
-      return { rows: [] as Record<string, string>[], rowCount: 0 };
-    },
+    queryKey: ["reports", selected, filter, session],
+    queryFn: () => fetchReportData(selected!, session, filter),
     enabled: !!selected && !!session,
   });
 
@@ -296,8 +422,11 @@ export function ReportsPage() {
     setExporting(format);
     try {
       const result = await reportExport(session, selected, filter, format);
-      await openFile(result.reportPath);
-      toast({ title: `${format.toUpperCase()} exported`, description: `${result.rowCount} rows generated.` });
+      await openFile(session, result.reportPath);
+      toast({
+        title: `${format.toUpperCase()} exported`,
+        description: `${result.rowCount} rows generated.`,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       toast({ title: "Export failed", description: msg });
@@ -306,10 +435,18 @@ export function ReportsPage() {
     }
   };
 
+  const handleSelect = (id: ReportType) => {
+    setSelected(id);
+    setFilter({});
+  };
+
   if (!meta) {
     return (
       <div className="grid gap-6">
-        <PageHeader title="Reports" subtitle="Generate and export operational reports." />
+        <PageHeader
+          title="Reports"
+          subtitle="Generate and export operational reports."
+        />
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {REPORTS.map((r) => {
             const Icon = r.icon;
@@ -317,15 +454,19 @@ export function ReportsPage() {
               <button
                 key={r.id}
                 type="button"
-                onClick={() => setSelected(r.id)}
+                onClick={() => handleSelect(r.id)}
                 className="group flex items-start gap-3 rounded-lg border border-neutral-200 bg-white p-4 text-left transition-colors hover:border-forest-300 hover:bg-forest-50/50"
               >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-forest-100 text-forest-700 transition-colors group-hover:bg-forest-200">
                   <Icon className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-neutral-800">{r.title}</p>
-                  <p className="mt-0.5 text-xs text-neutral-500">{r.description}</p>
+                  <p className="text-sm font-medium text-neutral-800">
+                    {r.title}
+                  </p>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    {r.description}
+                  </p>
                 </div>
               </button>
             );
@@ -338,7 +479,11 @@ export function ReportsPage() {
   return (
     <div className="grid gap-4">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => setSelected(null)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setSelected(null)}
+        >
           <ArrowLeft className="mr-1 h-4 w-4" />
           All reports
         </Button>

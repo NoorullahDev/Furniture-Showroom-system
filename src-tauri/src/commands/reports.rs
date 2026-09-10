@@ -22,8 +22,13 @@ pub async fn report_export(
 }
 
 #[tauri::command]
-pub async fn open_file(path: String) -> Result<(), AppErrorDto> {
-    run_command("open_file", async {
+pub async fn open_file(
+    state: State<'_, AppState>,
+    session: String,
+    path: String,
+) -> Result<(), AppErrorDto> {
+    run_command("open_file", async move {
+        let _principal = authed(&state, &session, "reports.view").await?;
         opener::open(&path)
             .map_err(|e| crate::error::AppError::Io(std::io::Error::other(e.to_string())))
     })

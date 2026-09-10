@@ -563,6 +563,7 @@ async fn export_expense_report(
 ) -> Result<ReportExportResult, AppError> {
     let (from, to) = date_range_filter(filter);
 
+    let mut bind_idx: u8 = 3;
     let mut query = String::from(
         "SELECT e.expense_number, c.name, e.amount_minor, e.expense_date,
                 a.name, e.description, e.status
@@ -572,22 +573,42 @@ async fn export_expense_report(
          WHERE e.expense_date >= ?1 AND e.expense_date <= ?2",
     );
 
+    let cat_id_binds: Vec<i64>;
     if let Some(cat_id) = filter.category_id {
-        query.push_str(&format!(" AND e.category_id = {cat_id}"));
+        cat_id_binds = vec![cat_id];
+        query.push_str(&format!(" AND e.category_id = ?{bind_idx}"));
+        bind_idx += 1;
+    } else {
+        cat_id_binds = vec![];
     }
+    let acc_id_binds: Vec<i64>;
     if let Some(acc_id) = filter.cash_account_id {
-        query.push_str(&format!(" AND e.cash_account_id = {acc_id}"));
+        acc_id_binds = vec![acc_id];
+        query.push_str(&format!(" AND e.cash_account_id = ?{bind_idx}"));
+        bind_idx += 1;
+    } else {
+        acc_id_binds = vec![];
     }
+    let status_binds: Vec<String>;
     if let Some(ref status) = filter.status {
-        query.push_str(&format!(" AND e.status = '{status}'"));
+        status_binds = vec![status.clone()];
+        query.push_str(&format!(" AND e.status = ?{bind_idx}"));
+    } else {
+        status_binds = vec![];
     }
     query.push_str(" ORDER BY e.expense_date DESC, e.id DESC LIMIT 1000");
 
-    let rows = sqlx::query(&query)
-        .bind(from)
-        .bind(to)
-        .fetch_all(&state.pool)
-        .await?;
+    let mut q = sqlx::query(&query).bind(from).bind(to);
+    for v in &cat_id_binds {
+        q = q.bind(v);
+    }
+    for v in &acc_id_binds {
+        q = q.bind(v);
+    }
+    for v in &status_binds {
+        q = q.bind(v);
+    }
+    let rows = q.fetch_all(&state.pool).await?;
 
     let columns = vec![
         ReportPdfColumn {
@@ -674,6 +695,26 @@ async fn export_expense_report(
     .await
 }
 
+async fn shop_identity(db: &sqlx::SqlitePool) -> (String, Option<String>) {
+    let name: String =
+        sqlx::query_as::<_, (String,)>("SELECT value_json FROM settings WHERE key = 'shop.name'")
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|(v,)| serde_json::from_str::<String>(&v).ok())
+            .unwrap_or_else(|| "Furniture Shop".into());
+    let addr: Option<String> = sqlx::query_as::<_, (String,)>(
+        "SELECT value_json FROM settings WHERE key = 'shop.address'",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|(v,)| serde_json::from_str::<String>(&v).ok());
+    (name, addr)
+}
+
 async fn export_to_file(
     state: &AppState,
     title: &str,
@@ -714,10 +755,11 @@ async fn export_to_file(
             })
         }
         ExportFormat::Pdf => {
+            let (shop_name, shop_address) = shop_identity(&state.pool).await;
             let input = ReportPdfInput {
                 title: title.to_string(),
-                shop_name: "Furniture Shop".to_string(),
-                shop_address: None,
+                shop_name,
+                shop_address,
                 filter_summary,
                 generated_at,
                 columns: columns.to_vec(),

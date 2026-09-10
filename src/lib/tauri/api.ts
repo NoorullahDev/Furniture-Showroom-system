@@ -1950,4 +1950,5 @@ export const reportExport = (
 ) =>
   runCommand<ReportExportResult>("report_export", { session, reportType, filter, format });
 
-export const openFile = (path: string) => runCommand<void>("open_file", { path });
+export const openFile = (session: string, path: string) =>
+  runCommand<void>("open_file", { session, path });
