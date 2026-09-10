@@ -5,6 +5,10 @@ Scope: command authorization audit, Tauri capability review, dead/unauthorized
 IPC removal, path-containment gaps for images/reports. Adversarial test suite =
 Step 5 (`tests/security.rs`), dependency audits = Step 6.
 
+> **Step 5 status: complete.** The adversarial suite is live and green
+> (18 tests, ~2.3s) and surfaced the `report_export` permission bug closed in
+> §7 below.
+
 ## 1. Command authorization grid
 
 Every registered Tauri command was checked to confirm it resolves a session and
@@ -93,8 +97,51 @@ own commands is minimal. No change required.
 
 ## 6. Remaining (later steps)
 
-- `tests/security.rs` adversarial suite — Step 5
+- ~~`tests/security.rs` adversarial suite~~ — **Step 5 (complete)**, see §8
 - `cargo audit` / `npm audit` dependency findings + fix list — Step 6
 - Secrets-redaction verification is largely satisfied by the existing
   `redact()` chain (logging.rs → audit.rs → DTO redacted_json); a targeted test
   lands with Step 5.
+
+## 7. Vuln: `report_export` requested a permission that is never granted
+
+**Severity: Medium (functional lockout + latent drift).** `commands/reports.rs`
+`report_export` run through `authed(..., "reports.view")`, but no migration
+seeds a `reports.view` permission — the registry grants `report.export`
+(owner, manager, accountant). Every export therefore returned `UNAUTHORIZED`
+for every role; the application layer `export_report` performs no authorization
+of its own, so the command layer was the only gate and it was mis-wired.
+
+**Fixed:** the command now requires the seeded `report.export`
+(commands/reports.rs). `authed` (vs `authenticated`) import is kept because
+`open_file` uses the weaker session-only gate. Guarded by the RBAC matrix test
+and by `report_export_permission_is_the_seeded_code`, which asserts
+`report.export` is held by owner/manager/accountant and that `reports.view`
+exists nowhere in the registry.
+
+## 8. Adversarial suite `tests/security.rs` (Step 5)
+
+18 tests covering the Step-5 attack list. Summary by area:
+
+| Area | Tests |
+|---|---|
+| RBAC matrix = seed policy | `rbac_matrix_matches_seed_policy` (owner = all permissions; manager/salesperson/accountant/storekeeper exact grant sets) |
+| Permission-drift guard | `report_export_permission_is_the_seeded_code` (fixes §7), `sensitive_setting_needs_permission` |
+| Path traversal | `path_traversal_read_product_image_rejected` (`..`, absolute, encoded), `path_traversal_delete_backup_rejected`, `path_traversal_restore_marker_rejected`, `ensure_member_rejects_escapes` |
+| Invalid files | `corrupt_and_unsupported_image_rejected`, `oversized_image_serve_rejected` (>25MB), `non_sqlite_backup_rejected_and_db_untouched` |
+| SQL injection | `sql_injection_global_search_is_safe`, `sql_injection_list_products_and_audit_safe`, `sql_injection_dropped_callback_is_stored_literally` — `DROP TABLE`/`OR 1=1` payloads are bound parameters; schema survives |
+| Locked session | `locked_session_blocked_and_unlock_works` (lock → `SESSION_LOCKED`; wrong password → `INVALID_CREDENTIALS`; correct password recovers) |
+| Backup tamper | `backup_tamper_rejected_and_db_untouched` (flipped header byte → verify fails → restore rejected, no marker, DB untouched) |
+| Audit chain | `audit_hash_chain_detects_tampering` (`verify_chain` pinpoints the row after an edit) |
+| CSV injection | `csv_injection_cells_are_neutralized` (`=`/`+`/`-`/tab prefixing via `sanitize_cell`) |
+| Oversized inputs | `oversized_inputs_rejected` (category name >120, full name >200, username <3, weak password) |
+
+Notable confirmations while writing the suite:
+- The hash chain reports the **next** row after an edit (tail `prev_hash`
+  comparison), so a tampered row `id=2` surfaces as `Some(3)`.
+- Global-search binding is parameterized end-to-end; the earliest SQLi vectors
+  in list/audit filters are also all `?`-bound.
+
+Verification (all clean): `cargo test` (128 previous + 18 new = 146),
+`cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`,
+`npm run typecheck`, `npm run build`.
