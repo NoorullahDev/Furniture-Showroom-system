@@ -107,8 +107,12 @@ SELECT id, cash_account_id, entry_type, amount_minor, reference_type,
 DROP TABLE cash_entries_0010_old;
 CREATE INDEX IF NOT EXISTS idx_cash_entries_account ON cash_entries(cash_account_id);
 CREATE INDEX IF NOT EXISTS idx_cash_entries_ref ON cash_entries(reference_type, reference_id);
--- Maintain the invariant documented at creation: balance equals the signed sum of entries.
+-- Maintain the invariant documented at creation: balance equals the opening
+-- balance plus the signed sum of entries (the 0008 rebuild summed entries only,
+-- dropping the opening-balance component; this corrected rebalance runs last
+-- so it wins for any upgrade path).
 UPDATE cash_accounts SET balance_minor =
+    COALESCE(opening_balance_minor, 0) +
     (SELECT COALESCE(SUM(amount_minor), 0) FROM cash_entries e WHERE e.cash_account_id = cash_accounts.id);
 
 -- Per-document number sequences for Phase 9 posted documents.
