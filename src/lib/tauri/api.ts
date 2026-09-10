@@ -1698,3 +1698,156 @@ export const damageList = (session: string, input: DamageListInput) =>
 
 export const damageGet = (session: string, damageId: number) =>
   runCommand<DamageRecordDto>("damage_get", { session, damageId });
+
+// Phase 9 — Expenses, cash management, and profit
+// ---------------------------------------------------------------------------
+
+export type ExpenseCategoryDto = {
+  id: number;
+  code: string;
+  name: string;
+  isActive: boolean;
+  createdBy?: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ExpenseCategoryInput = {
+  code: string;
+  name: string;
+  isActive?: boolean | null;
+};
+
+export type ExpenseCategoryUpdateInput = {
+  id: number;
+  name: string;
+  isActive: boolean;
+};
+
+export type ExpenseDto = {
+  id: number;
+  expenseNumber?: string | null;
+  categoryId: number;
+  categoryCode: string;
+  categoryName: string;
+  amountMinor: number;
+  expenseDate: string;
+  cashAccountId: number;
+  cashAccountName: string;
+  description: string;
+  payee?: string | null;
+  reference?: string | null;
+  attachmentPath?: string | null;
+  status: string;
+  idempotencyKey?: string | null;
+  createdBy: number;
+  createdAt: string;
+  postedBy?: number | null;
+  postedAt?: string | null;
+  reversedBy?: number | null;
+  reversedAt?: string | null;
+  reversalReason?: string | null;
+  updatedAt: string;
+};
+
+export type ExpenseInput = {
+  categoryId: number;
+  amountMinor: number;
+  expenseDate: string;
+  cashAccountId: number;
+  description: string;
+  payee?: string | null;
+  reference?: string | null;
+  attachmentPath?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type ExpenseReverseInput = {
+  expenseId: number;
+  reason: string;
+};
+
+export type ExpenseListInput = {
+  status?: string | null;
+  categoryId?: number | null;
+  cashAccountId?: number | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  limit?: number | null;
+  offset?: number | null;
+};
+
+export type OwnerTransactionDto = {
+  id: number;
+  transactionNumber: string;
+  kind: string;
+  amountMinor: number;
+  transactionDate: string;
+  cashAccountId: number;
+  cashAccountName: string;
+  notes?: string | null;
+  idempotencyKey?: string | null;
+  createdBy: number;
+  createdAt: string;
+};
+
+export type OwnerTransactionInput = {
+  kind: "capital_in" | "withdrawal";
+  amountMinor: number;
+  transactionDate: string;
+  cashAccountId: number;
+  notes?: string | null;
+  idempotencyKey?: string | null;
+};
+
+export type ProfitSummaryDto = {
+  fromDate: string;
+  toDate: string;
+  revenueMinor: number;
+  cogsMinor: number;
+  deliveryIncomeMinor: number;
+  grossProfitMinor: number;
+  expensesMinor: number;
+  damageLossMinor: number;
+  operationalProfitMinor: number;
+  ownerCapitalInMinor: number;
+  ownerWithdrawalsMinor: number;
+  cashInflowMinor: number;
+  cashOutflowMinor: number;
+  netCashFlowMinor: number;
+};
+
+export const expenseCategoryList = (session: string) =>
+  runCommand<ExpenseCategoryDto[]>("expense_category_list", { session });
+
+export const expenseCategoryCreate = (session: string, input: ExpenseCategoryInput) =>
+  runCommand<ExpenseCategoryDto>("expense_category_create", { session, input });
+
+export const expenseCategoryUpdate = (session: string, input: ExpenseCategoryUpdateInput) =>
+  runCommand<ExpenseCategoryDto>("expense_category_update", { session, input });
+
+export const expenseList = (session: string, input: ExpenseListInput) =>
+  runCommand<ExpenseDto[]>("expense_list", { session, input });
+
+export const expensePost = (session: string, input: ExpenseInput) =>
+  runCommand<ExpenseDto>("expense_post", { session, input });
+
+export const expenseReverse = (session: string, input: ExpenseReverseInput) =>
+  runCommand<ExpenseDto>("expense_reverse", { session, input });
+
+export const ownerTransactionPost = (session: string, input: OwnerTransactionInput) =>
+  runCommand<OwnerTransactionDto>("owner_transaction_post", { session, input });
+
+export const ownerTransactionList = (session: string, limit?: number | null) =>
+  runCommand<OwnerTransactionDto[]>("owner_transaction_list", { session, limit: limit ?? null });
+
+export const profitSummary = (
+  session: string,
+  fromDate?: string | null,
+  toDate?: string | null,
+) =>
+  runCommand<ProfitSummaryDto>("profit_summary", {
+    session,
+    fromDate: fromDate || null,
+    toDate: toDate || null,
+  });

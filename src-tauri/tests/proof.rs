@@ -18,7 +18,7 @@ async fn db_opens_runs_migrations_and_seeds() {
     let paths = infra::FilePaths::init(&dir).unwrap();
     let (pool, info) = infra::db::open(&paths).await.unwrap();
 
-    assert_eq!(info.version, 9);
+    assert_eq!(info.version, 10);
     assert_eq!(info.pending_migrations, 0);
 
     let role_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles")
@@ -31,7 +31,7 @@ async fn db_opens_runs_migrations_and_seeds() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(perm_count, 42);
+    assert_eq!(perm_count, 46);
 
     let owner_perm_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
@@ -91,9 +91,9 @@ async fn db_opens_runs_migrations_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(version_again, 9);
+    assert_eq!(version_again, 10);
 
-    // Phase 9 walk-in payment account column is present.
+    // Walk-in payment account column (migration 0009) is present.
     let phase9_note: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sales') WHERE name = 'payment_cash_account_id'",
     )
@@ -153,6 +153,72 @@ async fn db_opens_runs_migrations_and_seeds() {
     .await
     .unwrap();
     assert_eq!(phase8_sequences, 4);
+
+    // Phase 9 expenses/cash/profit tables are present.
+    let phase9_tables: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'table' AND name IN (
+             'expense_categories', 'expenses', 'owner_transactions'
+         )",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_tables, 3);
+    let phase9_sequences: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM document_sequences
+         WHERE document_type IN ('expense', 'owner_transaction')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_sequences, 2);
+    let phase9_permissions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM permissions
+         WHERE code IN ('expense.view', 'expense.create', 'expense.reverse',
+                        'profit.view', 'owner.transfer')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_permissions, 5);
+    let phase9_category_seed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM expense_categories")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(phase9_category_seed, 12);
+    let phase9_cash_entry_types: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('cash_entries')
+         WHERE name = 'entry_type'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_cash_entry_types, 1);
+    let phase9_accountant_grants: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+           FROM roles r
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+          WHERE r.code = 'accountant'
+            AND p.code IN ('expense.view', 'expense.create', 'expense.reverse', 'profit.view')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(phase9_accountant_grants, 4);
+    let owner_transfer_owner_only: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+           FROM roles r
+           JOIN role_permissions rp ON rp.role_id = r.id
+           JOIN permissions p ON p.id = rp.permission_id
+          WHERE p.code = 'owner.transfer' AND r.code <> 'owner'
+            AND r.code <> 'manager'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(owner_transfer_owner_only, 0);
 
     // Owner role template grants every permission (Phase 2 seed invariant).
     let owner_has_all: i64 = sqlx::query_scalar(

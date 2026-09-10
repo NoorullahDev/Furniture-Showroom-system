@@ -5,6 +5,7 @@ use crate::error::AppError;
 use crate::infrastructure::redact;
 
 pub mod catalogue;
+pub mod expenses;
 pub mod fulfilment;
 pub mod inventory;
 pub mod purchases;

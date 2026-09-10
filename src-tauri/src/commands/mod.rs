@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod auth;
 pub mod catalogue;
+pub mod expenses;
 pub mod first_run;
 pub mod fulfilment;
 pub mod inventory;

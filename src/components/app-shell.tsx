@@ -17,6 +17,7 @@ import {
   ShoppingCart,
   Truck,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ import { InventoryPage } from "@/components/inventory/inventory-page";
 import { PurchasesPage } from "@/components/purchases/purchases-page";
 import { SalesPage } from "@/components/sales/sales-page";
 import { FulfilmentPage } from "@/components/fulfilment/fulfilment-page";
+import { ExpensesPage } from "@/components/expenses/expenses-page";
 
 export type ShellView =
   | "dashboard"
@@ -42,6 +44,7 @@ export type ShellView =
   | "purchases"
   | "sales"
   | "fulfilment"
+  | "finance"
   | "users"
   | "roles"
   | "audit"
@@ -104,6 +107,12 @@ const NAV_SECTIONS: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
+    label: "Finance",
+    items: [
+      { id: "finance", label: "Finance", icon: Wallet, view: "finance", permission: "expense.view" },
+    ],
+  },
+  {
     label: "Office (coming soon)",
     items: [
       { id: "reports", label: "Reports", icon: FileText, phase: "P11" },
@@ -119,6 +128,7 @@ const VIEW_TITLES: Record<ShellView, string> = {
   purchases: "Purchases",
   sales: "Sales",
   fulfilment: "Fulfilment",
+  finance: "Finance",
   users: "Users",
   roles: "Roles & permissions",
   audit: "Audit log",
@@ -324,6 +334,7 @@ export function AppShell() {
           {view === "purchases" && <PurchasesPage />}
           {view === "sales" && <SalesPage />}
           {view === "fulfilment" && <FulfilmentPage />}
+          {view === "finance" && <ExpensesPage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}

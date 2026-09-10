@@ -174,6 +174,15 @@ pub fn run() {
             commands::fulfilment::damage_decide,
             commands::fulfilment::damage_list,
             commands::fulfilment::damage_get,
+            commands::expenses::expense_category_list,
+            commands::expenses::expense_category_create,
+            commands::expenses::expense_category_update,
+            commands::expenses::expense_list,
+            commands::expenses::expense_post,
+            commands::expenses::expense_reverse,
+            commands::expenses::owner_transaction_post,
+            commands::expenses::owner_transaction_list,
+            commands::expenses::profit_summary,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

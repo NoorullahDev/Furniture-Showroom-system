@@ -4,6 +4,7 @@ pub mod cash;
 pub mod catalogue;
 pub mod customers;
 pub mod documents;
+pub mod expenses;
 pub mod first_run;
 pub mod fulfilment;
 pub mod inventory;
