@@ -19,6 +19,7 @@ pub mod reports;
 pub mod roles;
 pub mod sales;
 pub mod search;
+pub mod seed_demo;
 pub mod sets;
 pub mod settings;
 pub mod suppliers;

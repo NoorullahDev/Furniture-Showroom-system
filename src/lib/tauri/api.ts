@@ -2116,3 +2116,19 @@ export const backupCloseWithout = () => runCommand<void>("backup_close_without")
 
 export const maintenanceIntegrity = (session: string) =>
   runCommand<IntegrityResult>("maintenance_integrity", { session });
+
+// --- Demo Data Seeding --------------------------------------------------------
+
+export type SeedResult = {
+  categories: number;
+  productTypes: number;
+  products: number;
+  suppliers: number;
+  customers: number;
+  purchases: number;
+  sales: number;
+  expenses: number;
+};
+
+export const seedDemoData = (session: string) =>
+  runCommand<SeedResult>("seed_demo_data", { session });

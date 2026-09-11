@@ -217,6 +217,7 @@ pub fn run() {
             commands::maintenance::backup_close_cancel,
             commands::maintenance::backup_close_without,
             commands::maintenance::maintenance_integrity,
+            commands::seed_demo::seed_demo_data,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

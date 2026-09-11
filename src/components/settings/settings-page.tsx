@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
   CheckCircle2,
+  Database,
   Eye,
   EyeOff,
   HardDrive,
@@ -52,6 +53,7 @@ import {
   authUpdateLoginDetails,
   licenseStatus,
   printerList,
+  seedDemoData,
   settingsGet,
   settingsUpdateGeneral,
   settingsUpdatePrint,
@@ -682,7 +684,22 @@ function LicensePanel({ status, loading }: { status?: LicenseStatus; loading: bo
 }
 
 function SystemPanel({ rows, onOpenBackup }: { rows?: SettingsRows; onOpenBackup: () => void }) {
-  const { hasPermission } = useSession();
+  const { profile, hasPermission } = useSession();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const canSeed = hasPermission("settings.manage");
+
+  const seedMutation = useMutation({
+    mutationFn: () => seedDemoData(profile!.sessionId),
+    onSuccess: (result) => {
+      toast({ title: "Demo data loaded", description: `${result.products} products, ${result.sales} sales, ${result.purchases} purchases, and more seeded.` });
+      queryClient.invalidateQueries();
+    },
+    onError: (caught: unknown) => {
+      toast({ variant: "error", title: "Seed failed", description: commandErrorMessage(caught) });
+    },
+  });
+
   return (
     <div className="space-y-6">
       <Card title="System preferences" description="Existing operational settings remain unchanged in this task." action={<Button variant="outline" size="sm" onClick={onOpenBackup}><HardDrive className="h-4 w-4" />Maintenance tools</Button>}>
@@ -693,6 +710,19 @@ function SystemPanel({ rows, onOpenBackup }: { rows?: SettingsRows; onOpenBackup
           <Info label="Negative stock" value={valueOf(rows, "inventory.negative_stock", "block")} />
         </dl>
       </Card>
+      {canSeed && (
+        <Card title="Demo data" description="Populate the catalogue, suppliers, customers, purchases, sales, and expenses with realistic sample data. Only works on a fresh database with no products.">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => seedMutation.mutate()}
+            disabled={seedMutation.isPending}
+          >
+            {seedMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+            Seed Demo Data
+          </Button>
+        </Card>
+      )}
       {hasPermission("audit.view") ? <AuditViewer /> : <Card title="Audit Log"><p className="text-sm text-neutral-500">You do not have permission to view the audit log.</p></Card>}
     </div>
   );
