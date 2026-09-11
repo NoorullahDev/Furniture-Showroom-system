@@ -350,6 +350,8 @@ async fn restore_applies_and_swaps_on_pending_restore() {
         &infra::restore::RestoreMarker {
             backup_name: filename.clone(),
             safety_backup: None,
+            staged_path: None,
+            legacy_database_only: true,
         },
     )
     .unwrap();

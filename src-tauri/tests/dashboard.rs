@@ -306,6 +306,7 @@ async fn dashboard_reconciles_with_module_figures() {
             amount_minor: 40_000,
             expense_date: "2026-09-10".into(),
             cash_account_id: account,
+            payment_method_id: 1,
             description: "Rent".into(),
             payee: None,
             reference: None,

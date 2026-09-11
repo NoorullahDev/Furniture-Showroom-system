@@ -385,6 +385,155 @@ pub async fn change_password(
         .await
 }
 
+/// Atomically update the signed-in owner's username and/or password after
+/// verifying the current password. The user row is updated in place and only
+/// this account's sessions are revoked.
+pub async fn update_login_details(
+    state: &AppState,
+    principal: &Principal,
+    current_password: &str,
+    new_username: Option<&str>,
+    new_password: Option<&str>,
+    confirm_password: Option<&str>,
+    correlation_id: &str,
+) -> Result<String, AppError> {
+    if !principal.is_owner() {
+        return Err(AppError::Unauthorized(
+            "only an owner can change owner login details".into(),
+        ));
+    }
+    if current_password.is_empty() {
+        return Err(AppError::Validation("current password is required".into()));
+    }
+
+    let username = match new_username.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(value) => {
+            let clean = normalize_username(value);
+            if !(3..=64).contains(&clean.len())
+                || !clean
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            {
+                return Err(AppError::Validation(
+                    "username must be 3-64 characters using letters, digits, '.', '_' or '-'"
+                        .into(),
+                ));
+            }
+            Some(clean)
+        }
+        None => None,
+    };
+
+    let password_change = match (new_password, confirm_password) {
+        (None, None) => None,
+        (Some(""), Some("")) => None,
+        (Some(next), Some(confirm)) if next == confirm => {
+            password::validate_strength(next)?;
+            Some(password::hash_password(next)?)
+        }
+        _ => {
+            return Err(AppError::Validation(
+                "new password and confirmation must match".into(),
+            ))
+        }
+    };
+    if username.is_none() && password_change.is_none() {
+        return Err(AppError::Validation(
+            "provide a new username, a new password, or both".into(),
+        ));
+    }
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let current_password = current_password.to_string();
+    let now = state.clock.now_iso();
+    let audits = state.audits.clone();
+    let correlation = correlation_id.to_string();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let (old_username, stored_hash): (String, String) = sqlx::query_as(
+                    "SELECT username, password_hash FROM users WHERE id = ? AND is_active = 1",
+                )
+                .bind(actor_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| AppError::Unauthorized("account is not active".into()))?;
+
+                if !password::verify_password(&current_password, &stored_hash) {
+                    return Err(AppError::InvalidCredentials);
+                }
+
+                let final_username = username.unwrap_or_else(|| old_username.clone());
+                let password_changed = password_change.is_some();
+                if final_username == old_username && !password_changed {
+                    return Err(AppError::Validation(
+                        "provide a different username, a new password, or both".into(),
+                    ));
+                }
+                if final_username != old_username {
+                    let duplicate: Option<i64> =
+                        sqlx::query_scalar("SELECT id FROM users WHERE username = ? AND id <> ?")
+                            .bind(&final_username)
+                            .bind(actor_id)
+                            .fetch_optional(&mut *tx)
+                            .await?;
+                    if duplicate.is_some() {
+                        return Err(AppError::Conflict(format!(
+                            "a user named `{final_username}` already exists"
+                        )));
+                    }
+                }
+
+                let final_hash = password_change.unwrap_or(stored_hash);
+                sqlx::query(
+                    "UPDATE users SET username = ?, password_hash = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(&final_username)
+                .bind(&final_hash)
+                .bind(&now)
+                .bind(actor_id)
+                .execute(&mut *tx)
+                .await?;
+
+                sqlx::query("UPDATE sessions SET active = 0 WHERE user_id = ? AND active = 1")
+                    .bind(actor_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                audits
+                    .record(
+                        &mut *tx,
+                        crate::infrastructure::AuditInput {
+                            user_id: Some(actor_id),
+                            session_id: Some(actor_session),
+                            action: "user.login_details_change".into(),
+                            entity_type: Some("user".into()),
+                            entity_id: Some(actor_id.to_string()),
+                            before_json: Some(
+                                serde_json::json!({ "username": old_username }).to_string(),
+                            ),
+                            after_json: Some(
+                                serde_json::json!({
+                                    "username": final_username,
+                                    "password_changed": password_changed
+                                })
+                                .to_string(),
+                            ),
+                            correlation_id: Some(correlation),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                Ok(final_username)
+            })
+        })
+        .await
+}
+
 /// Roles for a user id (used by login and management views).
 async fn principal_roles(state: &AppState, user_id: i64) -> Result<Vec<String>, AppError> {
     let rows: Vec<String> = sqlx::query_scalar(
@@ -532,5 +681,164 @@ mod tests {
             .unwrap();
         assert!(resolve_session(&state, &session.id).await.is_ok());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn owner_login_details_update_is_atomic_and_revokes_only_that_owner() {
+        let dir = std::env::temp_dir().join(format!(
+            "furniture-shop-auth-self-update-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = crate::infrastructure::FilePaths::init(&dir).unwrap();
+        let (pool, _) = crate::infrastructure::db::open(&paths).await.unwrap();
+        let state = AppState::new(pool, paths);
+
+        let owner_id = seed_owner(&state).await;
+        let other_hash = hash_password("Other Pass 123").unwrap();
+        let other_id = sqlx::query(
+            "INSERT INTO users (username, password_hash, full_name) VALUES ('taken', ?, 'Other')",
+        )
+        .bind(other_hash)
+        .execute(&state.pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let other_session = state.sessions.create(other_id).await.unwrap();
+
+        let owner_session = state.sessions.create(owner_id).await.unwrap();
+        let owner = resolve_session(&state, &owner_session.id).await.unwrap();
+
+        let wrong = update_login_details(
+            &state,
+            &owner,
+            "wrong",
+            Some("renamed"),
+            None,
+            None,
+            "wrong-current",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(wrong, AppError::InvalidCredentials));
+
+        let mismatch = update_login_details(
+            &state,
+            &owner,
+            "Owner Pass 123",
+            None,
+            Some("New Pass 456"),
+            Some("different"),
+            "mismatch",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(mismatch, AppError::Validation(_)));
+
+        let duplicate = update_login_details(
+            &state,
+            &owner,
+            "Owner Pass 123",
+            Some("taken"),
+            None,
+            None,
+            "duplicate",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(duplicate, AppError::Conflict(_)));
+        assert!(state.sessions.is_active(&owner_session.id).await.unwrap());
+
+        update_login_details(
+            &state,
+            &owner,
+            "Owner Pass 123",
+            Some("renamed"),
+            None,
+            None,
+            "username-only",
+        )
+        .await
+        .unwrap();
+        assert!(!state.sessions.is_active(&owner_session.id).await.unwrap());
+        assert!(state.sessions.is_active(&other_session.id).await.unwrap());
+        assert!(login(&state, "owner", "Owner Pass 123", "old-user")
+            .await
+            .is_err());
+
+        let renamed_login = login(&state, "renamed", "Owner Pass 123", "renamed-login")
+            .await
+            .unwrap();
+        let renamed = resolve_session(&state, &renamed_login.session_id)
+            .await
+            .unwrap();
+        update_login_details(
+            &state,
+            &renamed,
+            "Owner Pass 123",
+            None,
+            Some("New Pass 456"),
+            Some("New Pass 456"),
+            "password-only",
+        )
+        .await
+        .unwrap();
+        assert!(login(&state, "renamed", "Owner Pass 123", "old-password")
+            .await
+            .is_err());
+
+        let new_password_login = login(&state, "renamed", "New Pass 456", "new-password")
+            .await
+            .unwrap();
+        let renamed = resolve_session(&state, &new_password_login.session_id)
+            .await
+            .unwrap();
+        update_login_details(
+            &state,
+            &renamed,
+            "New Pass 456",
+            Some("final-owner"),
+            Some("Final Pass 789"),
+            Some("Final Pass 789"),
+            "combined",
+        )
+        .await
+        .unwrap();
+
+        assert!(login(&state, "renamed", "New Pass 456", "replaced")
+            .await
+            .is_err());
+        let final_login = login(&state, "final-owner", "Final Pass 789", "final")
+            .await
+            .unwrap();
+        assert_eq!(final_login.profile.user_id, owner_id);
+        assert!(final_login.profile.roles.contains(&"owner".to_string()));
+        assert!(state.sessions.is_active(&other_session.id).await.unwrap());
+
+        state.pool.close().await;
+        let paths = crate::infrastructure::FilePaths::init(&dir).unwrap();
+        let (pool, _) = crate::infrastructure::db::open(&paths).await.unwrap();
+        let restarted = AppState::new(pool, paths);
+        assert!(
+            login(&restarted, "admin", "admin123", "bootstrap-must-not-reset")
+                .await
+                .is_err()
+        );
+        assert!(
+            login(&restarted, "renamed", "New Pass 456", "old-after-restart")
+                .await
+                .is_err()
+        );
+        let after_restart = login(
+            &restarted,
+            "final-owner",
+            "Final Pass 789",
+            "new-after-restart",
+        )
+        .await
+        .unwrap();
+        assert_eq!(after_restart.profile.user_id, owner_id);
+        restarted.pool.close().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

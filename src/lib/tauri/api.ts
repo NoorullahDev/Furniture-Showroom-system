@@ -21,6 +21,16 @@ export type LoginResult = {
   profile: SessionProfile;
 };
 
+export type LicenseStatus = {
+  status: string;
+  label: string;
+  isActivated: boolean;
+  licenseId?: string | null;
+  customer?: string | null;
+  activatedAt?: string | null;
+  expiresAt?: string | null;
+};
+
 export type UserDto = {
   id: number;
   username: string;
@@ -96,6 +106,8 @@ export const firstRunComplete = (input: FirstRunCompleteInput) =>
     ownerPassword: input.ownerPassword,
   });
 
+export const licenseStatus = () => runCommand<LicenseStatus>("license_status");
+
 // --- Authentication ----------------------------------------------------------
 
 export const authLogin = (username: string, password: string) =>
@@ -121,6 +133,23 @@ export const authChangePassword = (
     session,
     currentPassword,
     newPassword,
+  });
+
+export const authUpdateLoginDetails = (
+  session: string,
+  input: {
+    currentPassword: string;
+    newUsername?: string | null;
+    newPassword?: string | null;
+    confirmPassword?: string | null;
+  },
+) =>
+  runCommand<string>("auth_update_login_details", {
+    session,
+    currentPassword: input.currentPassword,
+    newUsername: input.newUsername ?? null,
+    newPassword: input.newPassword ?? null,
+    confirmPassword: input.confirmPassword ?? null,
   });
 
 // --- Users -------------------------------------------------------------------
@@ -205,6 +234,48 @@ export const auditQuery = (session: string, filter: AuditFilter) =>
 
 export const settingsGet = (session: string, key: string) =>
   runCommand<string | null>("settings_get", { session, key });
+
+export type GeneralSettingsInput = {
+  shopName: string;
+  ownerName: string;
+  address: string;
+  phone: string;
+  currency: string;
+};
+
+export const settingsUpdateGeneral = (session: string, input: GeneralSettingsInput) =>
+  runCommand<void>("settings_update_general", { session, ...input });
+
+export type PrintSettingsInput = {
+  paperSize: string;
+  orientation: string;
+  marginMm: number;
+  fontSize: string;
+  copies: number;
+  showLogo: boolean;
+  showAddress: boolean;
+  showPhone: boolean;
+  showPaymentDetails: boolean;
+  footerText: string;
+  printerDestination: string;
+};
+
+export const settingsUpdatePrint = (session: string, input: PrintSettingsInput) =>
+  runCommand<void>("settings_update_print", { session, ...input });
+
+export const shopLogoGet = (session: string) =>
+  runCommand<string | null>("shop_logo_get", { session });
+
+export const shopLogoReplace = (session: string, path: string) =>
+  runCommand<string>("shop_logo_replace", { session, path });
+
+export const shopLogoRemove = (session: string) =>
+  runCommand<void>("shop_logo_remove", { session });
+
+export type PrinterInfo = { name: string; isDefault: boolean };
+
+export const printerList = (session: string) =>
+  runCommand<PrinterInfo[]>("printer_list", { session });
 
 // --- Generated documents (open in OS default app) ------------------------------
 
@@ -1690,6 +1761,8 @@ export type ExpenseDto = {
   expenseDate: string;
   cashAccountId: number;
   cashAccountName: string;
+  paymentMethodId?: number | null;
+  paymentMethodName?: string | null;
   description: string;
   payee?: string | null;
   reference?: string | null;
@@ -1711,6 +1784,7 @@ export type ExpenseInput = {
   amountMinor: number;
   expenseDate: string;
   cashAccountId: number;
+  paymentMethodId: number;
   description: string;
   payee?: string | null;
   reference?: string | null;
@@ -1731,6 +1805,18 @@ export type ExpenseListInput = {
   toDate?: string | null;
   limit?: number | null;
   offset?: number | null;
+};
+
+export type ExpensePageInput = ExpenseListInput & {
+  search?: string | null;
+  sortBy?: "date" | "category" | "note" | "amount" | null;
+  sortDirection?: "asc" | "desc" | null;
+};
+
+export type ExpensePageDto = {
+  items: ExpenseDto[];
+  total: number;
+  totalAmountMinor: number;
 };
 
 export type OwnerTransactionDto = {
@@ -1785,6 +1871,9 @@ export const expenseCategoryUpdate = (session: string, input: ExpenseCategoryUpd
 export const expenseList = (session: string, input: ExpenseListInput) =>
   runCommand<ExpenseDto[]>("expense_list", { session, input });
 
+export const expensePage = (session: string, input: ExpensePageInput) =>
+  runCommand<ExpensePageDto>("expense_page", { session, input });
+
 export const expensePost = (session: string, input: ExpenseInput) =>
   runCommand<ExpenseDto>("expense_post", { session, input });
 
@@ -1811,42 +1900,47 @@ export const profitSummary = (
 // Phase 10 — Dashboard summary and global search
 // ---------------------------------------------------------------------------
 
-export type DashboardActivityDto = {
+export type DashboardDeliveryDto = {
   id: number;
-  action: string;
-  entityType?: string | null;
-  entityId?: string | null;
-  username?: string | null;
-  createdAt: string;
+  deliveryNumber?: string | null;
+  saleId: number;
+  customerId?: number | null;
+  customerName: string;
+  items: string;
+  scheduledAt?: string | null;
+  status: string;
+  isOverdue: boolean;
 };
 
-export type DashboardTrendDayDto = {
-  day: string;
-  salesCount: number;
-  salesMinor: number;
-  receiptsMinor: number;
-  expensesMinor: number;
+export type DashboardTransactionDto = {
+  id: number;
+  customerId?: number | null;
+  transactionDate: string;
+  customerName: string;
+  reference: string;
+  transactionType: "Sale" | "Payment";
+  amountMinor: number;
 };
 
 export type DashboardSummaryDto = {
   asOf: string;
-  todaySalesCount: number;
-  todaySalesMinor: number;
-  todayReceiptsMinor: number;
-  todayExpensesMinor: number;
-  netCashMinor: number;
-  duesMinor: number;
-  overdueDuesMinor: number;
-  payablesMinor: number;
-  stockValueMinor?: number | null;
+  shopDate: string;
+  todaySalesCount?: number | null;
+  todaySalesMinor?: number | null;
+  todayReceivedCount?: number | null;
+  todayReceivedMinor?: number | null;
+  monthSalesMinor?: number | null;
+  customerDuesMinor?: number | null;
+  supplierPayablesMinor?: number | null;
+  pendingDeliveries?: number | null;
+  overdueCustomerCount?: number | null;
+  overdueCustomerMinor?: number | null;
+  overdueSupplierCount?: number | null;
+  overdueSupplierMinor?: number | null;
   lowStockCount: number;
-  pendingDeliveries: number;
-  openDamageCount: number;
-  monthGrossProfitMinor?: number | null;
-  monthRevenueMinor: number;
-  monthExpensesMinor: number;
-  trend: DashboardTrendDayDto[];
-  recentActivity: DashboardActivityDto[];
+  openDamageCount?: number | null;
+  upcomingDeliveries: DashboardDeliveryDto[];
+  recentTransactions: DashboardTransactionDto[];
 };
 
 export const dashboardSummary = (session: string) =>
@@ -1926,20 +2020,46 @@ export type MaintenanceStatus = {
 };
 
 export type BackupResult = {
+  name: string;
   backupPath: string;
   sha256: string;
   verified: boolean;
   bytes: number;
+  createdAt: string;
+  kind: string;
 };
 
 export type BackupListItem = {
   name: string;
+  fullPath: string;
   sizeBytes: number;
   sha256: string;
   createdAt: string;
   kind: string;
   createdBy: string | null;
   verified: boolean;
+  appVersion: string;
+  schemaVersion: number;
+  fileCount: number;
+  legacyDatabaseOnly: boolean;
+};
+
+export type BackupPreferences = {
+  directory: string | null;
+  autoBackupOnClose: boolean;
+};
+
+export type BackupInspection = {
+  name: string;
+  fullPath: string;
+  sizeBytes: number;
+  sha256: string;
+  createdAt: string;
+  kind: string;
+  appVersion: string;
+  schemaVersion: number;
+  fileCount: number;
+  legacyDatabaseOnly: boolean;
 };
 
 export type RestoreResult = {
@@ -1956,8 +2076,8 @@ export type IntegrityResult = {
 export const maintenanceStatus = (session: string) =>
   runCommand<MaintenanceStatus>("maintenance_status", { session });
 
-export const backupCreate = (session: string) =>
-  runCommand<BackupResult>("backup_create", { session });
+export const backupCreate = (session: string, backupName: string) =>
+  runCommand<BackupResult>("backup_create", { session, backupName });
 
 export const backupList = (session: string) =>
   runCommand<BackupListItem[]>("backup_list", { session });
@@ -1967,6 +2087,32 @@ export const backupDelete = (session: string, name: string) =>
 
 export const backupRestore = (session: string, name: string) =>
   runCommand<RestoreResult>("backup_restore", { session, name });
+
+export const backupPreferencesGet = (session: string) =>
+  runCommand<BackupPreferences>("backup_preferences_get", { session });
+
+export const backupPreferencesSave = (
+  session: string,
+  directory: string,
+  autoBackupOnClose: boolean,
+) => runCommand<BackupPreferences>("backup_preferences_save", {
+  session,
+  directory,
+  autoBackupOnClose,
+});
+
+export const backupInspect = (session: string, path: string) =>
+  runCommand<BackupInspection>("backup_inspect", { session, path });
+
+export const backupRestoreImport = (session: string, path: string) =>
+  runCommand<RestoreResult>("backup_restore_import", { session, path });
+
+export const backupRestart = (session: string) =>
+  runCommand<void>("backup_restart", { session });
+
+export const backupCloseRetry = () => runCommand<void>("backup_close_retry");
+export const backupCloseCancel = () => runCommand<void>("backup_close_cancel");
+export const backupCloseWithout = () => runCommand<void>("backup_close_without");
 
 export const maintenanceIntegrity = (session: string) =>
   runCommand<IntegrityResult>("maintenance_integrity", { session });

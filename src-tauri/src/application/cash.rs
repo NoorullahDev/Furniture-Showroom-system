@@ -94,7 +94,7 @@ pub async fn list_payment_methods(
     state: &AppState,
     principal: &Principal,
 ) -> Result<Vec<PaymentMethodDto>, AppError> {
-    principal.require("payable.view")?;
+    principal.require_any(&["payable.view", "expense.view"])?;
     let rows = sqlx::query("SELECT id, code, name, is_active FROM payment_methods ORDER BY name")
         .fetch_all(&state.pool)
         .await?;
@@ -113,7 +113,7 @@ pub async fn list_cash_accounts(
     state: &AppState,
     principal: &Principal,
 ) -> Result<Vec<CashAccountDto>, AppError> {
-    principal.require("payable.view")?;
+    principal.require_any(&["payable.view", "expense.view"])?;
     let rows = sqlx::query(
         "SELECT id, code, name, kind, opening_balance_minor, balance_minor, is_active
          FROM cash_accounts ORDER BY name",

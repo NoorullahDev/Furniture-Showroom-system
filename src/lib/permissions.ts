@@ -84,6 +84,9 @@ export const PERMISSION_GROUPS: { group: string; permissions: PermissionDef[] }[
   {
     group: "Finance",
     permissions: [
+      { code: "expense.view", label: "View expenses", description: "View expense history and filters." },
+      { code: "expense.create", label: "Manage expenses", description: "Add expenses and manage expense categories." },
+      { code: "expense.reverse", label: "Reverse expenses", description: "Reverse posted expenses with a reason." },
       { code: "profit.view", label: "View profit", description: "See profit and margin reports." },
     ],
   },

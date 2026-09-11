@@ -20,12 +20,39 @@ pub struct MaintenanceStatusDto {
 #[serde(rename_all = "camelCase")]
 pub struct BackupListItemDto {
     pub name: String,
+    pub full_path: String,
     pub size_bytes: u64,
     pub sha256: String,
     pub created_at: String,
     pub kind: String,
     pub created_by: Option<String>,
     pub verified: bool,
+    pub app_version: String,
+    pub schema_version: i64,
+    pub file_count: usize,
+    pub legacy_database_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupPreferencesDto {
+    pub directory: Option<String>,
+    pub auto_backup_on_close: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInspectionDto {
+    pub name: String,
+    pub full_path: String,
+    pub size_bytes: u64,
+    pub sha256: String,
+    pub created_at: String,
+    pub kind: String,
+    pub app_version: String,
+    pub schema_version: i64,
+    pub file_count: usize,
+    pub legacy_database_only: bool,
 }
 
 #[derive(Debug, Serialize)]

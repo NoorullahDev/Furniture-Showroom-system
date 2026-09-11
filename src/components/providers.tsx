@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ToastProvider } from "@/components/ui/toast";
 import { SessionProvider } from "@/components/session/session-provider";
+import { BackupCloseGuard } from "@/components/maintenance/backup-close-guard";
 
 function makeQueryClient() {
   return new QueryClient({
@@ -24,7 +25,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          {children}
+          <BackupCloseGuard />
+        </SessionProvider>
       </ToastProvider>
     </QueryClientProvider>
   );

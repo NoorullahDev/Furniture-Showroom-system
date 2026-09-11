@@ -41,6 +41,8 @@ pub struct ExpenseDto {
     pub expense_date: String,
     pub cash_account_id: i64,
     pub cash_account_name: String,
+    pub payment_method_id: Option<i64>,
+    pub payment_method_name: Option<String>,
     pub description: String,
     pub payee: Option<String>,
     pub reference: Option<String>,
@@ -64,6 +66,7 @@ pub struct ExpenseInput {
     pub amount_minor: i64,
     pub expense_date: String,
     pub cash_account_id: i64,
+    pub payment_method_id: i64,
     pub description: String,
     #[serde(default)]
     pub payee: Option<String>,
@@ -73,6 +76,39 @@ pub struct ExpenseInput {
     pub attachment_path: Option<String>,
     #[serde(default)]
     pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpensePageInput {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    #[serde(default)]
+    pub cash_account_id: Option<i64>,
+    #[serde(default)]
+    pub from_date: Option<String>,
+    #[serde(default)]
+    pub to_date: Option<String>,
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    #[serde(default)]
+    pub sort_direction: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpensePageDto {
+    pub items: Vec<ExpenseDto>,
+    pub total: i64,
+    pub total_amount_minor: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

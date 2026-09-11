@@ -1,110 +1,263 @@
 "use client";
 
 import * as React from "react";
-import { Loader2, LogIn, Store } from "lucide-react";
+import {
+  Armchair,
+  CheckCircle2,
+  CircleAlert,
+  Eye,
+  EyeOff,
+  Loader2,
+  ShieldQuestion,
+} from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useSession } from "@/components/session/session-provider";
-import { authLogin } from "@/lib/tauri/api";
+import { authLogin, licenseStatus, type LicenseStatus } from "@/lib/tauri/api";
 import type { CommandError } from "@/lib/tauri/client";
 
 export function LoginScreen() {
   const { applyLogin } = useSession();
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [showPassword, setShowPassword] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [waitSecs, setWaitSecs] = React.useState(0);
+  const [license, setLicense] = React.useState<LicenseStatus | null>(null);
+  const [licenseUnavailable, setLicenseUnavailable] = React.useState(false);
+  const usernameRef = React.useRef<HTMLInputElement>(null);
+  const passwordRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    void licenseStatus()
+      .then((result) => {
+        if (active) setLicense(result);
+      })
+      .catch(() => {
+        if (active) setLicenseUnavailable(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     if (waitSecs <= 0) return;
-    const t = window.setTimeout(() => setWaitSecs((s) => s - 1), 1000);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => setWaitSecs((seconds) => seconds - 1), 1000);
+    return () => window.clearTimeout(timer);
   }, [waitSecs]);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!username.trim() || !password || busy) return;
+  function clearError() {
+    if (waitSecs === 0) setError(null);
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || waitSecs > 0) return;
+
+    const cleanUsername = username.trim();
+    if (!cleanUsername) {
+      setError("Enter your username.");
+      usernameRef.current?.focus();
+      return;
+    }
+    if (!password) {
+      setError("Enter your password.");
+      passwordRef.current?.focus();
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
-      const result = await authLogin(username.trim(), password);
+      const result = await authLogin(cleanUsername, password);
       applyLogin(result);
-    } catch (err) {
-      const e2 = err as CommandError;
-      if (e2.code === "RATE_LIMITED" && e2.retryAfterSecs) {
-        setWaitSecs(e2.retryAfterSecs);
-        setError(`Too many failed attempts. Try again in ${e2.retryAfterSecs} seconds.`);
-      } else if (e2.code === "INVALID_CREDENTIALS") {
+    } catch (caught) {
+      const commandError = caught as CommandError;
+      if (commandError.code === "RATE_LIMITED" && commandError.retryAfterSecs) {
+        setWaitSecs(commandError.retryAfterSecs);
+        setError(`Too many failed attempts. Try again in ${commandError.retryAfterSecs} seconds.`);
+      } else if (commandError.code === "INVALID_CREDENTIALS") {
         setError("Invalid username or password.");
+        passwordRef.current?.focus();
+        passwordRef.current?.select();
       } else {
-        setError(e2.message || "Unexpected error.");
+        setError(commandError.message || "Unable to sign in. Please try again.");
       }
     } finally {
       setBusy(false);
     }
   }
 
+  const controlsDisabled = busy || waitSecs > 0;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-forest-700 p-4">
-      <div className="w-full max-w-sm rounded-lg border border-white/10 bg-white p-6 shadow-xl sm:p-8">
-        <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-amber-accent text-white">
-            <Store className="h-6 w-6" />
+    <main className="flex min-h-screen flex-col items-center justify-center bg-[#f3f5f8] px-4 py-8 text-[#172033] sm:px-6">
+      <section
+        aria-labelledby="login-title"
+        className="w-full max-w-[460px] rounded-2xl border border-[#e2e6ec] bg-white px-6 py-8 shadow-[0_8px_28px_rgba(23,42,76,0.08)] sm:px-10 sm:py-10"
+      >
+        <header className="text-center">
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-[#192f58] text-white shadow-sm">
+            <Armchair className="h-7 w-7" strokeWidth={1.8} aria-hidden="true" />
           </span>
-          <div>
-            <h1 className="text-xl font-semibold text-forest-700">Furniture Shop</h1>
-            <p className="text-sm text-neutral-500">Sign in to continue</p>
-          </div>
+          <h1 id="login-title" className="mt-5 text-[22px] font-semibold tracking-[-0.02em] text-[#172033]">
+            Furniture Showroom Management
+          </h1>
+          <p className="mt-1.5 text-sm text-[#8a94a6]">Professional Furniture Management</p>
+        </header>
+
+        <div className="my-8 h-px bg-[#e8ebef]" aria-hidden="true" />
+
+        <div className="mb-7 text-center">
+          <h2 className="text-2xl font-semibold tracking-[-0.02em] text-[#172033]">Welcome back</h2>
+          <p className="mt-1.5 text-[15px] text-[#7f899b]">Sign in to continue</p>
         </div>
 
-        <form onSubmit={submit} className="grid gap-4">
-          <div className="grid gap-1.5">
-            <Label htmlFor="login-username">Username</Label>
-            <Input
+        <form onSubmit={submit} noValidate className="space-y-5">
+          <div>
+            <label htmlFor="login-username" className="mb-2 block text-sm font-medium text-[#3c4658]">
+              Username
+            </label>
+            <input
+              ref={usernameRef}
               id="login-username"
+              name="username"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                clearError();
+              }}
               autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
               autoFocus
-              disabled={waitSecs > 0 || busy}
+              disabled={controlsDisabled}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "login-error" : undefined}
+              placeholder="Enter your username"
+              className="h-12 w-full rounded-lg border border-[#cfd5df] bg-white px-4 text-[15px] text-[#172033] shadow-sm outline-none transition placeholder:text-[#a5adba] hover:border-[#aeb8c7] focus:border-[#315f9d] focus:ring-4 focus:ring-[#315f9d]/10 disabled:cursor-not-allowed disabled:bg-[#f6f7f9] disabled:text-[#7f899b]"
             />
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="login-password">Password</Label>
-            <Input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              disabled={waitSecs > 0 || busy}
-            />
+
+          <div>
+            <label htmlFor="login-password" className="mb-2 block text-sm font-medium text-[#3c4658]">
+              Password
+            </label>
+            <div className="relative">
+              <input
+                ref={passwordRef}
+                id="login-password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  clearError();
+                }}
+                autoComplete="current-password"
+                disabled={controlsDisabled}
+                aria-invalid={Boolean(error)}
+                aria-describedby={error ? "login-error" : undefined}
+                placeholder="Enter your password"
+                className="h-12 w-full rounded-lg border border-[#cfd5df] bg-white py-2 pl-4 pr-12 text-[15px] text-[#172033] shadow-sm outline-none transition placeholder:text-[#a5adba] hover:border-[#aeb8c7] focus:border-[#315f9d] focus:ring-4 focus:ring-[#315f9d]/10 disabled:cursor-not-allowed disabled:bg-[#f6f7f9] disabled:text-[#7f899b]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                disabled={controlsDisabled}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
+                aria-controls="login-password"
+                className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-lg text-[#8a94a6] outline-none transition hover:text-[#315f9d] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#315f9d] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {showPassword ? (
+                  <EyeOff className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <Eye className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
+            </div>
           </div>
 
           {error && (
-            <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-              {error}
-            </p>
+            <div
+              id="login-error"
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700"
+            >
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
           )}
 
-          <Button type="submit" disabled={busy || waitSecs > 0 || !username.trim() || !password}>
+          <button
+            type="submit"
+            disabled={controlsDisabled}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-[#192f58] px-4 text-[15px] font-semibold text-white shadow-sm outline-none transition hover:bg-[#132746] focus-visible:ring-4 focus-visible:ring-[#315f9d]/25 disabled:cursor-not-allowed disabled:bg-[#71809a]"
+          >
             {busy ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                 Signing in…
               </>
+            ) : waitSecs > 0 ? (
+              `Try again in ${waitSecs}s`
             ) : (
-              <>
-                <LogIn className="h-4 w-4" />
-                Sign in
-              </>
+              "Sign In"
             )}
-          </Button>
+          </button>
+
+          <p className="pt-1 text-center text-sm text-[#8a94a6]">
+            Forgot your password?{" "}
+            <span className="font-medium text-[#315f9d]">Contact your administrator</span>
+          </p>
         </form>
-      </div>
-    </div>
+      </section>
+
+      <LicenseIndicator license={license} unavailable={licenseUnavailable} />
+    </main>
+  );
+}
+
+function LicenseIndicator({
+  license,
+  unavailable,
+}: {
+  license: LicenseStatus | null;
+  unavailable: boolean;
+}) {
+  if (unavailable) {
+    return (
+      <p className="mt-7 flex items-center gap-2 text-sm text-[#7f899b]" role="status">
+        <ShieldQuestion className="h-4 w-4" aria-hidden="true" />
+        License status unavailable
+      </p>
+    );
+  }
+
+  if (!license) {
+    return (
+      <p className="mt-7 flex items-center gap-2 text-sm text-[#7f899b]" role="status">
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        Checking license status…
+      </p>
+    );
+  }
+
+  const activated = license.isActivated && license.status === "active";
+  return (
+    <p
+      className={`mt-7 flex items-center gap-2 text-sm ${activated ? "text-emerald-600" : "text-[#7f899b]"}`}
+      role="status"
+    >
+      {activated ? (
+        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <ShieldQuestion className="h-4 w-4" aria-hidden="true" />
+      )}
+      {activated ? "License Activated" : license.label}
+    </p>
   );
 }

@@ -81,6 +81,7 @@ import {
 import { formatDateTime, formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 
 type Tab = "purchases" | "suppliers" | "payables" | "payments" | "returns" | "cash";
 
@@ -117,7 +118,8 @@ export function PurchasesPage() {
   const canReturn = hasPermission("supplier.return");
   const canView = hasPermission("payable.view");
 
-  const [view, setView] = React.useState<Tab>("purchases");
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("purchases"), []);
+  const [view, setView] = React.useState<Tab>(dashboardTarget?.target === "payables" ? "payables" : "purchases");
   const [dialog, setDialog] = React.useState<
     null | "purchase" | "post-purchase" | "supplier" | "pay" | "return" | "post-return" | "cash-account" | "ledger" | "purchase-detail"
   >(null);

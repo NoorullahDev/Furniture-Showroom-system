@@ -7,7 +7,9 @@ pub mod infrastructure;
 pub mod repositories;
 pub mod state;
 
-use tauri::Manager;
+use std::sync::atomic::Ordering;
+
+use tauri::{Emitter, Manager};
 
 use crate::state::AppState;
 
@@ -52,20 +54,34 @@ pub fn run() {
             tracing::debug!("startup integrity check passed");
 
             let state = AppState::new(pool, paths);
+            let administrator_created = tauri::async_runtime::block_on(
+                application::first_run::ensure_initial_administrator(&state),
+            )?;
+            if administrator_created {
+                tracing::info!(username = "admin", "initial administrator created");
+            }
             app.manage(state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::settings::settings_get,
             commands::settings::settings_set,
+            commands::settings::settings_update_general,
+            commands::settings::settings_update_print,
+            commands::settings::shop_logo_get,
+            commands::settings::shop_logo_replace,
+            commands::settings::shop_logo_remove,
+            commands::settings::printer_list,
             commands::first_run::first_run_status,
             commands::first_run::first_run_complete,
+            commands::licensing::license_status,
             commands::auth::auth_login,
             commands::auth::auth_logout,
             commands::auth::auth_current,
             commands::auth::auth_lock,
             commands::auth::auth_unlock,
             commands::auth::auth_change_password,
+            commands::auth::auth_update_login_details,
             commands::users::user_create,
             commands::users::user_list,
             commands::users::user_update,
@@ -177,6 +193,7 @@ pub fn run() {
             commands::expenses::expense_category_create,
             commands::expenses::expense_category_update,
             commands::expenses::expense_list,
+            commands::expenses::expense_page,
             commands::expenses::expense_post,
             commands::expenses::expense_reverse,
             commands::expenses::owner_transaction_post,
@@ -191,15 +208,59 @@ pub fn run() {
             commands::maintenance::backup_list,
             commands::maintenance::backup_delete,
             commands::maintenance::backup_restore,
+            commands::maintenance::backup_preferences_get,
+            commands::maintenance::backup_preferences_save,
+            commands::maintenance::backup_inspect,
+            commands::maintenance::backup_restore_import,
+            commands::maintenance::backup_restart,
+            commands::maintenance::backup_close_retry,
+            commands::maintenance::backup_close_cancel,
+            commands::maintenance::backup_close_without,
             commands::maintenance::maintenance_integrity,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;
-            if let WindowEvent::CloseRequested { .. } = event {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<AppState>();
-                // Opportunity to checkpoint/backup on close (Phase 7).
-                tracing::debug!("window close requested");
-                let _ = state;
+                let auto_enabled = match infrastructure::backup_preferences::load(&state.paths.data_dir) {
+                    Ok(settings) => settings.auto_backup_on_close,
+                    Err(error) => {
+                        api.prevent_close();
+                        state.backup_close_state.store(2, Ordering::SeqCst);
+                        let _ = window.emit(
+                            "backup-close-failed",
+                            serde_json::json!({ "message": error.to_string() }),
+                        );
+                        return;
+                    }
+                };
+                if !auto_enabled { return; }
+                api.prevent_close();
+                if state.backup_close_state.compare_exchange(
+                    0, 1, Ordering::SeqCst, Ordering::SeqCst,
+                ).is_err() {
+                    return;
+                }
+                let app = window.app_handle().clone();
+                let _ = app.emit("backup-close-progress", ());
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<AppState>();
+                    match application::backup_workflow::create_automatic(&state).await {
+                        Ok(result) => {
+                            tracing::info!(backup = %result.name, "automatic close backup completed");
+                            let _ = app.emit("backup-close-complete", ());
+                            app.exit(0);
+                        }
+                        Err(error) => {
+                            tracing::error!(error = %error, "automatic close backup failed");
+                            state.backup_close_state.store(2, Ordering::SeqCst);
+                            let _ = app.emit(
+                                "backup-close-failed",
+                                serde_json::json!({ "message": error.to_string() }),
+                            );
+                        }
+                    }
+                });
             }
         })
         .run(tauri::generate_context!())

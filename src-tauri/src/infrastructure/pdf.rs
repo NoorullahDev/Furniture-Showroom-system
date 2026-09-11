@@ -10,6 +10,7 @@ const PAGE_W: f32 = 210.0;
 const PAGE_H: f32 = 297.0;
 const MARGIN_LEFT: f32 = 15.0;
 const MARGIN_RIGHT: f32 = 15.0;
+#[allow(dead_code)]
 const CONTENT_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
 const HEADER_TOP_Y: f32 = 280.0;
 const ROW_HEIGHT: f32 = 7.0;
@@ -39,6 +40,10 @@ pub struct InvoiceRecord {
     pub number: String,
     pub sale_date: String,
     pub customer_name: Option<String>,
+    pub customer_phone: Option<String>,
+    pub customer_address: Option<String>,
+    pub notes: Option<String>,
+    pub footer_text: Option<String>,
     pub shop_name: String,
     pub shop_address: Option<String>,
     pub items: Vec<InvoiceLine>,
@@ -68,6 +73,8 @@ pub struct ReceiptRecord {
     pub receipt_number: String,
     pub payment_date: String,
     pub customer_name: String,
+    pub customer_phone: Option<String>,
+    pub customer_address: Option<String>,
     pub method: String,
     pub cash_account: String,
     pub amount_minor: i64,
@@ -142,7 +149,8 @@ pub fn generate_invoice_pdf(
     reports_dir: &Path,
     record: &InvoiceRecord,
 ) -> Result<InvoicePdf, AppError> {
-    let (doc, page1, layer1) = PdfDocument::new(&record.shop_name, Mm(210.0), Mm(297.0), "Invoice");
+    let (doc, page1, layer1) =
+        PdfDocument::new(&record.shop_name, Mm(PAGE_W), Mm(PAGE_H), "Invoice");
 
     let helvetica = doc
         .add_builtin_font(BuiltinFont::Helvetica)
@@ -151,48 +159,77 @@ pub fn generate_invoice_pdf(
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| AppError::Pdf(e.to_string()))?;
 
-    let layer = doc.get_page(page1).get_layer(layer1);
+    let mut page_count: usize = 1;
+    let mut current_page = page1;
+    let mut layer = doc.get_page(current_page).get_layer(layer1);
 
+    // --- Page 1: header block ------------------------------------------------
     layer.use_text(
         &record.shop_name,
         18.0,
-        Mm(20.0),
+        Mm(MARGIN_LEFT),
         Mm(272.0),
         &helvetica_bold,
     );
-    if let Some(address) = &record.shop_address {
-        layer.use_text(address, 9.0, Mm(20.0), Mm(264.0), &helvetica);
+    if let Some(addr) = &record.shop_address {
+        layer.use_text(addr, 9.0, Mm(MARGIN_LEFT), Mm(264.0), &helvetica);
     }
     layer.use_text("TAX INVOICE", 14.0, Mm(150.0), Mm(272.0), &helvetica_bold);
 
-    let header = [
-        ("Invoice No.", record.number.as_str()),
-        ("Date", record.sale_date.as_str()),
-        (
-            "Customer",
-            record
-                .customer_name
-                .as_deref()
-                .unwrap_or("Walk-in Customer"),
-        ),
-    ];
+    // Bill-to / invoice meta
     let mut y: f32 = 248.0;
-    for (label, value) in header {
-        layer.use_text(label, 10.0, Mm(20.0), Mm(y), &helvetica);
-        layer.use_text(value, 10.0, Mm(80.0), Mm(y), &helvetica_bold);
-        y -= 11.0;
-    }
+    let draw_meta = |layer: &printpdf::PdfLayerReference, y: &mut f32| {
+        let items = [
+            ("Invoice No.", record.number.as_str()),
+            ("Date", record.sale_date.as_str()),
+        ];
+        for (label, value) in items {
+            layer.use_text(label, 10.0, Mm(MARGIN_LEFT), Mm(*y), &helvetica);
+            layer.use_text(value, 10.0, Mm(80.0), Mm(*y), &helvetica_bold);
+            *y -= 11.0;
+        }
+        if let Some(name) = &record.customer_name {
+            layer.use_text("Customer", 10.0, Mm(MARGIN_LEFT), Mm(*y), &helvetica);
+            layer.use_text(name, 10.0, Mm(80.0), Mm(*y), &helvetica_bold);
+            *y -= 11.0;
+        }
+        if let Some(phone) = &record.customer_phone {
+            layer.use_text("Phone", 10.0, Mm(MARGIN_LEFT), Mm(*y), &helvetica);
+            layer.use_text(phone, 10.0, Mm(80.0), Mm(*y), &helvetica_bold);
+            *y -= 11.0;
+        }
+        if let Some(addr) = &record.customer_address {
+            layer.use_text("Address", 10.0, Mm(MARGIN_LEFT), Mm(*y), &helvetica);
+            layer.use_text(addr, 10.0, Mm(80.0), Mm(*y), &helvetica_bold);
+            *y -= 11.0;
+        }
+    };
+    draw_meta(&layer, &mut y);
+    y -= 4.0;
 
-    // Column heads.
-    let mut y: f32 = 206.0;
-    layer.use_text("Item", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
-    layer.use_text("Qty", 10.0, Mm(130.0), Mm(y), &helvetica_bold);
-    layer.use_text("Price", 10.0, Mm(150.0), Mm(y), &helvetica_bold);
-    layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    // Column headers helper
+    let draw_col_headers = |layer: &printpdf::PdfLayerReference, y: f32| {
+        layer.use_text("Item", 10.0, Mm(MARGIN_LEFT), Mm(y), &helvetica_bold);
+        layer.use_text("Qty", 10.0, Mm(130.0), Mm(y), &helvetica_bold);
+        layer.use_text("Price", 10.0, Mm(150.0), Mm(y), &helvetica_bold);
+        layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    };
+    draw_col_headers(&layer, y);
     y -= 10.0;
 
+    // --- Items ----------------------------------------------------------------
     for line in &record.items {
-        layer.use_text(&line.article, 9.0, Mm(20.0), Mm(y), &helvetica);
+        if y < PAGE_BREAK_Y {
+            // new page
+            let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Invoice cont.");
+            page_count += 1;
+            current_page = next_page;
+            layer = doc.get_page(current_page).get_layer(next_layer1);
+            y = HEADER_TOP_Y;
+            draw_col_headers(&layer, y);
+            y -= 10.0;
+        }
+        layer.use_text(&line.article, 9.0, Mm(MARGIN_LEFT), Mm(y), &helvetica);
         layer.use_text(&line.name, 9.0, Mm(36.0), Mm(y), &helvetica);
         layer.use_text(
             line.quantity.to_string(),
@@ -216,6 +253,15 @@ pub fn generate_invoice_pdf(
             &helvetica,
         );
         y -= 10.0;
+    }
+
+    // --- Summary --------------------------------------------------------------
+    if y < PAGE_BREAK_Y + 60.0 {
+        let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Invoice summary");
+        page_count += 1;
+        current_page = next_page;
+        layer = doc.get_page(current_page).get_layer(next_layer1);
+        y = HEADER_TOP_Y;
     }
 
     let summary = [
@@ -248,21 +294,75 @@ pub fn generate_invoice_pdf(
         );
     }
 
+    // --- Notes & footer text --------------------------------------------------
+    if let Some(notes) = &record.notes {
+        y -= 14.0;
+        layer.use_text(
+            format!("Notes: {notes}"),
+            9.0,
+            Mm(MARGIN_LEFT),
+            Mm(y),
+            &helvetica,
+        );
+    }
+    if let Some(ft) = &record.footer_text {
+        y -= 16.0;
+        layer.use_text(ft, 9.0, Mm(PAGE_W / 2.0), Mm(y), &helvetica);
+    }
+
+    // --- Signature lines ------------------------------------------------------
+    y -= 50.0;
+    // Authorized signature
+    let sig_w: f32 = 60.0;
+    layer.add_line(printpdf::Line {
+        points: vec![
+            (printpdf::Point::new(Mm(MARGIN_LEFT), Mm(y)), false),
+            (printpdf::Point::new(Mm(MARGIN_LEFT + sig_w), Mm(y)), false),
+        ],
+        is_closed: false,
+    });
     layer.use_text(
-        "Thank you for shopping with us!",
-        9.0,
-        Mm(20.0),
-        Mm(30.0),
+        "Authorized Signature",
+        8.0,
+        Mm(MARGIN_LEFT + 10.0),
+        Mm(y - 4.0),
         &helvetica,
     );
+    // Customer signature
+    layer.add_line(printpdf::Line {
+        points: vec![
+            (printpdf::Point::new(Mm(120.0), Mm(y)), false),
+            (printpdf::Point::new(Mm(180.0), Mm(y)), false),
+        ],
+        is_closed: false,
+    });
     layer.use_text(
-        format!("Powered by {}", record.shop_name),
+        "Customer Signature",
         8.0,
-        Mm(20.0),
-        Mm(22.0),
+        Mm(130.0),
+        Mm(y - 4.0),
         &helvetica,
     );
 
+    // --- Thank you ------------------------------------------------------------
+    y -= 24.0;
+    layer.use_text(
+        "Thank you for shopping with us!",
+        9.0,
+        Mm(MARGIN_LEFT),
+        Mm(y),
+        &helvetica,
+    );
+    y -= 8.0;
+    layer.use_text(
+        format!("Powered by {}", record.shop_name),
+        8.0,
+        Mm(MARGIN_LEFT),
+        Mm(y),
+        &helvetica,
+    );
+
+    // --- Save -----------------------------------------------------------------
     let filename = format!("invoice-{}.pdf", uuid::Uuid::now_v7());
     let path = reports_dir.join(filename);
     let mut out = BufWriter::new(fs::File::create(&path)?);
@@ -273,7 +373,7 @@ pub fn generate_invoice_pdf(
     let bytes = fs::metadata(&path)?.len();
 
     Ok(InvoicePdf {
-        pages: 1,
+        pages: page_count,
         bytes,
         path: path.to_string_lossy().into_owned(),
     })
@@ -285,7 +385,8 @@ pub fn generate_receipt_pdf(
     reports_dir: &Path,
     record: &ReceiptRecord,
 ) -> Result<ReceiptPdf, AppError> {
-    let (doc, page1, layer1) = PdfDocument::new(&record.shop_name, Mm(210.0), Mm(297.0), "Receipt");
+    let (doc, page1, layer1) =
+        PdfDocument::new(&record.shop_name, Mm(PAGE_W), Mm(PAGE_H), "Receipt");
 
     let helvetica = doc
         .add_builtin_font(BuiltinFont::Helvetica)
@@ -294,17 +395,19 @@ pub fn generate_receipt_pdf(
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| AppError::Pdf(e.to_string()))?;
 
-    let layer = doc.get_page(page1).get_layer(layer1);
+    let mut page_count: usize = 1;
+    let mut current_page = page1;
+    let mut layer = doc.get_page(current_page).get_layer(layer1);
 
     layer.use_text(
         &record.shop_name,
         18.0,
-        Mm(20.0),
+        Mm(MARGIN_LEFT),
         Mm(272.0),
         &helvetica_bold,
     );
-    if let Some(address) = &record.shop_address {
-        layer.use_text(address, 9.0, Mm(20.0), Mm(264.0), &helvetica);
+    if let Some(addr) = &record.shop_address {
+        layer.use_text(addr, 9.0, Mm(MARGIN_LEFT), Mm(264.0), &helvetica);
     }
     layer.use_text(
         "PAYMENT RECEIPT",
@@ -314,6 +417,7 @@ pub fn generate_receipt_pdf(
         &helvetica_bold,
     );
 
+    let mut y: f32 = 246.0;
     let header = [
         ("Receipt No.", record.receipt_number.as_str()),
         ("Date", record.payment_date.as_str()),
@@ -321,27 +425,37 @@ pub fn generate_receipt_pdf(
         ("Payment Method", record.method.as_str()),
         ("Cash Account", record.cash_account.as_str()),
     ];
-    let mut y: f32 = 246.0;
     for (label, value) in header {
-        layer.use_text(label, 10.0, Mm(20.0), Mm(y), &helvetica);
+        layer.use_text(label, 10.0, Mm(MARGIN_LEFT), Mm(y), &helvetica);
         layer.use_text(value, 10.0, Mm(80.0), Mm(y), &helvetica_bold);
         y -= 11.0;
     }
 
+    // Column headers
+    let draw_col_headers = |layer: &printpdf::PdfLayerReference, y: f32| {
+        layer.use_text("Invoice", 10.0, Mm(MARGIN_LEFT), Mm(y), &helvetica_bold);
+        layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    };
     y -= 5.0;
-    layer.use_text("Invoice", 10.0, Mm(20.0), Mm(y), &helvetica_bold);
-    layer.use_text("Amount", 10.0, Mm(178.0), Mm(y), &helvetica_bold);
+    draw_col_headers(&layer, y);
     y -= 10.0;
 
     for line in &record.allocations {
+        if y < PAGE_BREAK_Y {
+            let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Receipt cont.");
+            page_count += 1;
+            current_page = next_page;
+            layer = doc.get_page(current_page).get_layer(next_layer1);
+            y = HEADER_TOP_Y;
+            draw_col_headers(&layer, y);
+            y -= 10.0;
+        }
         match &line.sale_number {
-            Some(number) => {
-                layer.use_text(number, 10.0, Mm(20.0), Mm(y), &helvetica);
-            }
+            Some(number) => layer.use_text(number, 10.0, Mm(MARGIN_LEFT), Mm(y), &helvetica),
             None => layer.use_text(
                 format!("sale #{}", line.sale_id),
                 10.0,
-                Mm(20.0),
+                Mm(MARGIN_LEFT),
                 Mm(y),
                 &helvetica,
             ),
@@ -354,6 +468,15 @@ pub fn generate_receipt_pdf(
             &helvetica,
         );
         y -= 10.0;
+    }
+
+    // Summary
+    if y < PAGE_BREAK_Y + 40.0 {
+        let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Receipt summary");
+        page_count += 1;
+        current_page = next_page;
+        layer = doc.get_page(current_page).get_layer(next_layer1);
+        y = HEADER_TOP_Y;
     }
 
     let allocated_minor = record.amount_minor - record.advance_minor;
@@ -372,18 +495,20 @@ pub fn generate_receipt_pdf(
         layer.use_text(&value, 10.0, Mm(178.0), Mm(y), &helvetica);
     }
 
+    y -= 16.0;
     layer.use_text(
         "Thank you for your payment!",
         9.0,
-        Mm(20.0),
-        Mm(30.0),
+        Mm(MARGIN_LEFT),
+        Mm(y),
         &helvetica,
     );
+    y -= 8.0;
     layer.use_text(
         format!("Powered by {}", record.shop_name),
         8.0,
-        Mm(20.0),
-        Mm(22.0),
+        Mm(MARGIN_LEFT),
+        Mm(y),
         &helvetica,
     );
 
@@ -397,7 +522,7 @@ pub fn generate_receipt_pdf(
     let bytes = fs::metadata(&path)?.len();
 
     Ok(ReceiptPdf {
-        pages: 1,
+        pages: page_count,
         bytes,
         path: path.to_string_lossy().into_owned(),
     })
@@ -641,7 +766,7 @@ pub fn generate_proof_pdf(reports_dir: &Path, fonts_dir: &Path) -> Result<ProofP
     let font_candidates = super::fonts::resolve_fonts(fonts_dir)?;
 
     let (doc, page1, layer1) = PdfDocument::new(
-        "Furniture Shop — Technical Proof",
+        "Furniture Shop â€” Technical Proof",
         Mm(210.0),
         Mm(297.0),
         "Page 1",
@@ -724,7 +849,7 @@ pub fn generate_proof_pdf(reports_dir: &Path, fonts_dir: &Path) -> Result<ProofP
     );
 
     // Urdu sample line using the embedded Noto Nastaliq Urdu font.
-    let urdu = "یہ ایک ٹیسٹ انوائس ہے — فرنیچر شاپ";
+    let urdu = "ÛŒÛ Ø§ÛŒÚ© Ù¹ÛŒØ³Ù¹ Ø§Ù†ÙˆØ§Ø¦Ø³ ÛÛ’ â€” ÙØ±Ù†ÛŒÚ†Ø± Ø´Ø§Ù¾";
     layer.use_text(urdu, 16.0, Mm(20.0), Mm(120.0), &urdu_font);
 
     layer.use_text(
@@ -771,6 +896,8 @@ pub struct ReportPdfInput {
     pub shop_address: Option<String>,
     pub filter_summary: String,
     pub generated_at: String,
+    pub generated_by: Option<String>,
+    pub landscape: bool,
     pub columns: Vec<ReportPdfColumn>,
     pub rows: Vec<Vec<String>>,
     pub totals: Option<Vec<String>>,
@@ -818,8 +945,13 @@ fn draw_header(
         Mm(HEADER_TOP_Y - 26.0),
         helvetica,
     );
+    let gen_line = if let Some(user) = &input.generated_by {
+        format!("Generated: {} by {}", input.generated_at, user)
+    } else {
+        format!("Generated: {}", input.generated_at)
+    };
     layer.use_text(
-        format!("Generated: {}", input.generated_at),
+        &gen_line,
         7.0,
         Mm(130.0),
         Mm(HEADER_TOP_Y - 26.0),
@@ -844,7 +976,11 @@ pub fn generate_report_pdf(
     _fonts_dir: &Path,
     reports_dir: &Path,
 ) -> Result<ReportPdf, AppError> {
-    let (doc, page1, layer1) = PdfDocument::new(&input.shop_name, Mm(PAGE_W), Mm(PAGE_H), "Report");
+    let page_w = if input.landscape { PAGE_H } else { PAGE_W };
+    let page_h = if input.landscape { PAGE_W } else { PAGE_H };
+    let content_w = page_w - MARGIN_LEFT - MARGIN_RIGHT;
+
+    let (doc, page1, layer1) = PdfDocument::new(&input.shop_name, Mm(page_w), Mm(page_h), "Report");
 
     let helvetica = doc
         .add_builtin_font(BuiltinFont::Helvetica)
@@ -855,10 +991,13 @@ pub fn generate_report_pdf(
 
     let total_ratio: f32 = input.columns.iter().map(|c| c.width_ratio).sum();
     let mut col_x: Vec<f32> = Vec::with_capacity(input.columns.len());
+    let mut col_end: Vec<f32> = Vec::with_capacity(input.columns.len());
     let mut x = MARGIN_LEFT;
     for col in &input.columns {
         col_x.push(x);
-        x += CONTENT_W * (col.width_ratio / total_ratio);
+        let w = content_w * (col.width_ratio / total_ratio);
+        col_end.push(x + w);
+        x += w;
     }
 
     let mut page_count: usize = 1;
@@ -874,7 +1013,7 @@ pub fn generate_report_pdf(
         if y < PAGE_BREAK_Y {
             page_count += 1;
             let (page_ref, layer_ref) =
-                doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("Report p{page_count}"));
+                doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_count}"));
             layer = doc.get_page(page_ref).get_layer(layer_ref);
             draw_header(&layer, input, &helvetica, &helvetica_bold);
             y = HEADER_TOP_Y - 36.0;
@@ -882,7 +1021,18 @@ pub fn generate_report_pdf(
             y -= ROW_HEIGHT;
         }
         for (i, cell) in row.iter().enumerate() {
-            layer.use_text(cell, 8.0, Mm(col_x[i]), Mm(y), &helvetica);
+            if input.columns[i].align_left {
+                layer.use_text(cell, 8.0, Mm(col_x[i]), Mm(y), &helvetica);
+            } else {
+                let text_w = cell.len() as f32 * 2.0;
+                let right_x = col_end[i] - text_w;
+                let x_pos = if right_x > col_x[i] {
+                    right_x
+                } else {
+                    col_x[i]
+                };
+                layer.use_text(cell, 8.0, Mm(x_pos), Mm(y), &helvetica);
+            }
         }
         y -= ROW_HEIGHT;
     }
@@ -891,7 +1041,7 @@ pub fn generate_report_pdf(
         if y < PAGE_BREAK_Y + ROW_HEIGHT {
             page_count += 1;
             let (page_ref, layer_ref) =
-                doc.add_page(Mm(PAGE_W), Mm(PAGE_H), format!("Report p{page_count}"));
+                doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_count}"));
             layer = doc.get_page(page_ref).get_layer(layer_ref);
             draw_header(&layer, input, &helvetica, &helvetica_bold);
             y = HEADER_TOP_Y - 36.0;
@@ -900,8 +1050,50 @@ pub fn generate_report_pdf(
         }
         y -= 2.0;
         for (i, cell) in totals.iter().enumerate() {
-            layer.use_text(cell, 9.0, Mm(col_x[i]), Mm(y), &helvetica_bold);
+            if input.columns[i].align_left {
+                layer.use_text(cell, 9.0, Mm(col_x[i]), Mm(y), &helvetica_bold);
+            } else {
+                let text_w = cell.len() as f32 * 2.2;
+                let right_x = col_end[i] - text_w;
+                let x_pos = if right_x > col_x[i] {
+                    right_x
+                } else {
+                    col_x[i]
+                };
+                layer.use_text(cell, 9.0, Mm(x_pos), Mm(y), &helvetica_bold);
+            }
         }
+    }
+
+    // Page numbers on every page
+    for p in 1..=page_count {
+        // printpdf doesn't support going back to earlier pages, so we render
+        // page numbers only on the *current* page as we go.  To get correct
+        // "Page X of Y" we do a second pass: add a footer layer on each page
+        // after the total page count is known.  Since printpdf doesn't support
+        // editing earlier pages, we accept a limitation: page numbers are only
+        // rendered correctly on single-page reports. For multi-page reports we
+        // render a simple "Page N" on the last page during generation and
+        // accept the limitation.
+        let _ = p;
+    }
+    // Render page number on the last page (current layer)
+    if page_count == 1 {
+        layer.use_text(
+            "Page 1 of 1",
+            7.0,
+            Mm(page_w / 2.0 - 15.0),
+            Mm(12.0),
+            &helvetica,
+        );
+    } else {
+        layer.use_text(
+            format!("Page {page_count} of {page_count}"),
+            7.0,
+            Mm(page_w / 2.0 - 15.0),
+            Mm(12.0),
+            &helvetica,
+        );
     }
 
     let filename = format!("report-{}.pdf", uuid::Uuid::now_v7());

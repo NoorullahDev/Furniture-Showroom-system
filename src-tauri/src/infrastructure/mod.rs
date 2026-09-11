@@ -1,5 +1,7 @@
 pub mod audit;
 pub mod backup;
+pub mod backup_package;
+pub mod backup_preferences;
 pub mod base64;
 pub mod clock;
 pub mod csv_export;
@@ -12,6 +14,7 @@ pub mod logging;
 pub mod password;
 mod paths;
 mod pdf;
+pub mod printers;
 pub mod restore;
 pub mod session;
 pub mod throttle;

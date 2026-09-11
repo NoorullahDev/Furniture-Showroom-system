@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU8;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -19,6 +20,8 @@ pub struct AppState {
     pub sessions: SessionManager,
     pub audits: AuditService,
     pub throttle: LoginThrottle,
+    /// 0 = idle, 1 = close backup running, 2 = close backup failed.
+    pub backup_close_state: AtomicU8,
 }
 
 impl AppState {
@@ -39,6 +42,7 @@ impl AppState {
             sessions,
             audits,
             throttle,
+            backup_close_state: AtomicU8::new(0),
         }
     }
 }

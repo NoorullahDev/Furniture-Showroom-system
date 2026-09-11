@@ -15,8 +15,16 @@ pub async fn report_export(
     format: ExportFormat,
 ) -> Result<ReportExportResult, AppErrorDto> {
     run_command("report_export", async move {
-        let _principal = authed(&state, &session, "report.export").await?;
-        crate::application::reports::export_report(&state, &report_type, &filter, format).await
+        let principal = authed(&state, &session, "report.export").await?;
+        let generated_by = Some(principal.username.clone());
+        crate::application::reports::export_report_with_user(
+            &state,
+            &report_type,
+            &filter,
+            format,
+            generated_by,
+        )
+        .await
     })
     .await
 }

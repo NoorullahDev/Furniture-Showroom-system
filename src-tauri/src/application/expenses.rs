@@ -6,8 +6,8 @@ use crate::application::documents::next_document_number;
 use crate::application::suppliers::state_audit;
 use crate::dto::expenses::{
     ExpenseCategoryDto, ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseDto, ExpenseInput,
-    ExpenseListInput, ExpenseReverseInput, OwnerTransactionDto, OwnerTransactionInput,
-    ProfitSummaryDto,
+    ExpenseListInput, ExpensePageDto, ExpensePageInput, ExpenseReverseInput, OwnerTransactionDto,
+    OwnerTransactionInput, ProfitSummaryDto,
 };
 use crate::error::AppError;
 use crate::infrastructure::clock::Clock;
@@ -15,20 +15,10 @@ use crate::state::AppState;
 
 fn validate_date(label: &str, value: &str) -> Result<(), AppError> {
     let trimmed = value.trim();
-    if trimmed.len() != 10 {
+    if chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d").is_err() {
         return Err(AppError::Validation(format!(
-            "{label}: date must use YYYY-MM-DD"
+            "{label}: date must be a valid YYYY-MM-DD date"
         )));
-    }
-    let bytes = trimmed.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        let digit = b.is_ascii_digit();
-        let sep = (i == 4 || i == 7) && *b == b'-';
-        if !digit && !sep {
-            return Err(AppError::Validation(format!(
-                "{label}: date must use YYYY-MM-DD"
-            )));
-        }
     }
     Ok(())
 }
@@ -110,14 +100,17 @@ pub async fn expense_category_create(
             let code = code.clone();
             let name = name.clone();
             Box::pin(async move {
-                let dup: Option<i64> =
-                    sqlx::query_scalar("SELECT 1 FROM expense_categories WHERE code = ?")
-                        .bind(&code)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                let dup: Option<i64> = sqlx::query_scalar(
+                    "SELECT 1 FROM expense_categories
+                      WHERE code = ? OR name = ? COLLATE NOCASE",
+                )
+                .bind(&code)
+                .bind(&name)
+                .fetch_optional(&mut *tx)
+                .await?;
                 if dup.is_some() {
                     return Err(AppError::Conflict(format!(
-                        "expense category code '{code}' already exists"
+                        "an expense category named '{name}' (or code '{code}') already exists"
                     )));
                 }
                 let id = sqlx::query(
@@ -194,6 +187,19 @@ pub async fn expense_category_update(
                         input.id
                     )));
                 };
+                let duplicate_name: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM expense_categories
+                      WHERE name = ? COLLATE NOCASE AND id != ?",
+                )
+                .bind(&name)
+                .bind(input.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if duplicate_name.is_some() {
+                    return Err(AppError::Conflict(format!(
+                        "an expense category named '{name}' already exists"
+                    )));
+                }
                 sqlx::query(
                     "UPDATE expense_categories SET name = ?, is_active = ?,
                             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -245,11 +251,12 @@ pub async fn expense_list(
     input: ExpenseListInput,
 ) -> Result<Vec<ExpenseDto>, AppError> {
     principal.require("expense.view")?;
-    let limit = input.limit.unwrap_or(100).min(500);
+    let limit = input.limit.unwrap_or(100).clamp(1, 10_000);
 
     let mut sql = String::from(
         "SELECT e.id, e.expense_number, e.category_id, c.code, c.name,
                 e.amount_minor, e.expense_date, e.cash_account_id, a.name,
+                e.payment_method_id, pm.name,
                 e.description, e.payee, e.reference, e.attachment_path,
                 e.status, e.idempotency_key, e.created_by, e.created_at,
                 e.posted_by, e.posted_at, e.reversed_by, e.reversed_at,
@@ -257,6 +264,7 @@ pub async fn expense_list(
          FROM expenses e
          JOIN expense_categories c ON c.id = e.category_id
          JOIN cash_accounts a ON a.id = e.cash_account_id
+         LEFT JOIN payment_methods pm ON pm.id = e.payment_method_id
         WHERE 1 = 1",
     );
     if input.status.is_some() {
@@ -309,21 +317,171 @@ fn map_expense(r: &sqlx::sqlite::SqliteRow) -> ExpenseDto {
         expense_date: r.get(6),
         cash_account_id: r.get(7),
         cash_account_name: r.get(8),
-        description: r.get(9),
-        payee: r.try_get(10).ok(),
-        reference: r.try_get(11).ok(),
-        attachment_path: r.try_get(12).ok(),
-        status: r.get(13),
-        idempotency_key: r.try_get(14).ok(),
-        created_by: r.get(15),
-        created_at: r.get(16),
-        posted_by: r.try_get(17).ok(),
-        posted_at: r.try_get(18).ok(),
-        reversed_by: r.try_get(19).ok(),
-        reversed_at: r.try_get(20).ok(),
-        reversal_reason: r.try_get(21).ok(),
-        updated_at: r.get(22),
+        payment_method_id: r.try_get(9).ok(),
+        payment_method_name: r.try_get(10).ok(),
+        description: r.get(11),
+        payee: r.try_get(12).ok(),
+        reference: r.try_get(13).ok(),
+        attachment_path: r.try_get(14).ok(),
+        status: r.get(15),
+        idempotency_key: r.try_get(16).ok(),
+        created_by: r.get(17),
+        created_at: r.get(18),
+        posted_by: r.try_get(19).ok(),
+        posted_at: r.try_get(20).ok(),
+        reversed_by: r.try_get(21).ok(),
+        reversed_at: r.try_get(22).ok(),
+        reversal_reason: r.try_get(23).ok(),
+        updated_at: r.get(24),
     }
+}
+
+pub async fn expense_page(
+    state: &AppState,
+    principal: &Principal,
+    input: ExpensePageInput,
+) -> Result<ExpensePageDto, AppError> {
+    principal.require("expense.view")?;
+
+    let limit = input.limit.unwrap_or(20).clamp(1, 100);
+    let offset = input.offset.unwrap_or(0).max(0);
+    if let Some(from) = input.from_date.as_deref() {
+        validate_date("from date", from)?;
+    }
+    if let Some(to) = input.to_date.as_deref() {
+        validate_date("to date", to)?;
+    }
+    if let (Some(from), Some(to)) = (input.from_date.as_ref(), input.to_date.as_ref()) {
+        if from > to {
+            return Err(AppError::Validation(
+                "from date cannot be after to date".into(),
+            ));
+        }
+    }
+    if let Some(status) = input.status.as_deref() {
+        if !matches!(status, "posted" | "reversed" | "draft") {
+            return Err(AppError::Validation("invalid expense status".into()));
+        }
+    }
+
+    let search = input
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("%{}%", value.to_lowercase()));
+    let mut where_sql = String::from(" WHERE 1 = 1");
+    if input.status.is_some() {
+        where_sql.push_str(" AND e.status = ?");
+    }
+    if input.category_id.is_some() {
+        where_sql.push_str(" AND e.category_id = ?");
+    }
+    if input.cash_account_id.is_some() {
+        where_sql.push_str(" AND e.cash_account_id = ?");
+    }
+    if input.from_date.is_some() {
+        where_sql.push_str(" AND e.expense_date >= ?");
+    }
+    if input.to_date.is_some() {
+        where_sql.push_str(" AND e.expense_date <= ?");
+    }
+    if search.is_some() {
+        where_sql.push_str(
+            " AND (LOWER(e.description) LIKE ? OR LOWER(c.name) LIKE ?
+                    OR LOWER(COALESCE(e.reference, '')) LIKE ?)",
+        );
+    }
+
+    let summary_sql = format!(
+        "SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN e.status = 'posted' THEN e.amount_minor ELSE 0 END), 0)
+           FROM expenses e
+           JOIN expense_categories c ON c.id = e.category_id{where_sql}"
+    );
+    let mut summary_query = sqlx::query(&summary_sql);
+    if let Some(status) = input.status.as_ref() {
+        summary_query = summary_query.bind(status);
+    }
+    if let Some(category_id) = input.category_id {
+        summary_query = summary_query.bind(category_id);
+    }
+    if let Some(account_id) = input.cash_account_id {
+        summary_query = summary_query.bind(account_id);
+    }
+    if let Some(from) = input.from_date.as_ref() {
+        summary_query = summary_query.bind(from);
+    }
+    if let Some(to) = input.to_date.as_ref() {
+        summary_query = summary_query.bind(to);
+    }
+    if let Some(term) = search.as_ref() {
+        summary_query = summary_query.bind(term).bind(term).bind(term);
+    }
+    let summary = summary_query.fetch_one(&state.pool).await?;
+    let total: i64 = summary.get(0);
+    let total_amount_minor: i64 = summary.get(1);
+
+    let sort_column = match input.sort_by.as_deref() {
+        Some("category") => "c.name",
+        Some("note") => "e.description",
+        Some("amount") => "e.amount_minor",
+        _ => "e.expense_date",
+    };
+    let sort_direction = if input
+        .sort_direction
+        .as_deref()
+        .is_some_and(|direction| direction.eq_ignore_ascii_case("asc"))
+    {
+        "ASC"
+    } else {
+        "DESC"
+    };
+    let list_sql = format!(
+        "SELECT e.id, e.expense_number, e.category_id, c.code, c.name,
+                e.amount_minor, e.expense_date, e.cash_account_id, a.name,
+                e.payment_method_id, pm.name,
+                e.description, e.payee, e.reference, e.attachment_path,
+                e.status, e.idempotency_key, e.created_by, e.created_at,
+                e.posted_by, e.posted_at, e.reversed_by, e.reversed_at,
+                e.reversal_reason, e.updated_at
+           FROM expenses e
+           JOIN expense_categories c ON c.id = e.category_id
+           JOIN cash_accounts a ON a.id = e.cash_account_id
+           LEFT JOIN payment_methods pm ON pm.id = e.payment_method_id{where_sql}
+          ORDER BY {sort_column} {sort_direction}, e.id {sort_direction}
+          LIMIT ? OFFSET ?"
+    );
+    let mut list_query = sqlx::query(&list_sql);
+    if let Some(status) = input.status.as_ref() {
+        list_query = list_query.bind(status);
+    }
+    if let Some(category_id) = input.category_id {
+        list_query = list_query.bind(category_id);
+    }
+    if let Some(account_id) = input.cash_account_id {
+        list_query = list_query.bind(account_id);
+    }
+    if let Some(from) = input.from_date.as_ref() {
+        list_query = list_query.bind(from);
+    }
+    if let Some(to) = input.to_date.as_ref() {
+        list_query = list_query.bind(to);
+    }
+    if let Some(term) = search.as_ref() {
+        list_query = list_query.bind(term).bind(term).bind(term);
+    }
+    let rows = list_query
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await?;
+
+    Ok(ExpensePageDto {
+        items: rows.iter().map(map_expense).collect(),
+        total,
+        total_amount_minor,
+    })
 }
 
 pub async fn expense_post(
@@ -340,11 +498,6 @@ pub async fn expense_post(
         ));
     }
     let description = input.description.trim().to_string();
-    if description.is_empty() {
-        return Err(AppError::Validation(
-            "expense description is required".into(),
-        ));
-    }
     validate_date("expense date", &input.expense_date)?;
     let payee = input
         .payee
@@ -394,6 +547,19 @@ pub async fn expense_post(
 
                 require_active_cash_account(&mut *tx, input.cash_account_id, "expense").await?;
 
+                let payment_method: Option<i64> = sqlx::query_scalar(
+                    "SELECT id FROM payment_methods WHERE id = ? AND is_active = 1",
+                )
+                .bind(input.payment_method_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                if payment_method.is_none() {
+                    return Err(AppError::Validation(format!(
+                        "payment method {} is not active",
+                        input.payment_method_id
+                    )));
+                }
+
                 let category: Option<(i64, String)> = sqlx::query_as(
                     "SELECT id, name FROM expense_categories WHERE id = ? AND is_active = 1",
                 )
@@ -411,10 +577,10 @@ pub async fn expense_post(
                 let id = sqlx::query(
                     "INSERT INTO expenses
                        (expense_number, category_id, amount_minor, expense_date,
-                        cash_account_id, description, payee, reference, attachment_path,
+                        cash_account_id, payment_method_id, description, payee, reference, attachment_path,
                         status, idempotency_key, created_by, posted_by,
                         posted_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?,
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'posted', ?, ?, ?,
                              strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
                 )
                 .bind(&number)
@@ -422,6 +588,7 @@ pub async fn expense_post(
                 .bind(input.amount_minor)
                 .bind(&input.expense_date)
                 .bind(input.cash_account_id)
+                .bind(input.payment_method_id)
                 .bind(&description)
                 .bind(&payee)
                 .bind(&reference)
@@ -469,6 +636,7 @@ pub async fn expense_post(
                         "amount_minor": input.amount_minor,
                         "expense_date": input.expense_date,
                         "cash_account_id": input.cash_account_id,
+                        "payment_method_id": input.payment_method_id,
                         "description": description,
                         "payee": payee,
                         "reference": reference,
@@ -581,6 +749,7 @@ async fn expense_dto(state: &AppState, id: i64) -> Result<ExpenseDto, AppError> 
     let row = sqlx::query(
         "SELECT e.id, e.expense_number, e.category_id, c.code, c.name,
                 e.amount_minor, e.expense_date, e.cash_account_id, a.name,
+                e.payment_method_id, pm.name,
                 e.description, e.payee, e.reference, e.attachment_path,
                 e.status, e.idempotency_key, e.created_by, e.created_at,
                 e.posted_by, e.posted_at, e.reversed_by, e.reversed_at,
@@ -588,6 +757,7 @@ async fn expense_dto(state: &AppState, id: i64) -> Result<ExpenseDto, AppError> 
          FROM expenses e
          JOIN expense_categories c ON c.id = e.category_id
          JOIN cash_accounts a ON a.id = e.cash_account_id
+         LEFT JOIN payment_methods pm ON pm.id = e.payment_method_id
         WHERE e.id = ?",
     )
     .bind(id)

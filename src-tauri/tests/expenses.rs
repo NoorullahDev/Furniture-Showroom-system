@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::expenses::{
-    ExpenseCategoryInput, ExpenseInput, ExpenseReverseInput, OwnerTransactionInput,
+    ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseInput, ExpensePageInput,
+    ExpenseReverseInput, OwnerTransactionInput,
 };
 use furniture_shop_lib::dto::purchases::{
     CashAccountInput, PurchaseCreateInput, PurchaseItemInput, PurchasePostInput, SupplierInput,
     SupplierPaymentInput,
 };
+use furniture_shop_lib::dto::reports::{ExportFormat, ReportFilterInput};
 use furniture_shop_lib::dto::sales::{
     CustomerInput, CustomerReceiptInput, SaleConfirmInput, SaleCreateInput, SaleItemInput,
 };
@@ -278,6 +280,7 @@ async fn expense_posts_once_in_report_and_cash_with_idempotency() {
             amount_minor: 50_000,
             expense_date: "2026-09-05".into(),
             cash_account_id: account,
+            payment_method_id: 1,
             description: "September showroom rent".into(),
             payee: Some("Landlord".into()),
             reference: None,
@@ -306,6 +309,7 @@ async fn expense_posts_once_in_report_and_cash_with_idempotency() {
             amount_minor: 50_000,
             expense_date: "2026-09-05".into(),
             cash_account_id: account,
+            payment_method_id: 1,
             description: "September showroom rent".into(),
             payee: None,
             reference: None,
@@ -370,6 +374,7 @@ async fn reverse_expense_refunds_cash_and_leaves_profit() {
             amount_minor: 20_000,
             expense_date: "2026-09-06".into(),
             cash_account_id: account,
+            payment_method_id: 1,
             description: "Electricity bill".into(),
             payee: None,
             reference: None,
@@ -730,6 +735,7 @@ async fn expense_and_profit_permissions_are_enforced() {
             amount_minor: 15_000,
             expense_date: "2026-09-07".into(),
             cash_account_id: account,
+            payment_method_id: 1,
             description: "Salaries advance".into(),
             payee: None,
             reference: None,
@@ -802,5 +808,353 @@ async fn expense_and_profit_permissions_are_enforced() {
     assert_eq!(cat.code, "TEA");
 
     state.pool.close().await;
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn electricity_expense_end_to_end_filters_report_reversal_and_restart() {
+    let dir = temp_dir("electricity-e2e");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "electricity-owner").await;
+    let salesperson = make_role_principal(&state, "electricity-sales", "salesperson").await;
+    let account = funded_cash(&state, &owner, "ELECTRICITY01").await;
+    let opening_balance = cash_balance_sql(&state, account).await;
+
+    let created_category = application::expenses::expense_category_create(
+        &state,
+        &owner,
+        ExpenseCategoryInput {
+            code: "TEST_OFFICE_SUPPLIES".into(),
+            name: "Test Office Supplies".into(),
+            is_active: Some(true),
+        },
+        "corr-category-create",
+    )
+    .await
+    .unwrap();
+    let duplicate = application::expenses::expense_category_create(
+        &state,
+        &owner,
+        ExpenseCategoryInput {
+            code: "TEST_OFFICE_SUPPLIES_2".into(),
+            name: "test office supplies".into(),
+            is_active: Some(true),
+        },
+        "corr-category-duplicate",
+    )
+    .await
+    .expect_err("category names must be unique without regard to case");
+    assert!(matches!(duplicate, AppError::Conflict(_)));
+
+    let electricity_id: i64 =
+        sqlx::query_scalar("SELECT id FROM expense_categories WHERE code = 'electricity'")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let duplicate_rename = application::expenses::expense_category_update(
+        &state,
+        &owner,
+        ExpenseCategoryUpdateInput {
+            id: created_category.id,
+            name: "ELECTRICITY".into(),
+            is_active: true,
+        },
+        "corr-category-duplicate-rename",
+    )
+    .await
+    .expect_err("renaming to an existing category name must fail");
+    assert!(matches!(duplicate_rename, AppError::Conflict(_)));
+    let input = ExpenseInput {
+        category_id: electricity_id,
+        amount_minor: 150_000,
+        expense_date: "2026-09-11".into(),
+        cash_account_id: account,
+        payment_method_id: 1,
+        description: "September meter reading".into(),
+        payee: None,
+        reference: Some("TEST-ELEC-1500".into()),
+        attachment_path: Some("isolated-test-bill.pdf".into()),
+        idempotency_key: Some("test-electricity-1500".into()),
+    };
+    let expense =
+        application::expenses::expense_post(&state, &owner, input.clone(), "corr-electricity-post")
+            .await
+            .unwrap();
+    let replay =
+        application::expenses::expense_post(&state, &owner, input, "corr-electricity-replay")
+            .await
+            .unwrap();
+    assert_eq!(replay.id, expense.id);
+    assert_eq!(
+        cash_balance_sql(&state, account).await,
+        opening_balance - 150_000
+    );
+    let matching_outflows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM cash_entries
+          WHERE entry_type = 'expense' AND reference_type = 'expense'
+            AND reference_id = ? AND amount_minor = -150000",
+    )
+    .bind(expense.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(matching_outflows, 1);
+
+    let filtered = application::expenses::expense_page(
+        &state,
+        &owner,
+        ExpensePageInput {
+            status: Some("posted".into()),
+            category_id: Some(electricity_id),
+            cash_account_id: Some(account),
+            from_date: Some("2026-09-11".into()),
+            to_date: Some("2026-09-11".into()),
+            search: Some("elec-1500".into()),
+            sort_by: Some("amount".into()),
+            sort_direction: Some("desc".into()),
+            limit: Some(20),
+            offset: Some(0),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(filtered.total, 1);
+    assert_eq!(filtered.total_amount_minor, 150_000);
+    assert_eq!(
+        filtered.items[0].payment_method_name.as_deref(),
+        Some("Cash")
+    );
+    let note_search = application::expenses::expense_page(
+        &state,
+        &owner,
+        ExpensePageInput {
+            status: Some("posted".into()),
+            category_id: None,
+            cash_account_id: None,
+            from_date: None,
+            to_date: None,
+            search: Some("meter reading".into()),
+            sort_by: Some("date".into()),
+            sort_direction: Some("asc".into()),
+            limit: Some(20),
+            offset: Some(0),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(note_search.total, 1);
+    let second_page = application::expenses::expense_page(
+        &state,
+        &owner,
+        ExpensePageInput {
+            status: Some("posted".into()),
+            category_id: Some(electricity_id),
+            cash_account_id: None,
+            from_date: None,
+            to_date: None,
+            search: None,
+            sort_by: Some("date".into()),
+            sort_direction: Some("desc".into()),
+            limit: Some(1),
+            offset: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(second_page.total, 1);
+    assert!(second_page.items.is_empty());
+
+    let report = application::reports::export_report(
+        &state,
+        "expense_report",
+        &ReportFilterInput {
+            from_date: Some("2026-09-11".into()),
+            to_date: Some("2026-09-11".into()),
+            cash_account_id: Some(account),
+            category_id: Some(electricity_id),
+            status: None,
+        },
+        ExportFormat::Csv,
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.row_count, 1);
+    let csv = fs::read_to_string(&report.report_path).unwrap();
+    assert_eq!(csv.matches("TEST-ELEC-1500").count(), 1);
+    let pdf_report = application::reports::export_report(
+        &state,
+        "expense_report",
+        &ReportFilterInput {
+            from_date: Some("2026-09-11".into()),
+            to_date: Some("2026-09-11".into()),
+            cash_account_id: Some(account),
+            category_id: Some(electricity_id),
+            status: None,
+        },
+        ExportFormat::Pdf,
+    )
+    .await
+    .unwrap();
+    assert_eq!(pdf_report.row_count, 1);
+    assert!(fs::metadata(pdf_report.report_path).unwrap().len() > 100);
+
+    let renamed = application::expenses::expense_category_update(
+        &state,
+        &owner,
+        ExpenseCategoryUpdateInput {
+            id: electricity_id,
+            name: "Electricity & Power".into(),
+            is_active: false,
+        },
+        "corr-electricity-archive",
+    )
+    .await
+    .unwrap();
+    assert!(!renamed.is_active);
+    let history = application::expenses::expense_page(
+        &state,
+        &owner,
+        ExpensePageInput {
+            status: None,
+            category_id: Some(electricity_id),
+            cash_account_id: None,
+            from_date: None,
+            to_date: None,
+            search: Some("Electricity & Power".into()),
+            sort_by: None,
+            sort_direction: None,
+            limit: Some(20),
+            offset: Some(0),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(history.total, 1);
+    assert_eq!(history.items[0].category_name, "Electricity & Power");
+
+    let archived_post = application::expenses::expense_post(
+        &state,
+        &owner,
+        ExpenseInput {
+            category_id: electricity_id,
+            amount_minor: 100,
+            expense_date: "2026-09-11".into(),
+            cash_account_id: account,
+            payment_method_id: 1,
+            description: String::new(),
+            payee: None,
+            reference: None,
+            attachment_path: None,
+            idempotency_key: Some("archived-category-rejected".into()),
+        },
+        "corr-archived-rejected",
+    )
+    .await
+    .expect_err("archived categories cannot be used for new expenses");
+    assert!(matches!(archived_post, AppError::Validation(_)));
+
+    let denied = application::expenses::expense_page(
+        &state,
+        &salesperson,
+        ExpensePageInput {
+            status: None,
+            category_id: None,
+            cash_account_id: None,
+            from_date: None,
+            to_date: None,
+            search: None,
+            sort_by: None,
+            sort_direction: None,
+            limit: None,
+            offset: None,
+        },
+    )
+    .await
+    .expect_err("salesperson cannot read expenses");
+    assert!(matches!(denied, AppError::Unauthorized(_)));
+    let denied_reverse = application::expenses::expense_reverse(
+        &state,
+        &salesperson,
+        ExpenseReverseInput {
+            expense_id: expense.id,
+            reason: "Must be denied".into(),
+        },
+        "corr-denied-reverse",
+    )
+    .await
+    .expect_err("salesperson cannot reverse expenses");
+    assert!(matches!(denied_reverse, AppError::Unauthorized(_)));
+
+    application::expenses::expense_reverse(
+        &state,
+        &owner,
+        ExpenseReverseInput {
+            expense_id: expense.id,
+            reason: "Isolated reversal verification".into(),
+        },
+        "corr-electricity-reverse",
+    )
+    .await
+    .unwrap();
+    assert_eq!(cash_balance_sql(&state, account).await, opening_balance);
+    let matching_reversals: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM cash_entries
+          WHERE entry_type = 'expense_reversal' AND reference_id = ? AND amount_minor = 150000",
+    )
+    .bind(expense.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(matching_reversals, 1);
+
+    let reversed_report = application::reports::export_report(
+        &state,
+        "expense_report",
+        &ReportFilterInput {
+            from_date: Some("2026-09-11".into()),
+            to_date: Some("2026-09-11".into()),
+            cash_account_id: Some(account),
+            category_id: Some(electricity_id),
+            status: None,
+        },
+        ExportFormat::Csv,
+    )
+    .await
+    .unwrap();
+    assert_eq!(reversed_report.row_count, 0);
+    let profit = application::expenses::profit_summary(
+        &state,
+        &owner,
+        Some("2026-09-11".into()),
+        Some("2026-09-11".into()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(profit.expenses_minor, 0);
+
+    state.pool.close().await;
+    let reopened = open_state(&dir).await;
+    let persisted_status: String = sqlx::query_scalar("SELECT status FROM expenses WHERE id = ?")
+        .bind(expense.id)
+        .fetch_one(&reopened.pool)
+        .await
+        .unwrap();
+    let persisted_category: String =
+        sqlx::query_scalar("SELECT name FROM expense_categories WHERE id = ?")
+            .bind(electricity_id)
+            .fetch_one(&reopened.pool)
+            .await
+            .unwrap();
+    let created_category_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM expense_categories WHERE id = ?")
+            .bind(created_category.id)
+            .fetch_one(&reopened.pool)
+            .await
+            .unwrap();
+    assert_eq!(persisted_status, "reversed");
+    assert_eq!(persisted_category, "Electricity & Power");
+    assert_eq!(created_category_count, 1);
+
+    reopened.pool.close().await;
     let _ = fs::remove_dir_all(&dir);
 }

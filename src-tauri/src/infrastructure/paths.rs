@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
+#[derive(Debug, Clone)]
 pub struct FilePaths {
     pub data_dir: PathBuf,
     pub images_dir: PathBuf,
+    pub branding_dir: PathBuf,
     pub reports_dir: PathBuf,
     pub backups_dir: PathBuf,
     pub fonts_dir: PathBuf,
@@ -16,6 +18,7 @@ pub struct FilePaths {
 impl FilePaths {
     pub fn init(data_dir: &Path) -> Result<Self, AppError> {
         let images_dir = data_dir.join("images");
+        let branding_dir = data_dir.join("branding");
         let reports_dir = data_dir.join("reports");
         let backups_dir = data_dir.join("backups");
         let fonts_dir = data_dir.join("fonts");
@@ -24,6 +27,7 @@ impl FilePaths {
 
         for dir in [
             &images_dir,
+            &branding_dir,
             &reports_dir,
             &backups_dir,
             &fonts_dir,
@@ -35,6 +39,7 @@ impl FilePaths {
         Ok(Self {
             data_dir: data_dir.to_path_buf(),
             images_dir,
+            branding_dir,
             reports_dir,
             backups_dir,
             fonts_dir,

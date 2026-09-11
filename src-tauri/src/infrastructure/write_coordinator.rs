@@ -20,6 +20,13 @@ impl WriteCoordinator {
         Self::default()
     }
 
+    /// Hold the application-wide write gate without opening a transaction.
+    /// Backup uses this to wait for pending writes and keep database references
+    /// and their asset files stable while a snapshot package is assembled.
+    pub async fn acquire(&self) -> tokio::sync::OwnedMutexGuard<()> {
+        self.lock.clone().lock_owned().await
+    }
+
     /// Begin a transaction, run `op` on the underlying connection, then commit
     /// (or roll back on error). Writes are globally serialized; reads stay
     /// concurrent. The closure receives a plain `&mut SqliteConnection` so SQL

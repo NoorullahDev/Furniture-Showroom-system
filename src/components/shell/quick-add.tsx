@@ -55,7 +55,7 @@ import type { ShellView } from "@/lib/shell";
 const MAX_PINNED = 6;
 const MAX_RECENT = 8;
 
-type ShortForm = "customer" | "supplier" | "expense" | "receipt" | null;
+export type QuickAddForm = "customer" | "supplier" | "expense" | "receipt" | null;
 
 type QuickAction = {
   id: string;
@@ -64,7 +64,7 @@ type QuickAction = {
   icon: React.ElementType;
   permissionAny?: string[];
   permissionAll?: string[];
-  form?: Exclude<ShortForm, null>;
+  form?: Exclude<QuickAddForm, null>;
   view?: ShellView;
 };
 
@@ -444,6 +444,7 @@ function ExpenseForm({
   const session = profile?.sessionId ?? "";
 
   const [categoryId, setCategoryId] = React.useState("");
+  const [methodId, setMethodId] = React.useState("");
   const [accountId, setAccountId] = React.useState("");
   const [amount, setAmount] = React.useState(0);
   const [date, setDate] = React.useState(todayLocal);
@@ -451,6 +452,7 @@ function ExpenseForm({
   const [payee, setPayee] = React.useState("");
   const [err, setErr] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const requestKey = React.useRef(`expense-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const categoriesQuery = useQuery({
     queryKey: ["qa", "expense-categories"],
@@ -462,9 +464,15 @@ function ExpenseForm({
     queryFn: () => cashAccountList(session),
     enabled: !!session,
   });
+  const methodsQuery = useQuery({
+    queryKey: ["qa", "expense-payment-methods"],
+    queryFn: () => paymentMethodList(session),
+    enabled: !!session,
+  });
 
   const categories = categoriesQuery.data ?? [];
   const accounts = accountsQuery.data ?? [];
+  const methods = methodsQuery.data ?? [];
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -477,12 +485,12 @@ function ExpenseForm({
       setErr("Choose the cash account that paid.");
       return;
     }
-    if (amount <= 0) {
-      setErr("Enter an amount greater than zero.");
+    if (!methodId) {
+      setErr("Choose a payment method.");
       return;
     }
-    if (!description.trim()) {
-      setErr("Enter a short description.");
+    if (amount <= 0) {
+      setErr("Enter an amount greater than zero.");
       return;
     }
     setBusy(true);
@@ -492,12 +500,14 @@ function ExpenseForm({
         amountMinor: amount,
         expenseDate: date,
         cashAccountId: Number(accountId),
+        paymentMethodId: Number(methodId),
         description: description.trim(),
         payee: payee.trim() || null,
         reference: null,
-        idempotencyKey: null,
+        idempotencyKey: requestKey.current,
       });
       void queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      void queryClient.invalidateQueries({ queryKey: ["reports"] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast({ variant: "success", title: "Expense posted" });
       onDone();
@@ -530,7 +540,7 @@ function ExpenseForm({
               <SelectValue placeholder="Select category" />
             </SelectTrigger>
             <SelectContent>
-              {categories.map((c) => (
+              {categories.filter((category) => category.isActive).map((c) => (
                 <SelectItem key={c.id} value={String(c.id)}>
                   {c.name}
                 </SelectItem>
@@ -554,6 +564,19 @@ function ExpenseForm({
           </Select>
         </div>
       </div>
+      <div className="grid gap-1.5">
+        <Label htmlFor="qa-exp-method">Payment method</Label>
+        <Select value={methodId} onValueChange={setMethodId}>
+          <SelectTrigger id="qa-exp-method" className="w-full">
+            <SelectValue placeholder="Select payment method" />
+          </SelectTrigger>
+          <SelectContent>
+            {methods.filter((method) => method.isActive).map((method) => (
+              <SelectItem key={method.id} value={String(method.id)}>{method.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="grid gap-1.5">
           <Label htmlFor="qa-exp-amount">Amount</Label>
@@ -565,7 +588,7 @@ function ExpenseForm({
         </div>
       </div>
       <div className="grid gap-1.5">
-        <Label htmlFor="qa-exp-desc">Description</Label>
+        <Label htmlFor="qa-exp-desc">Description (optional)</Label>
         <Input
           id="qa-exp-desc"
           value={description}
@@ -752,10 +775,12 @@ export function QuickAddPalette({
   open,
   onOpenChange,
   onNavigate,
+  initialForm = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onNavigate: (view: ShellView) => void;
+  initialForm?: QuickAddForm;
 }) {
   const { profile, hasPermission } = useSession();
   const { toast } = useToast();
@@ -766,7 +791,7 @@ export function QuickAddPalette({
 
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
-  const [form, setForm] = React.useState<ShortForm>(null);
+  const [form, setForm] = React.useState<QuickAddForm>(null);
   const [pinned, setPinned] = React.useState<string[]>([]);
   const [recent, setRecent] = React.useState<string[]>([]);
   const [loaded, setLoaded] = React.useState(false);
@@ -775,7 +800,7 @@ export function QuickAddPalette({
     if (open) {
       setQuery("");
       setActiveIndex(0);
-      setForm(null);
+      setForm(initialForm);
       setPinned(readIds(pinKey));
       setRecent(readIds(recentKey));
       setLoaded(false);
@@ -783,7 +808,7 @@ export function QuickAddPalette({
       return () => cancelAnimationFrame(raf);
     }
     setLoaded(false);
-  }, [open, pinKey, recentKey]);
+  }, [open, pinKey, recentKey, initialForm]);
 
   React.useEffect(() => {
     if (loaded) writeIds(pinKey, pinned);

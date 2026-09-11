@@ -26,26 +26,7 @@ pub fn create_backup(db_path: &Path, backups_dir: &Path) -> Result<CreatedBackup
     let name = format!("furniture_shop-{timestamp}.db");
     let destination = backups_dir.join(&name);
 
-    // The backup API reads a consistent snapshot through the source connection,
-    // so it is safe to run while the app has the database open in WAL mode.
-    let src = Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|e| AppError::Backup(format!("open source: {e}")))?;
-
-    let mut dst = Connection::open(&destination)
-        .map_err(|e| AppError::Backup(format!("open destination: {e}")))?;
-
-    {
-        let backup = Backup::new(&src, &mut dst)
-            .map_err(|e| AppError::Backup(format!("init backup: {e}")))?;
-        backup
-            .run_to_completion(64, Duration::from_millis(10), None)
-            .map_err(|e| AppError::Backup(format!("run backup: {e}")))?;
-    }
-    drop(src);
-    drop(dst);
+    create_sqlite_snapshot(db_path, &destination)?;
 
     let sha256 = sha256_file(&destination)?;
     let bytes = fs::metadata(&destination)?.len();
@@ -64,6 +45,29 @@ pub fn create_backup(db_path: &Path, backups_dir: &Path) -> Result<CreatedBackup
         verified,
         bytes,
     })
+}
+
+/// Write a WAL-safe SQLite snapshot to an exact destination.
+pub fn create_sqlite_snapshot(db_path: &Path, destination: &Path) -> Result<(), AppError> {
+    let src = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| AppError::Backup(format!("open source: {e}")))?;
+
+    let mut dst = Connection::open(destination)
+        .map_err(|e| AppError::Backup(format!("open destination: {e}")))?;
+
+    {
+        let backup = Backup::new(&src, &mut dst)
+            .map_err(|e| AppError::Backup(format!("init backup: {e}")))?;
+        backup
+            .run_to_completion(64, Duration::from_millis(10), None)
+            .map_err(|e| AppError::Backup(format!("run backup: {e}")))?;
+    }
+    drop(src);
+    drop(dst);
+    Ok(())
 }
 
 pub fn list_backups(backups_dir: &Path) -> Result<Vec<BackupEntryDto>, AppError> {
@@ -112,7 +116,7 @@ pub fn verify_backup_file(path: &Path) -> Result<bool, AppError> {
     integrity_check(path)
 }
 
-fn sha256_file(path: &Path) -> Result<String, AppError> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String, AppError> {
     let bytes = fs::read(path)?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
@@ -123,7 +127,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn integrity_check(path: &Path) -> Result<bool, AppError> {
+pub(crate) fn integrity_check(path: &Path) -> Result<bool, AppError> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|e| AppError::Backup(format!("verify open: {e}")))?;
     let result: String = conn

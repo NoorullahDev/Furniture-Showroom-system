@@ -82,3 +82,33 @@ pub async fn auth_change_password(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn auth_update_login_details(
+    state: State<'_, AppState>,
+    session: String,
+    current_password: String,
+    new_username: Option<String>,
+    new_password: Option<String>,
+    confirm_password: Option<String>,
+) -> Result<String, AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation(
+        "auth_update_login_details",
+        correlation_id.clone(),
+        async move {
+            let principal = application::auth::resolve_session(&state, &session).await?;
+            application::auth::update_login_details(
+                &state,
+                &principal,
+                &current_password,
+                new_username.as_deref(),
+                new_password.as_deref(),
+                confirm_password.as_deref(),
+                &correlation_id,
+            )
+            .await
+        },
+    )
+    .await
+}

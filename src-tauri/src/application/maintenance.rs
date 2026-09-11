@@ -116,10 +116,13 @@ pub async fn create_backup(
         .await?;
 
     Ok(BackupResultDto {
+        name,
         backup_path: backup.backup_path,
         sha256: backup.sha256,
         verified: backup.verified,
         bytes: backup.bytes,
+        created_at: state.clock.now_iso(),
+        kind: "legacy-manual".into(),
     })
 }
 
@@ -164,6 +167,7 @@ pub async fn list_backups(
                 .copied()
                 .unwrap_or(("manual", entry.size_bytes as i64, true));
             BackupListItemDto {
+                full_path: entry.name.clone(),
                 name: entry.name,
                 size_bytes: size_bytes.max(0) as u64,
                 sha256: entry.sha256,
@@ -171,6 +175,10 @@ pub async fn list_backups(
                 kind: kind.to_string(),
                 created_by: None,
                 verified,
+                app_version: String::new(),
+                schema_version: 0,
+                file_count: 1,
+                legacy_database_only: true,
             }
         })
         .collect();
@@ -298,6 +306,8 @@ pub async fn restore_backup(
             &crate::infrastructure::restore::RestoreMarker {
                 backup_name: marker_name,
                 safety_backup: Some(marker_safety),
+                staged_path: None,
+                legacy_database_only: true,
             },
         )
     })

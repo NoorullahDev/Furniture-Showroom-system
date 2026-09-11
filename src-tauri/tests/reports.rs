@@ -510,6 +510,7 @@ async fn expense_report_export() {
             amount_minor: 25_000,
             expense_date: "2026-09-10".into(),
             cash_account_id: cash,
+            payment_method_id: 1,
             description: "Office rent".into(),
             payee: Some("Landlord".into()),
             reference: None,

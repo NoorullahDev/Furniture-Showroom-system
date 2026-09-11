@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod auth;
+pub mod backup_workflow;
 pub mod cash;
 pub mod catalogue;
 pub mod customers;
@@ -9,6 +10,7 @@ pub mod expenses;
 pub mod first_run;
 pub mod fulfilment;
 pub mod inventory;
+pub mod licensing;
 pub mod maintenance;
 pub mod products;
 pub mod purchases;

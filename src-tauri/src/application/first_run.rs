@@ -6,6 +6,8 @@ use crate::infrastructure::{password, AuditInput};
 use crate::state::AppState;
 
 const FIRST_RUN_KEY: &str = "system.first_run_complete";
+const INITIAL_ADMIN_USERNAME: &str = "admin";
+const INITIAL_ADMIN_PASSWORD: &str = "admin123";
 
 #[derive(Debug, Clone)]
 pub struct FirstRunInput {
@@ -38,6 +40,144 @@ pub async fn status(state: &AppState) -> Result<FirstRunStatusDto, AppError> {
         complete,
         has_users: has_users > 0,
     })
+}
+
+/// Seed the requested initial administrator exactly once.
+///
+/// Any user already assigned the owner role counts as an administrator, even
+/// if that account is inactive. This intentionally prevents startup from
+/// bypassing an intentional deactivation. Likewise, an existing `admin`
+/// username is never overwritten, promoted, or given a replacement password.
+pub async fn ensure_initial_administrator(state: &AppState) -> Result<bool, AppError> {
+    let owner_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)
+           FROM user_roles ur
+           JOIN roles r ON r.id = ur.role_id
+          WHERE r.code = 'owner'",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    if owner_exists > 0 {
+        return Ok(false);
+    }
+
+    let username_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = ?")
+        .bind(INITIAL_ADMIN_USERNAME)
+        .fetch_one(&state.pool)
+        .await?;
+    if username_exists > 0 {
+        tracing::warn!(
+            username = INITIAL_ADMIN_USERNAME,
+            "initial administrator not created because the username already exists"
+        );
+        return Ok(false);
+    }
+
+    password::validate_strength(INITIAL_ADMIN_PASSWORD)?;
+    let hash = password::hash_password(INITIAL_ADMIN_PASSWORD)?;
+    let now = state.clock.now_iso();
+    let audits = state.audits.clone();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                // Repeat both guards inside the serialized write transaction.
+                let owner_exists: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*)
+                       FROM user_roles ur
+                       JOIN roles r ON r.id = ur.role_id
+                      WHERE r.code = 'owner'",
+                )
+                .fetch_one(&mut *tx)
+                .await?;
+                let username_exists: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = ?")
+                        .bind(INITIAL_ADMIN_USERNAME)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                if owner_exists > 0 || username_exists > 0 {
+                    return Ok(false);
+                }
+
+                let existing_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+                    .fetch_one(&mut *tx)
+                    .await?;
+                let user_id = sqlx::query(
+                    "INSERT INTO users (username, password_hash, full_name, created_at, updated_at)
+                     VALUES (?, ?, 'Administrator', ?, ?)",
+                )
+                .bind(INITIAL_ADMIN_USERNAME)
+                .bind(&hash)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?
+                .last_insert_rowid();
+
+                let assigned = sqlx::query(
+                    "INSERT INTO user_roles (user_id, role_id)
+                     SELECT ?, id FROM roles WHERE code = 'owner'",
+                )
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+                if assigned.rows_affected() != 1 {
+                    return Err(AppError::Internal("owner role is unavailable".into()));
+                }
+
+                // On a brand-new database this account is the initial setup.
+                // Seed only the defaults the existing first-run flow would
+                // otherwise require, without touching values on an established
+                // installation that merely lost its administrator.
+                if existing_users == 0 {
+                    let defaults: &[(&str, &str)] = &[
+                        ("shop.name", "\"Furniture Showroom\""),
+                        ("shop.currency", "\"PKR\""),
+                        ("shop.timezone", "\"Asia/Karachi\""),
+                        ("invoice.prefix", "\"INV/\""),
+                        ("inventory.issue_policy", "\"on_confirmation\""),
+                        ("inventory.negative_stock", "\"block\""),
+                        (FIRST_RUN_KEY, "true"),
+                    ];
+                    for (key, value) in defaults {
+                        sqlx::query(
+                            "INSERT OR IGNORE INTO settings (key, value_json, updated_by, updated_at)
+                             VALUES (?, ?, ?, ?)",
+                        )
+                        .bind(key)
+                        .bind(value)
+                        .bind(user_id)
+                        .bind(&now)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                }
+
+                audits
+                    .record(
+                        &mut *tx,
+                        AuditInput {
+                            user_id: Some(user_id),
+                            action: "system.initial_administrator_created".into(),
+                            entity_type: Some("user".into()),
+                            entity_id: Some(user_id.to_string()),
+                            after_json: Some(
+                                serde_json::json!({
+                                    "username": INITIAL_ADMIN_USERNAME,
+                                    "role": "owner"
+                                })
+                                .to_string(),
+                            ),
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                Ok(true)
+            })
+        })
+        .await
 }
 
 /// Create the owner, shop settings, first location, and the completion flag in
@@ -386,5 +526,81 @@ mod tests {
             complete(&state, &bad, "corr").await.unwrap_err(),
             AppError::Validation(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn initial_administrator_login_survives_restart_without_password_reset() {
+        let dir = std::env::temp_dir().join(format!(
+            "furniture-shop-initial-admin-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let paths = crate::infrastructure::FilePaths::init(&dir).unwrap();
+        let (pool, _) = crate::infrastructure::db::open(&paths).await.unwrap();
+        let state = AppState::new(pool, paths);
+
+        assert!(ensure_initial_administrator(&state).await.unwrap());
+        let result = auth::login(&state, "admin", "admin123", "first-login")
+            .await
+            .unwrap();
+        assert!(result.profile.roles.contains(&"owner".to_string()));
+
+        let replacement = password::hash_password("Changed456").unwrap();
+        sqlx::query("UPDATE users SET password_hash = ? WHERE username = 'admin'")
+            .bind(replacement)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        state.pool.close().await;
+        drop(state);
+
+        // Reopening the same database models an application restart. The seed
+        // must be a no-op and the changed password must remain authoritative.
+        let paths = crate::infrastructure::FilePaths::init(&dir).unwrap();
+        let (pool, _) = crate::infrastructure::db::open(&paths).await.unwrap();
+        let restarted = AppState::new(pool, paths);
+        assert!(!ensure_initial_administrator(&restarted).await.unwrap());
+        assert!(matches!(
+            auth::login(&restarted, "admin", "admin123", "old-password")
+                .await
+                .unwrap_err(),
+            AppError::InvalidCredentials
+        ));
+        assert!(
+            auth::login(&restarted, "admin", "Changed456", "new-password")
+                .await
+                .is_ok()
+        );
+
+        let administrators: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)
+               FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+              WHERE r.code = 'owner'",
+        )
+        .fetch_one(&restarted.pool)
+        .await
+        .unwrap();
+        assert_eq!(administrators, 1);
+
+        restarted.pool.close().await;
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn existing_administrator_is_never_replaced() {
+        let state = fresh_state("existing-admin").await;
+        complete(&state, &input(), "corr").await.unwrap();
+
+        assert!(!ensure_initial_administrator(&state).await.unwrap());
+        let seeded_admins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE username = 'admin'")
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+        assert_eq!(seeded_admins, 0);
     }
 }

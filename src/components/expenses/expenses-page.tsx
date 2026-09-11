@@ -1,14 +1,19 @@
 "use client";
 
 import * as React from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowDownCircle,
-  ArrowUpCircle,
+  ArrowDown,
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  FileUp,
   Loader2,
+  Pencil,
   Plus,
-  ReceiptText,
-  RectangleEllipsis,
+  RotateCcw,
+  Search,
   Tags,
   Undo2,
   Wallet,
@@ -17,9 +22,6 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { MoneyInput } from "@/components/ui/money-input";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +30,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import {
   Select,
   SelectContent,
@@ -43,764 +48,404 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useSession, isSessionError } from "@/components/session/session-provider";
 import { useToast } from "@/components/ui/toast";
-import { isSessionError, useSession } from "@/components/session/session-provider";
+import { formatCurrency } from "@/lib/format";
 import {
   cashAccountList,
   expenseCategoryCreate,
   expenseCategoryList,
   expenseCategoryUpdate,
-  expenseList,
+  expensePage,
   expensePost,
   expenseReverse,
   ownerTransactionList,
   ownerTransactionPost,
+  paymentMethodList,
   profitSummary,
+  settingsGet,
   type CashAccountDto,
   type ExpenseCategoryDto,
   type ExpenseDto,
+  type PaymentMethodDto,
   type ProfitSummaryDto,
 } from "@/lib/tauri/api";
-import { formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
 
-type Tab = "expenses" | "categories" | "owner" | "profit";
+type SortKey = "date" | "category" | "note" | "amount";
+type SortDirection = "asc" | "desc";
+type DateRange = { from: string; to: string };
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+const PAGE_SIZE = 20;
+
+function localIso(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function datePreset(kind: "today" | "yesterday" | "week" | "month" | "lastMonth"): DateRange {
+  const now = new Date();
+  const from = new Date(now);
+  const to = new Date(now);
+  if (kind === "yesterday") {
+    from.setDate(from.getDate() - 1);
+    to.setDate(to.getDate() - 1);
+  } else if (kind === "week") {
+    const mondayOffset = (now.getDay() + 6) % 7;
+    from.setDate(from.getDate() - mondayOffset);
+  } else if (kind === "month") {
+    from.setDate(1);
+  } else if (kind === "lastMonth") {
+    from.setMonth(from.getMonth() - 1, 1);
+    to.setDate(0);
+  }
+  return { from: localIso(from), to: localIso(to) };
+}
+
+function readableDate(value: string): string {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("en-PK", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function configuredCurrency(raw?: string | null): string {
+  if (!raw) return "PKR";
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return typeof parsed === "string" && /^[A-Z]{3}$/i.test(parsed) ? parsed.toUpperCase() : "PKR";
+  } catch {
+    return "PKR";
+  }
+}
+
+function categoryCode(name: string): string {
+  return name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 40) || `EXPENSE_${Date.now()}`;
+}
+
+function idempotencyKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `expense-${crypto.randomUUID()}`;
+  return `expense-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export function ExpensesPage() {
+  const { profile, refresh, hasPermission } = useSession();
   const { toast } = useToast();
-  const { refresh, profile, hasPermission } = useSession();
   const queryClient = useQueryClient();
   const session = profile?.sessionId ?? "";
-
   const canView = hasPermission("expense.view");
   const canCreate = hasPermission("expense.create");
   const canReverse = hasPermission("expense.reverse");
-  const canProfit = hasPermission("profit.view");
   const canOwner = hasPermission("owner.transfer");
+  const canProfit = hasPermission("profit.view");
 
-  const [view, setView] = React.useState<Tab>("expenses");
-  const [dialog, setDialog] = React.useState<null | "post" | "category" | "owner">(null);
+  const [search, setSearch] = React.useState("");
+  const deferredSearch = React.useDeferredValue(search);
+  const [categoryId, setCategoryId] = React.useState<number | null>(null);
+  const [fromDate, setFromDate] = React.useState("");
+  const [toDate, setToDate] = React.useState("");
+  const [page, setPage] = React.useState(0);
+  const [sortBy, setSortBy] = React.useState<SortKey>("date");
+  const [sortDirection, setSortDirection] = React.useState<SortDirection>("desc");
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [categoriesOpen, setCategoriesOpen] = React.useState(false);
   const [reverseTarget, setReverseTarget] = React.useState<ExpenseDto | null>(null);
-  const [profitFrom, setProfitFrom] = React.useState<string>("");
-  const [profitTo, setProfitTo] = React.useState<string>("");
-  const [accountFilter, setAccountFilter] = React.useState<number | null>(null);
+  const [financeTool, setFinanceTool] = React.useState<"owner" | "profit" | null>(null);
 
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["expenses"] });
-    void queryClient.invalidateQueries({ queryKey: ["purchasing"] });
-  };
+  React.useEffect(() => setPage(0), [deferredSearch, categoryId, fromDate, toDate]);
 
-  const accountsQuery = useQuery({
-    queryKey: ["expenses", "accounts"],
-    queryFn: () => cashAccountList(session),
-    enabled: !!session && canView,
-  });
   const categoriesQuery = useQuery({
     queryKey: ["expenses", "categories"],
     queryFn: () => expenseCategoryList(session),
     enabled: !!session && canView,
   });
-  const expensesQuery = useQuery({
-    queryKey: ["expenses", "list", accountFilter],
-    queryFn: () =>
-      expenseList(session, {
-        status: null,
-        categoryId: null,
-        cashAccountId: accountFilter,
-        fromDate: null,
-        toDate: null,
-        limit: 200,
-        offset: null,
-      }),
+  const accountsQuery = useQuery({
+    queryKey: ["expenses", "accounts"],
+    queryFn: () => cashAccountList(session),
     enabled: !!session && canView,
   });
-  const ownerQuery = useQuery({
-    queryKey: ["expenses", "owner"],
-    queryFn: () => ownerTransactionList(session, 100),
-    enabled: !!session && canOwner && view === "owner",
+  const methodsQuery = useQuery({
+    queryKey: ["expenses", "payment-methods"],
+    queryFn: () => paymentMethodList(session),
+    enabled: !!session && canView,
   });
-  const profitQuery = useQuery({
-    queryKey: ["expenses", "profit", profitFrom, profitTo],
-    queryFn: () => profitSummary(session, profitFrom || null, profitTo || null),
-    enabled: !!session && canProfit && view === "profit",
+  const currencyQuery = useQuery({
+    queryKey: ["settings", "shop.currency"],
+    queryFn: () => settingsGet(session, "shop.currency"),
+    enabled: !!session,
+  });
+  const expensesQuery = useQuery({
+    queryKey: ["expenses", "page", deferredSearch, categoryId, fromDate, toDate, page, sortBy, sortDirection],
+    queryFn: () => expensePage(session, {
+      search: deferredSearch.trim() || null,
+      categoryId,
+      fromDate: fromDate || null,
+      toDate: toDate || null,
+      sortBy,
+      sortDirection,
+      limit: PAGE_SIZE,
+      offset: page * PAGE_SIZE,
+    }),
+    enabled: !!session && canView,
+    placeholderData: (previous) => previous,
   });
 
-  const accounts = accountsQuery.data ?? [];
+  const currency = configuredCurrency(currencyQuery.data);
   const categories = categoriesQuery.data ?? [];
-  const expenses = expensesQuery.data ?? [];
-  const ownerTransactions = ownerQuery.data ?? [];
+  const accounts = accountsQuery.data ?? [];
+  const methods = methodsQuery.data ?? [];
+  const totalPages = Math.max(1, Math.ceil((expensesQuery.data?.total ?? 0) / PAGE_SIZE));
 
-  const posted = expenses.filter((e) => e.status === "posted");
-  const totalExpenses = posted.reduce((acc, e) => acc + e.amountMinor, 0);
-  const cashOnHand = accounts.reduce((acc, a) => acc + a.balanceMinor, 0);
+  React.useEffect(() => {
+    if (page >= totalPages) setPage(totalPages - 1);
+  }, [page, totalPages]);
 
-  const done = (message: string) => () => {
-    invalidate();
-    setDialog(null);
-    setReverseTarget(null);
-    toast({ variant: "success", title: message });
-  };
-  const failed = (e: Error) => {
-    if (isSessionError(e)) {
-      refresh();
+  const invalidate = React.useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["expenses"] });
+    void queryClient.invalidateQueries({ queryKey: ["reports"] });
+    void queryClient.invalidateQueries({ queryKey: ["purchasing"] });
+  }, [queryClient]);
+
+  const handleError = React.useCallback((error: Error, title = "Operation failed") => {
+    if (isSessionError(error)) {
+      void refresh();
       return;
     }
-    toast({ variant: "error", title: "Operation failed", description: commandErrorMessage(e) });
+    toast({ variant: "error", title, description: commandErrorMessage(error) });
+  }, [refresh, toast]);
+
+  const setPreset = (kind: Parameters<typeof datePreset>[0]) => {
+    const range = datePreset(kind);
+    setFromDate(range.from);
+    setToDate(range.to);
   };
 
+  const toggleSort = (key: SortKey) => {
+    if (sortBy === key) setSortDirection((current) => current === "asc" ? "desc" : "asc");
+    else {
+      setSortBy(key);
+      setSortDirection(key === "date" ? "desc" : "asc");
+    }
+    setPage(0);
+  };
+
+  if (!canView) {
+    return <StatePanel message="You do not have permission to view expenses." />;
+  }
+
+  const pageData = expensesQuery.data;
+  const hasFilters = !!(search || categoryId || fromDate || toDate);
+
   return (
-    <div>
+    <div className="min-h-full">
       <PageHeader
-        title="Finance"
-        subtitle="Expenses, cash accounts, owner transfers, and profit."
+        title="Expenses"
+        subtitle={pageData
+          ? `${pageData.total.toLocaleString()} ${pageData.total === 1 ? "expense" : "expenses"} · ${formatCurrency(pageData.totalAmountMinor, currency)} total`
+          : "Loading expense totals…"}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {canView && (
-              <Select
-                value={accountFilter ? String(accountFilter) : "all"}
-                onValueChange={(v) => setAccountFilter(v === "all" ? null : Number(v))}
-              >
-                <SelectTrigger className="w-44">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All cash accounts</SelectItem>
-                  {accounts.map((a) => (
-                    <SelectItem key={a.id} value={String(a.id)}>
-                      {a.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+          <>
             {canCreate && (
-              <Button onClick={() => setDialog("post")}>
-                <Plus className="h-4 w-4" />
-                Post expense
+              <Button variant="outline" onClick={() => setCategoriesOpen(true)}>
+                <Tags className="h-4 w-4" /> Manage Categories
               </Button>
             )}
-          </div>
+            {canCreate && (
+              <Button onClick={() => setAddOpen(true)}>
+                <Plus className="h-4 w-4" /> Add Expense
+              </Button>
+            )}
+          </>
         }
       />
 
-      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SummaryCard label="Expenses (posted)" value={totalExpenses} money accent="rose" />
-        <SummaryCard label="Cash on hand" value={cashOnHand} money accent="gold" />
-        <SummaryCard
-          label="Gross profit"
-          value={profitQuery.data?.grossProfitMinor ?? 0}
-          money
-          accent={(profitQuery.data?.grossProfitMinor ?? 0) >= 0 ? "forest" : "rose"}
-        />
-        <SummaryCard
-          label="Operational profit"
-          value={profitQuery.data?.operationalProfitMinor ?? 0}
-          money
-          accent={(profitQuery.data?.operationalProfitMinor ?? 0) >= 0 ? "green" : "rose"}
-        />
-      </div>
-
-      <div className="mt-5 flex items-center gap-1 overflow-x-auto border-b border-neutral-200">
-        <TabButton active={view === "expenses"} onClick={() => setView("expenses")} icon={<ReceiptText className="h-4 w-4" />}>
-          Expenses
-        </TabButton>
-        <TabButton active={view === "categories"} onClick={() => setView("categories")} icon={<Tags className="h-4 w-4" />}>
-          Categories
-        </TabButton>
-        {canOwner && (
-          <TabButton active={view === "owner"} onClick={() => setView("owner")} icon={<Wallet className="h-4 w-4" />}>
-            Owner transfers
-          </TabButton>
-        )}
-        {canProfit && (
-          <TabButton active={view === "profit"} onClick={() => setView("profit")} icon={<RectangleEllipsis className="h-4 w-4" />}>
-            Profit
-          </TabButton>
-        )}
-      </div>
-
-      <div className="mt-5">
-        {view === "expenses" && (
-          <ExpensesTable
-            rows={expenses}
-            loading={expensesQuery.isLoading}
-            canReverse={canReverse}
-            onReverse={setReverseTarget}
-          />
-        )}
-        {view === "categories" && (
-          <CategoriesTable
-            rows={categories}
-            loading={categoriesQuery.isLoading}
-            canCreate={canCreate}
-            onCreate={() => setDialog("category")}
-          />
-        )}
-        {view === "owner" && canOwner && (
-          <OwnerTable rows={ownerTransactions} loading={ownerQuery.isLoading} canCreate={canOwner} onCreate={() => setDialog("owner")} />
-        )}
-        {view === "profit" && canProfit && (
-          <ProfitView
-            summary={profitQuery.data}
-            loading={profitQuery.isLoading}
-            from={profitFrom}
-            to={profitTo}
-            onFrom={setProfitFrom}
-            onTo={setProfitTo}
-          />
-        )}
-      </div>
-
-      {dialog === "post" && canCreate && (
-        <PostExpenseDialog
-          session={session}
-          categories={categories}
-          accounts={accounts}
-          onClose={() => setDialog(null)}
-          onDone={done("Expense posted")}
-          onError={failed}
-        />
-      )}
-      {dialog === "category" && canCreate && (
-        <CategoryDialog
-          session={session}
-          onClose={() => setDialog(null)}
-          onDone={() => done("Category saved")()}
-          onError={failed}
-        />
-      )}
-      {dialog === "owner" && canOwner && (
-        <OwnerDialog
-          session={session}
-          accounts={accounts}
-          onClose={() => setDialog(null)}
-          onDone={() => done("Transfer recorded")()}
-          onError={failed}
-        />
-      )}
-      {reverseTarget && canReverse && (
-        <ReverseExpenseDialog
-          session={session}
-          expense={reverseTarget}
-          onClose={() => setReverseTarget(null)}
-          onDone={done("Expense reversed")}
-          onError={failed}
-        />
-      )}
-    </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  money,
-  accent = "neutral",
-}: {
-  label: string;
-  value: number;
-  money?: boolean;
-  accent?: "gold" | "rose" | "green" | "forest" | "neutral";
-}) {
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-3 shadow-sm">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-neutral-500">{label}</p>
-      <p
-        className={cn(
-          "mt-1 text-xl font-semibold tabular-nums",
-          accent === "gold" && "text-amber-600",
-          accent === "rose" && "text-rose-600",
-          accent === "green" && "text-emerald-600",
-          accent === "forest" && "text-forest-700",
-        )}
-      >
-        {money ? formatPkr(value) : value.toLocaleString()}
-      </p>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-        active
-          ? "border-forest-600 text-forest-700"
-          : "border-transparent text-neutral-500 hover:text-neutral-800",
-      )}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function LoadingRow() {
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-white p-10 text-sm text-neutral-500">
-      <Loader2 className="h-4 w-4 animate-spin" />
-      Loading…
-    </div>
-  );
-}
-
-function EmptyRow({ message }: { message: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-10 text-center text-sm text-neutral-500">
-      {message}
-    </div>
-  );
-}
-
-function ExpenseStatusBadge({ status }: { status: string }) {
-  if (status === "posted") return <Badge variant="success">Posted</Badge>;
-  if (status === "reversed") return <Badge variant="warning">Reversed</Badge>;
-  return <Badge variant="neutral">Draft</Badge>;
-}
-
-function ExpensesTable({
-  rows,
-  loading,
-  canReverse,
-  onReverse,
-}: {
-  rows: ExpenseDto[];
-  loading: boolean;
-  canReverse: boolean;
-  onReverse: (e: ExpenseDto) => void;
-}) {
-  if (loading) return <LoadingRow />;
-  if (rows.length === 0) return <EmptyRow message="No expenses recorded yet." />;
-  return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Number</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Account</TableHead>
-              <TableHead className="text-right">Amount</TableHead>
-              <TableHead className="text-right">Status</TableHead>
-              {canReverse && <TableHead className="w-16" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((e) => (
-              <TableRow key={e.id}>
-                <TableCell className="font-medium text-neutral-900">
-                  {e.expenseNumber ?? `#${e.id}`}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-neutral-500">{e.expenseDate}</TableCell>
-                <TableCell>
-                  <span className="font-medium text-neutral-700">{e.categoryName}</span>
-                  <span className="block text-[11px] text-neutral-500">{e.categoryCode}</span>
-                </TableCell>
-                <TableCell className="max-w-64 text-neutral-600">
-                  <span className="block truncate">{e.description}</span>
-                  {e.payee && <span className="block text-[11px] text-neutral-500">to {e.payee}</span>}
-                </TableCell>
-                <TableCell className="text-neutral-600">{e.cashAccountName}</TableCell>
-                <TableCell className="text-right font-semibold tabular-nums text-rose-600">
-                  {formatPkr(e.amountMinor)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <ExpenseStatusBadge status={e.status} />
-                </TableCell>
-                {canReverse && (
-                  <TableCell className="text-right">
-                    {e.status === "posted" && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="Reverse this expense"
-                        onClick={() => onReverse(e)}
-                      >
-                        <Undo2 className="h-3.5 w-3.5 text-neutral-500" />
-                      </Button>
-                    )}
-                  </TableCell>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
-function CategoriesTable({
-  rows,
-  loading,
-  canCreate,
-  onCreate,
-}: {
-  rows: ExpenseCategoryDto[];
-  loading: boolean;
-  canCreate: boolean;
-  onCreate: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const session = useSession().profile?.sessionId ?? "";
-  const [editing, setEditing] = React.useState<ExpenseCategoryDto | null>(null);
-  const [name, setName] = React.useState("");
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      expenseCategoryUpdate(session, { id: editing!.id, name: name.trim(), isActive: editing!.isActive }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["expenses", "categories"] });
-      setEditing(null);
-      toast({ variant: "success", title: "Category updated" });
-    },
-    onError: (e: Error) => {
-      toast({ variant: "error", title: "Update failed", description: commandErrorMessage(e) });
-    },
-  });
-
-  const toggle = (c: ExpenseCategoryDto) => {
-    expenseCategoryUpdate(session, { id: c.id, name: c.name, isActive: !c.isActive })
-      .then(() => {
-        void queryClient.invalidateQueries({ queryKey: ["expenses", "categories"] });
-      })
-      .catch((e: Error) => {
-        toast({ variant: "error", title: "Update failed", description: commandErrorMessage(e) });
-      });
-  };
-
-  if (loading) return <LoadingRow />;
-  if (rows.length === 0) return <EmptyRow message="No expense categories yet." />;
-
-  return (
-    <div className="grid gap-4">
-      {canCreate && (
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={onCreate}>
-            <Plus className="h-4 w-4" />
-            New category
-          </Button>
+      <section className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <div className="grid gap-3 border-b border-neutral-200 p-3 xl:grid-cols-[minmax(220px,1fr)_200px_170px_170px_auto] xl:items-center">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="pl-9"
+              placeholder="Search note, category, or bill reference"
+              aria-label="Search expenses"
+            />
+          </div>
+          <Select value={categoryId === null ? "all" : String(categoryId)} onValueChange={(value) => setCategoryId(value === "all" ? null : Number(value))}>
+            <SelectTrigger aria-label="Filter by category"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              {categories.map((category) => <SelectItem key={category.id} value={String(category.id)}>{category.name}{category.isActive ? "" : " (archived)"}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} aria-label="Start date" />
+          <Input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} aria-label="End date" />
+          <div className="flex flex-wrap gap-1.5 xl:justify-end">
+            <PresetButton label="Today" onClick={() => setPreset("today")} />
+            <PresetButton label="Yesterday" onClick={() => setPreset("yesterday")} />
+            <PresetButton label="This Week" onClick={() => setPreset("week")} />
+            <PresetButton label="This Month" onClick={() => setPreset("month")} />
+            <PresetButton label="Last Month" onClick={() => setPreset("lastMonth")} />
+            {hasFilters && <Button variant="ghost" size="sm" title="Clear filters" onClick={() => { setSearch(""); setCategoryId(null); setFromDate(""); setToDate(""); }}><RotateCcw className="h-3.5 w-3.5" /></Button>}
+          </div>
         </div>
-      )}
-      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Code</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead className="text-right">Active</TableHead>
-                {canCreate && <TableHead className="w-24" />}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>
-                    <span className="font-mono text-xs text-neutral-500">{c.code}</span>
-                  </TableCell>
-                  <TableCell className="font-medium text-neutral-900">{c.name}</TableCell>
-                  <TableCell className="text-right">
-                    <Badge variant={c.isActive ? "success" : "neutral"}>
-                      {c.isActive ? "Active" : "Inactive"}
-                    </Badge>
-                  </TableCell>
-                  {canCreate && (
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setEditing(c);
-                          setName(c.name);
-                        }}
-                      >
-                        Rename
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => toggle(c)}>
-                        {c.isActive ? "Deactivate" : "Activate"}
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      </div>
 
-      {editing && (
-        <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Rename category {editing.code}</DialogTitle>
-              <DialogDescription>Rename an expense category.</DialogDescription>
-            </DialogHeader>
-            <div className="grid gap-1.5">
-              <Label>Name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-              <Button disabled={!name.trim()} onClick={() => saveMutation.mutate()}>
-                {saveMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
-    </div>
-  );
-}
-
-function OwnerTable({
-  rows,
-  loading,
-  canCreate,
-  onCreate,
-}: {
-  rows: { transactionNumber: string; kind: string; amountMinor: number; transactionDate: string; cashAccountName: string; notes?: string | null }[];
-  loading: boolean;
-  canCreate: boolean;
-  onCreate: () => void;
-}) {
-  if (loading) return <LoadingRow />;
-  return (
-    <div className="grid gap-4">
-      {canCreate && (
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={onCreate}>
-            <Plus className="h-4 w-4" />
-            Record transfer
-          </Button>
-        </div>
-      )}
-      {rows.length === 0 ? (
-        <EmptyRow message="No owner transfers yet." />
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+        {expensesQuery.isLoading ? (
+          <StatePanel loading message="Loading expenses…" />
+        ) : expensesQuery.isError ? (
+          <StatePanel
+            error
+            message={commandErrorMessage(expensesQuery.error as Error)}
+            action={<Button variant="outline" size="sm" onClick={() => void expensesQuery.refetch()}>Try again</Button>}
+          />
+        ) : !pageData?.items.length ? (
+          <StatePanel message={hasFilters ? "No expenses match the selected filters." : "No expenses recorded yet."} />
+        ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Number</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Notes</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
+                  <SortableHead label="Date" sortKey="date" active={sortBy} direction={sortDirection} onSort={toggleSort} />
+                  <SortableHead label="Category" sortKey="category" active={sortBy} direction={sortDirection} onSort={toggleSort} />
+                  <SortableHead label="Note" sortKey="note" active={sortBy} direction={sortDirection} onSort={toggleSort} />
+                  <SortableHead label="Amount" sortKey="amount" active={sortBy} direction={sortDirection} onSort={toggleSort} right />
+                  <TableHead className="w-20 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
-                  <TableRow key={r.transactionNumber}>
-                    <TableCell className="font-medium text-neutral-900">{r.transactionNumber}</TableCell>
-                    <TableCell className="whitespace-nowrap text-neutral-500">{r.transactionDate}</TableCell>
-                    <TableCell>
-                      <Badge variant={r.kind === "capital_in" ? "success" : "warning"}>
-                        {r.kind === "capital_in" ? "Capital in" : "Withdrawal"}
-                      </Badge>
+                {pageData.items.map((expense) => (
+                  <TableRow key={expense.id} className={cn(expense.status === "reversed" && "bg-neutral-50 text-neutral-500")}>
+                    <TableCell className="whitespace-nowrap">{readableDate(expense.expenseDate)}</TableCell>
+                    <TableCell className="font-medium text-neutral-800">{expense.categoryName}</TableCell>
+                    <TableCell className="max-w-[520px]">
+                      <div className="truncate text-neutral-700">{expense.description || "—"}</div>
+                      <div className="mt-0.5 flex flex-wrap gap-x-2 text-xs text-neutral-400">
+                        {expense.reference && <span>Ref: {expense.reference}</span>}
+                        <span>{expense.expenseNumber ?? `#${expense.id}`}</span>
+                        <span>{expense.paymentMethodName ?? "Legacy"} · {expense.cashAccountName}</span>
+                        {expense.attachmentPath && <span title={expense.attachmentPath}>Bill attached</span>}
+                        {expense.status === "reversed" && <Badge variant="warning">Reversed</Badge>}
+                      </div>
+                      {expense.reversalReason && <div className="mt-1 text-xs text-rose-600">Reason: {expense.reversalReason}</div>}
                     </TableCell>
-                    <TableCell className="text-neutral-600">{r.cashAccountName}</TableCell>
-                    <TableCell className="max-w-56 truncate text-neutral-500">{r.notes ?? "—"}</TableCell>
-                    <TableCell
-                      className={cn(
-                        "text-right font-semibold tabular-nums",
-                        r.kind === "capital_in" ? "text-emerald-700" : "text-rose-600",
-                      )}
-                    >
-                      {r.kind === "capital_in" ? "+" : "−"}
-                      {formatPkr(r.amountMinor)}
+                    <TableCell className={cn("text-right font-semibold tabular-nums", expense.status === "reversed" ? "line-through text-neutral-400" : "text-neutral-900")}>
+                      {formatCurrency(expense.amountMinor, currency)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {canReverse && expense.status === "posted" ? (
+                        <Button variant="ghost" size="icon" title="Reverse expense" aria-label={`Reverse ${expense.expenseNumber ?? expense.id}`} onClick={() => setReverseTarget(expense)}>
+                          <Undo2 className="h-4 w-4" />
+                        </Button>
+                      ) : <span className="text-neutral-300">—</span>}
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+        )}
 
-function ProfitView({
-  summary,
-  loading,
-  from,
-  to,
-  onFrom,
-  onTo,
-}: {
-  summary: ProfitSummaryDto | undefined;
-  loading: boolean;
-  from: string;
-  to: string;
-  onFrom: (v: string) => void;
-  onTo: (v: string) => void;
-}) {
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1.5">
-          <Label>From</Label>
-          <Input type="date" value={from} onChange={(e) => onFrom(e.target.value)} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>To</Label>
-          <Input type="date" value={to} onChange={(e) => onTo(e.target.value)} />
-        </div>
-        {from || to ? (
-          <Button variant="ghost" size="sm" onClick={() => {
-            onFrom("");
-            onTo("");
-          }}>
-            Clear range
-          </Button>
-        ) : null}
-      </div>
-
-      {loading ? (
-        <LoadingRow />
-      ) : !summary ? (
-        <EmptyRow message="Open the Profit tab to see the summary." />
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <ProfitCard
-            title="Operating profit (document dates)"
-            description="Revenue, cost of goods sold and operational expenses on the document date; owner transfers and purchase/customer cash are excluded."
-            rows={[
-              { label: "Net revenue (net of returns)", value: summary.revenueMinor },
-              { label: "Cost of goods sold", value: summary.cogsMinor },
-              { label: "Gross profit", value: summary.grossProfitMinor, strong: true },
-              { label: "Delivery income", value: summary.deliveryIncomeMinor, mute: true },
-              { label: "Operational expenses", value: -summary.expensesMinor },
-              { label: "Damage write-off loss", value: -summary.damageLossMinor },
-              { label: "Operational profit", value: summary.operationalProfitMinor, strong: true },
-            ]}
-          />
-          <ProfitCard
-            title="Cash movement (payment dates)"
-            description="Money that actually moved between cash accounts in the range, independent of document dates."
-            rows={[
-              { label: "Cash inflow", value: summary.cashInflowMinor },
-              { label: "Cash outflow", value: -summary.cashOutflowMinor },
-              { label: "Net cash flow", value: summary.netCashFlowMinor, strong: true },
-              { label: "Owner capital in", value: summary.ownerCapitalInMinor, mute: true },
-              { label: "Owner withdrawals", value: -summary.ownerWithdrawalsMinor, mute: true },
-            ]}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProfitCard({
-  title,
-  description,
-  rows,
-}: {
-  title: string;
-  description: string;
-  rows: { label: string; value: number; strong?: boolean; mute?: boolean }[];
-}) {
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <p className="text-sm font-semibold text-neutral-900">{title}</p>
-      <p className="mt-0.5 text-[11px] text-neutral-500">{description}</p>
-      <div className="mt-3 divide-y divide-neutral-100">
-        {rows.map((r) => (
-          <div key={r.label} className="flex items-center justify-between py-1.5">
-            <span className={cn("text-sm", r.mute ? "text-neutral-400" : "text-neutral-600")}>{r.label}</span>
-            <span
-              className={cn(
-                "tabular-nums",
-                r.strong ? "font-semibold text-neutral-900" : "text-neutral-700",
-                r.value < 0 && "text-rose-600",
-              )}
-            >
-              {formatPkr(r.value)}
-            </span>
+        <div className="flex items-center justify-between border-t border-neutral-200 px-4 py-3 text-sm text-neutral-500">
+          <span>{pageData?.total ? `Showing ${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, pageData.total)} of ${pageData.total}` : "0 expenses"}</span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon" aria-label="Previous page" disabled={page === 0 || expensesQuery.isFetching} onClick={() => setPage((value) => Math.max(0, value - 1))}><ChevronLeft className="h-4 w-4" /></Button>
+            <span>Page {page + 1} of {totalPages}</span>
+            <Button variant="outline" size="icon" aria-label="Next page" disabled={page + 1 >= totalPages || expensesQuery.isFetching} onClick={() => setPage((value) => value + 1)}><ChevronRight className="h-4 w-4" /></Button>
           </div>
-        ))}
-      </div>
+        </div>
+      </section>
+
+      {(canOwner || canProfit) && (
+        <details className="mt-4 rounded-lg border border-neutral-200 bg-white p-4">
+          <summary className="cursor-pointer text-sm font-medium text-neutral-700">Other finance tools</summary>
+          <div className="mt-4 flex gap-2 border-b border-neutral-200 pb-3">
+            {canOwner && <Button variant={financeTool === "owner" ? "secondary" : "outline"} size="sm" onClick={() => setFinanceTool("owner")}><Wallet className="h-4 w-4" /> Owner transfers</Button>}
+            {canProfit && <Button variant={financeTool === "profit" ? "secondary" : "outline"} size="sm" onClick={() => setFinanceTool("profit")}>Profit summary</Button>}
+          </div>
+          {financeTool === "owner" && canOwner && <OwnerTransfers session={session} accounts={accounts} currency={currency} onError={handleError} />}
+          {financeTool === "profit" && canProfit && <ProfitSummary session={session} currency={currency} />}
+        </details>
+      )}
+
+      {addOpen && canCreate && (
+        <AddExpenseDialog
+          session={session}
+          categories={categories}
+          accounts={accounts}
+          methods={methods}
+          currency={currency}
+          onClose={() => setAddOpen(false)}
+          onSaved={() => { setAddOpen(false); invalidate(); toast({ variant: "success", title: "Expense added" }); }}
+          onError={handleError}
+        />
+      )}
+      {categoriesOpen && canCreate && (
+        <CategoryManagerDialog
+          session={session}
+          categories={categories}
+          loading={categoriesQuery.isLoading}
+          onClose={() => setCategoriesOpen(false)}
+          onChanged={invalidate}
+          onError={handleError}
+        />
+      )}
+      {reverseTarget && canReverse && (
+        <ReverseExpenseDialog
+          session={session}
+          expense={reverseTarget}
+          currency={currency}
+          onClose={() => setReverseTarget(null)}
+          onSaved={() => { setReverseTarget(null); invalidate(); toast({ variant: "success", title: "Expense reversed" }); }}
+          onError={handleError}
+        />
+      )}
     </div>
   );
 }
 
-type DialogProps = {
-  session: string;
-  onClose: () => void;
-  onDone: () => void;
-  onError: (e: Error) => void;
-};
+function PresetButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return <Button variant="outline" size="sm" className="rounded-full px-3" onClick={onClick}>{label}</Button>;
+}
 
-function FormDialog({
-  title,
-  description,
-  children,
-  onSubmit,
-  busy,
-  submitLabel = "Save",
-  onClose,
-  submitDisabled,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-  onSubmit: () => void;
-  busy: boolean;
-  submitLabel?: string;
-  onClose: () => void;
-  submitDisabled?: boolean;
-}) {
+function SortableHead({ label, sortKey, active, direction, onSort, right }: { label: string; sortKey: SortKey; active: SortKey; direction: SortDirection; onSort: (key: SortKey) => void; right?: boolean }) {
+  const Icon = active === sortKey && direction === "asc" ? ArrowUp : ArrowDown;
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy && !submitDisabled) onSubmit();
-          }}
-        >
+    <TableHead className={right ? "text-right" : undefined}>
+      <button type="button" className={cn("inline-flex items-center gap-1", right && "ml-auto")} onClick={() => onSort(sortKey)}>
+        {label}<Icon className={cn("h-3.5 w-3.5", active !== sortKey && "opacity-25")} />
+      </button>
+    </TableHead>
+  );
+}
+
+function StatePanel({ message, loading, error, action }: { message: string; loading?: boolean; error?: boolean; action?: React.ReactNode }) {
+  return (
+    <div className={cn("flex min-h-64 flex-col items-center justify-center gap-3 p-10 text-center text-sm", error ? "text-rose-600" : "text-neutral-500")}>
+      {loading && <Loader2 className="h-5 w-5 animate-spin" />}
+      <span>{message}</span>{action}
+    </div>
+  );
+}
+
+type DialogActions = { session: string; onClose: () => void; onSaved: () => void; onError: (error: Error, title?: string) => void };
+
+function ExpenseFormDialog({ title, description, busy, valid, onSubmit, onClose, children, submitLabel }: { title: string; description: string; busy: boolean; valid: boolean; onSubmit: () => void; onClose: () => void; children: React.ReactNode; submitLabel: string }) {
+  return (
+    <Dialog open onOpenChange={(openState) => !openState && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader><DialogTitle>{title}</DialogTitle><DialogDescription>{description}</DialogDescription></DialogHeader>
+        <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (valid && !busy) onSubmit(); }}>
           {children}
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy || submitDisabled}>
-              {busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {busy ? "Working…" : submitLabel}
-            </Button>
+            <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button type="submit" disabled={!valid || busy}>{busy && <Loader2 className="h-4 w-4 animate-spin" />}{submitLabel}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -808,277 +453,132 @@ function FormDialog({
   );
 }
 
-function PostExpenseDialog({
-  session,
-  categories,
-  accounts,
-  onClose,
-  onDone,
-  onError,
-}: DialogProps & { categories: ExpenseCategoryDto[]; accounts: CashAccountDto[] }) {
+function AddExpenseDialog({ session, categories, accounts, methods, currency, onClose, onSaved, onError }: DialogActions & { categories: ExpenseCategoryDto[]; accounts: CashAccountDto[]; methods: PaymentMethodDto[]; currency: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [expenseDate, setExpenseDate] = React.useState(localIso());
   const [categoryId, setCategoryId] = React.useState<number | null>(null);
   const [amountMinor, setAmountMinor] = React.useState(0);
-  const [expenseDate, setExpenseDate] = React.useState(todayIso());
+  const [methodId, setMethodId] = React.useState<number | null>(null);
   const [accountId, setAccountId] = React.useState<number | null>(null);
-  const [description, setDescription] = React.useState("");
-  const [payee, setPayee] = React.useState("");
+  const [note, setNote] = React.useState("");
   const [reference, setReference] = React.useState("");
   const [attachmentPath, setAttachmentPath] = React.useState("");
+  const [newCategoryOpen, setNewCategoryOpen] = React.useState(false);
+  const requestKey = React.useRef(idempotencyKey());
 
   const mutation = useMutation({
-    mutationFn: () =>
-      expensePost(session, {
-        categoryId: categoryId!,
-        amountMinor,
-        expenseDate,
-        cashAccountId: accountId!,
-        description: description.trim(),
-        payee: payee.trim() || null,
-        reference: reference.trim() || null,
-        attachmentPath: attachmentPath.trim() || null,
-        idempotencyKey: `expense-${Date.now()}`,
-      }),
-    onSuccess: onDone,
-    onError,
+    mutationFn: () => expensePost(session, {
+      expenseDate,
+      categoryId: categoryId!,
+      amountMinor,
+      paymentMethodId: methodId!,
+      cashAccountId: accountId!,
+      description: note.trim(),
+      reference: reference.trim() || null,
+      attachmentPath: attachmentPath || null,
+      payee: null,
+      idempotencyKey: requestKey.current,
+    }),
+    onSuccess: onSaved,
+    onError: (error: Error) => onError(error, "Could not add expense"),
   });
+  const activeCategories = categories.filter((category) => category.isActive);
+  const activeAccounts = accounts.filter((account) => account.isActive);
+  const activeMethods = methods.filter((method) => method.isActive);
+  const selectedAccount = activeAccounts.find((account) => account.id === accountId);
+  const valid = !!expenseDate && categoryId !== null && methodId !== null && accountId !== null && amountMinor > 0 && (!selectedAccount || amountMinor <= selectedAccount.balanceMinor);
 
-  const activeCategories = categories.filter((c) => c.isActive);
-  const valid = categoryId !== null && amountMinor > 0 && accountId !== null && description.trim().length > 0;
+  const chooseAttachment = async () => {
+    const selected = await open({ multiple: false, directory: false, title: "Choose bill attachment" });
+    if (typeof selected === "string") setAttachmentPath(selected);
+  };
 
   return (
-    <FormDialog
-      title="Post expense"
-      description="Records the expense, pays it from a cash account and writes the cash entry in one transaction."
-      onSubmit={() => mutation.mutate()}
-      busy={mutation.isPending}
-      submitLabel="Post expense"
-      onClose={onClose}
-      submitDisabled={!valid}
-    >
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Date</Label>
-          <Input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+    <>
+      <ExpenseFormDialog title="Add Expense" description="The expense and matching account outflow are posted together." busy={mutation.isPending} valid={valid} onSubmit={() => mutation.mutate()} onClose={onClose} submitLabel="Add Expense">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5"><Label htmlFor="expense-date">Date</Label><Input id="expense-date" type="date" value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></div>
+          <div className="grid gap-1.5"><Label>Amount ({currency})</Label><MoneyInput value={amountMinor} onCommit={(value) => setAmountMinor(Math.max(0, value))} placeholder="0.00" /></div>
         </div>
         <div className="grid gap-1.5">
-          <Label>Amount (PKR)</Label>
-          <MoneyInput value={amountMinor} onCommit={(v) => setAmountMinor(v < 0 ? 0 : v)} placeholder="0.00" />
+          <div className="flex items-center justify-between"><Label>Category</Label><Button type="button" variant="ghost" size="sm" onClick={() => setNewCategoryOpen(true)}><Plus className="h-3.5 w-3.5" /> New category</Button></div>
+          <Select value={categoryId === null ? "" : String(categoryId)} onValueChange={(value) => setCategoryId(Number(value))}><SelectTrigger><SelectValue placeholder="Select a category" /></SelectTrigger><SelectContent>{activeCategories.map((category) => <SelectItem key={category.id} value={String(category.id)}>{category.name}</SelectItem>)}</SelectContent></Select>
         </div>
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Category</Label>
-        <Select value={categoryId ? String(categoryId) : ""} onValueChange={(v) => setCategoryId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select a category" />
-          </SelectTrigger>
-          <SelectContent>
-            {activeCategories.map((c) => (
-              <SelectItem key={c.id} value={String(c.id)}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Cash account</Label>
-        <Select value={accountId ? String(accountId) : ""} onValueChange={(v) => setAccountId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select an account" />
-          </SelectTrigger>
-          <SelectContent>
-            {accounts.map((a) => (
-              <SelectItem key={a.id} value={String(a.id)}>
-                {a.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Description</Label>
-        <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Shop rent for June" />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Payee (optional)</Label>
-          <Input value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="Landlord" />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-1.5"><Label>Payment method</Label><Select value={methodId === null ? "" : String(methodId)} onValueChange={(value) => setMethodId(Number(value))}><SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger><SelectContent>{activeMethods.map((method) => <SelectItem key={method.id} value={String(method.id)}>{method.name}</SelectItem>)}</SelectContent></Select></div>
+          <div className="grid gap-1.5"><Label>Cash / bank account</Label><Select value={accountId === null ? "" : String(accountId)} onValueChange={(value) => setAccountId(Number(value))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{activeAccounts.map((account) => <SelectItem key={account.id} value={String(account.id)}>{account.name} · {formatCurrency(account.balanceMinor, currency)}</SelectItem>)}</SelectContent></Select></div>
         </div>
-        <div className="grid gap-1.5">
-          <Label>Reference (optional)</Label>
-          <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Invoice no." />
-        </div>
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Attachment path (optional)</Label>
-        <Input value={attachmentPath} onChange={(e) => setAttachmentPath(e.target.value)} placeholder="C:\docs\nrent.pdf" />
-      </div>
-    </FormDialog>
+        {selectedAccount && amountMinor > selectedAccount.balanceMinor && <p className="text-xs text-rose-600">Amount exceeds the available account balance.</p>}
+        <div className="grid gap-1.5"><Label htmlFor="expense-note">Note (optional)</Label><Input id="expense-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Electricity bill for September" /></div>
+        <div className="grid gap-1.5"><Label htmlFor="expense-reference">Bill / reference number (optional)</Label><Input id="expense-reference" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="BILL-00125" /></div>
+        <div className="grid gap-1.5"><Label>Bill attachment (optional)</Label><div className="flex gap-2"><Input value={attachmentPath} readOnly placeholder="No file selected" /><Button type="button" variant="outline" onClick={() => void chooseAttachment()}><FileUp className="h-4 w-4" /> Browse</Button></div></div>
+      </ExpenseFormDialog>
+      {newCategoryOpen && <NewCategoryDialog session={session} onClose={() => setNewCategoryOpen(false)} onCreated={(created) => { setCategoryId(created.id); setNewCategoryOpen(false); void queryClient.invalidateQueries({ queryKey: ["expenses", "categories"] }); toast({ variant: "success", title: "Category added" }); }} onError={onError} />}
+    </>
   );
 }
 
-function ReverseExpenseDialog({
-  session,
-  expense,
-  onClose,
-  onDone,
-  onError,
-}: DialogProps & { expense: ExpenseDto }) {
-  const [reason, setReason] = React.useState("");
-
-  const mutation = useMutation({
-    mutationFn: () => expenseReverse(session, { expenseId: expense.id, reason: reason.trim() }),
-    onSuccess: onDone,
-    onError,
-  });
-
-  return (
-    <FormDialog
-      title="Reverse expense"
-      description={`Refunds ${formatPkr(expense.amountMinor)} from ${expense.cashAccountName} and marks "${expense.expenseNumber ?? expense.description}" reversed.`}
-      onSubmit={() => mutation.mutate()}
-      busy={mutation.isPending}
-      submitLabel="Reverse expense"
-      onClose={onClose}
-      submitDisabled={!reason.trim()}
-    >
-      <div className="grid gap-1.5">
-        <Label>Reason</Label>
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Posted by mistake" />
-      </div>
-    </FormDialog>
-  );
-}
-
-function CategoryDialog({ session, onClose, onDone, onError }: DialogProps) {
-  const [code, setCode] = React.useState("");
+function NewCategoryDialog({ session, onClose, onCreated, onError }: { session: string; onClose: () => void; onCreated: (category: ExpenseCategoryDto) => void; onError: (error: Error, title?: string) => void }) {
   const [name, setName] = React.useState("");
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      expenseCategoryCreate(session, { code: code.trim(), name: name.trim(), isActive: true }),
-    onSuccess: onDone,
-    onError,
-  });
-
+  const mutation = useMutation({ mutationFn: () => expenseCategoryCreate(session, { name: name.trim(), code: categoryCode(name), isActive: true }), onSuccess: onCreated, onError: (error: Error) => onError(error, "Could not add category") });
   return (
-    <FormDialog
-      title="New expense category"
-      description="Add a category for recording expenses."
-      onSubmit={() => mutation.mutate()}
-      busy={mutation.isPending}
-      submitLabel="Add category"
-      onClose={onClose}
-      submitDisabled={code.trim().length === 0 || name.trim().length === 0}
-    >
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Code</Label>
-          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="RENT" />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Rent" />
-        </div>
-      </div>
-    </FormDialog>
+    <Dialog open onOpenChange={(openState) => !openState && onClose()}>
+      <DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>New expense category</DialogTitle><DialogDescription>The new category will be selected without clearing the expense form.</DialogDescription></DialogHeader><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (name.trim() && !mutation.isPending) mutation.mutate(); }}><div className="grid gap-1.5"><Label htmlFor="new-category-name">Category name</Label><Input id="new-category-name" autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Office Supplies" /></div><DialogFooter><Button type="button" variant="ghost" onClick={onClose}>Cancel</Button><Button type="submit" disabled={!name.trim() || mutation.isPending}>{mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}Add category</Button></DialogFooter></form></DialogContent>
+    </Dialog>
   );
 }
 
-function OwnerDialog({
-  session,
-  accounts,
-  onClose,
-  onDone,
-  onError,
-}: DialogProps & { accounts: CashAccountDto[] }) {
+function CategoryManagerDialog({ session, categories, loading, onClose, onChanged, onError }: { session: string; categories: ExpenseCategoryDto[]; loading: boolean; onClose: () => void; onChanged: () => void; onError: (error: Error, title?: string) => void }) {
+  const [name, setName] = React.useState("");
+  const [editing, setEditing] = React.useState<ExpenseCategoryDto | null>(null);
+  const [editName, setEditName] = React.useState("");
+  const createMutation = useMutation({ mutationFn: () => expenseCategoryCreate(session, { name: name.trim(), code: categoryCode(name), isActive: true }), onSuccess: () => { setName(""); onChanged(); }, onError: (error: Error) => onError(error, "Could not add category") });
+  const updateMutation = useMutation({ mutationFn: (input: { category: ExpenseCategoryDto; name: string; active: boolean }) => expenseCategoryUpdate(session, { id: input.category.id, name: input.name.trim(), isActive: input.active }), onSuccess: () => { setEditing(null); onChanged(); }, onError: (error: Error) => onError(error, "Could not update category") });
+  return (
+    <Dialog open onOpenChange={(openState) => !openState && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader><DialogTitle>Manage Categories</DialogTitle><DialogDescription>Add, rename, or archive expense categories. Archived categories remain on historical expenses.</DialogDescription></DialogHeader>
+        <form className="flex gap-2" onSubmit={(event) => { event.preventDefault(); if (name.trim() && !createMutation.isPending) createMutation.mutate(); }}><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Electricity" aria-label="New category name" /><Button type="submit" disabled={!name.trim() || createMutation.isPending}>{createMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}Add</Button></form>
+        {loading ? <StatePanel loading message="Loading categories…" /> : (
+          <div className="overflow-hidden rounded-lg border border-neutral-200">
+            <Table><TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>{categories.map((category) => <TableRow key={category.id}><TableCell><div className="font-medium">{category.name}</div><div className="text-xs text-neutral-400">{category.code}</div></TableCell><TableCell><Badge variant={category.isActive ? "success" : "neutral"}>{category.isActive ? "Active" : "Archived"}</Badge></TableCell><TableCell className="text-right"><Button variant="ghost" size="sm" onClick={() => { setEditing(category); setEditName(category.name); }}><Pencil className="h-3.5 w-3.5" /> Rename</Button><Button variant="ghost" size="sm" disabled={updateMutation.isPending} onClick={() => updateMutation.mutate({ category, name: category.name, active: !category.isActive })}>{category.isActive ? "Archive" : "Restore"}</Button></TableCell></TableRow>)}</TableBody></Table>
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose}>Done</Button></DialogFooter>
+        {editing && <Dialog open onOpenChange={(openState) => !openState && setEditing(null)}><DialogContent className="sm:max-w-md"><DialogHeader><DialogTitle>Rename category</DialogTitle><DialogDescription>Existing expenses stay linked to this category.</DialogDescription></DialogHeader><form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); if (editName.trim() && !updateMutation.isPending) updateMutation.mutate({ category: editing, name: editName, active: editing.isActive }); }}><div className="grid gap-1.5"><Label htmlFor="rename-category">Name</Label><Input id="rename-category" autoFocus value={editName} onChange={(event) => setEditName(event.target.value)} /></div><DialogFooter><Button type="button" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button><Button type="submit" disabled={!editName.trim() || updateMutation.isPending}>Save</Button></DialogFooter></form></DialogContent></Dialog>}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReverseExpenseDialog({ session, expense, currency, onClose, onSaved, onError }: DialogActions & { expense: ExpenseDto; currency: string }) {
+  const [reason, setReason] = React.useState("");
+  const mutation = useMutation({ mutationFn: () => expenseReverse(session, { expenseId: expense.id, reason: reason.trim() }), onSuccess: onSaved, onError: (error: Error) => onError(error, "Could not reverse expense") });
+  return <ExpenseFormDialog title="Reverse expense" description={`Reverse ${formatCurrency(expense.amountMinor, currency)} and restore it to ${expense.cashAccountName}. The original entry remains in history.`} busy={mutation.isPending} valid={!!reason.trim()} onSubmit={() => mutation.mutate()} onClose={onClose} submitLabel="Reverse expense"><div className="grid gap-1.5"><Label htmlFor="reversal-reason">Reason</Label><Input id="reversal-reason" autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this expense being reversed?" /></div></ExpenseFormDialog>;
+}
+
+function OwnerTransfers({ session, accounts, currency, onError }: { session: string; accounts: CashAccountDto[]; currency: string; onError: (error: Error, title?: string) => void }) {
+  const queryClient = useQueryClient();
+  const [openState, setOpenState] = React.useState(false);
   const [kind, setKind] = React.useState<"capital_in" | "withdrawal">("capital_in");
-  const [amountMinor, setAmountMinor] = React.useState(0);
-  const [transactionDate, setTransactionDate] = React.useState(todayIso());
+  const [amount, setAmount] = React.useState(0);
+  const [date, setDate] = React.useState(localIso());
   const [accountId, setAccountId] = React.useState<number | null>(null);
   const [notes, setNotes] = React.useState("");
+  const query = useQuery({ queryKey: ["expenses", "owner"], queryFn: () => ownerTransactionList(session, 100), enabled: !!session });
+  const mutation = useMutation({ mutationFn: () => ownerTransactionPost(session, { kind, amountMinor: amount, transactionDate: date, cashAccountId: accountId!, notes: notes.trim() || null, idempotencyKey: `owner-${Date.now()}` }), onSuccess: () => { setOpenState(false); void query.refetch(); void queryClient.invalidateQueries({ queryKey: ["expenses", "accounts"] }); }, onError: (error: Error) => onError(error, "Could not record transfer") });
+  return <div className="mt-4"><div className="flex justify-end"><Button size="sm" onClick={() => setOpenState(true)}><Plus className="h-4 w-4" /> Record transfer</Button></div>{query.isLoading ? <StatePanel loading message="Loading owner transfers…" /> : !query.data?.length ? <StatePanel message="No owner transfers recorded." /> : <div className="mt-3 overflow-hidden rounded-lg border"><Table><TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Account</TableHead><TableHead>Notes</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader><TableBody>{query.data.map((row) => <TableRow key={row.id}><TableCell>{readableDate(row.transactionDate)}</TableCell><TableCell>{row.kind === "capital_in" ? "Capital in" : "Withdrawal"}</TableCell><TableCell>{row.cashAccountName}</TableCell><TableCell>{row.notes || "—"}</TableCell><TableCell className="text-right font-medium">{formatCurrency(row.amountMinor, currency)}</TableCell></TableRow>)}</TableBody></Table></div>}{openState && <ExpenseFormDialog title="Owner transfer" description="Owner capital and withdrawals affect cash, not operational profit." busy={mutation.isPending} valid={amount > 0 && accountId !== null} onSubmit={() => mutation.mutate()} onClose={() => setOpenState(false)} submitLabel="Record transfer"><div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-1.5"><Label>Type</Label><Select value={kind} onValueChange={(value) => setKind(value as typeof kind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="capital_in">Capital in</SelectItem><SelectItem value="withdrawal">Withdrawal</SelectItem></SelectContent></Select></div><div className="grid gap-1.5"><Label>Date</Label><Input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></div></div><div className="grid gap-1.5"><Label>Amount ({currency})</Label><MoneyInput value={amount} onCommit={(value) => setAmount(Math.max(0, value))} /></div><div className="grid gap-1.5"><Label>Account</Label><Select value={accountId === null ? "" : String(accountId)} onValueChange={(value) => setAccountId(Number(value))}><SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger><SelectContent>{accounts.filter((account) => account.isActive).map((account) => <SelectItem key={account.id} value={String(account.id)}>{account.name}</SelectItem>)}</SelectContent></Select></div><div className="grid gap-1.5"><Label>Notes (optional)</Label><Input value={notes} onChange={(event) => setNotes(event.target.value)} /></div></ExpenseFormDialog>}</div>;
+}
 
-  const mutation = useMutation({
-    mutationFn: () =>
-      ownerTransactionPost(session, {
-        kind,
-        amountMinor,
-        transactionDate,
-        cashAccountId: accountId!,
-        notes: notes.trim() || null,
-        idempotencyKey: `owner-${Date.now()}`,
-      }),
-    onSuccess: onDone,
-    onError,
-  });
+function ProfitSummary({ session, currency }: { session: string; currency: string }) {
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+  const query = useQuery({ queryKey: ["expenses", "profit", from, to], queryFn: () => profitSummary(session, from || null, to || null), enabled: !!session });
+  return <div className="mt-4"><div className="flex flex-wrap gap-2"><Input className="w-44" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input className="w-44" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></div>{query.isLoading ? <StatePanel loading message="Loading profit summary…" /> : query.data ? <ProfitCards data={query.data} currency={currency} /> : <StatePanel message="Profit summary is unavailable." />}</div>;
+}
 
-  const selected = accounts.find((a) => a.id === accountId);
-  const valid =
-    amountMinor > 0 && accountId !== null && !(kind === "withdrawal" && selected && amountMinor > selected.balanceMinor);
-
-  return (
-    <FormDialog
-      title="Owner transfer"
-      description="Owner capital contributions and withdrawals move cash but never participate in operational profit."
-      onSubmit={() => mutation.mutate()}
-      busy={mutation.isPending}
-      submitLabel="Record transfer"
-      onClose={onClose}
-      submitDisabled={!valid}
-    >
-      <div className="grid gap-1.5">
-        <Label>Type</Label>
-        <Select value={kind} onValueChange={(v) => setKind(v as "capital_in" | "withdrawal")}>
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="capital_in">
-              <ArrowUpCircle className="mr-1 inline h-4 w-4" /> Capital in (owner invests)
-            </SelectItem>
-            <SelectItem value="withdrawal">
-              <ArrowDownCircle className="mr-1 inline h-4 w-4" /> Withdrawal (owner takes)
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Date</Label>
-          <Input type="date" value={transactionDate} onChange={(e) => setTransactionDate(e.target.value)} />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Amount (PKR)</Label>
-          <MoneyInput value={amountMinor} onCommit={(v) => setAmountMinor(v < 0 ? 0 : v)} placeholder="0.00" />
-        </div>
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Cash account</Label>
-        <Select value={accountId ? String(accountId) : ""} onValueChange={(v) => setAccountId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select an account" />
-          </SelectTrigger>
-          <SelectContent>
-            {accounts.map((a) => (
-              <SelectItem key={a.id} value={String(a.id)}>
-                {a.name} ({formatPkr(a.balanceMinor)})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      {selected && (
-        <p className="text-sm text-neutral-500">
-          Balance: {formatPkr(selected.balanceMinor)}
-          {kind === "withdrawal" && amountMinor > selected.balanceMinor && (
-            <span className="ml-1 text-rose-600">— exceeds the account balance</span>
-          )}
-        </p>
-      )}
-      <div className="grid gap-1.5">
-        <Label>Notes (optional)</Label>
-        <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Initial capital" />
-      </div>
-    </FormDialog>
-  );
+function ProfitCards({ data, currency }: { data: ProfitSummaryDto; currency: string }) {
+  const rows = [["Revenue", data.revenueMinor], ["Cost of goods sold", -data.cogsMinor], ["Expenses", -data.expensesMinor], ["Operational profit", data.operationalProfitMinor], ["Net cash flow", data.netCashFlowMinor]] as const;
+  return <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{rows.map(([label, value]) => <div key={label} className="rounded-lg border border-neutral-200 p-3"><div className="text-xs text-neutral-500">{label}</div><div className={cn("mt-1 font-semibold tabular-nums", value < 0 && "text-rose-600")}>{formatCurrency(value, currency)}</div></div>)}</div>;
 }

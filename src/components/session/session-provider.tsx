@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   authCurrent,
@@ -34,6 +34,10 @@ type SessionContextValue = {
   unlock: (password: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (code: string) => boolean;
+  /** True when startup query failed permanently. */
+  startupError: boolean;
+  /** Retry the failed startup query. */
+  retryStartup: () => void;
 };
 
 const SessionContext = React.createContext<SessionContextValue | null>(null);
@@ -49,7 +53,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = React.useState<SessionProfile | null>(null);
   const [busy, setBusy] = React.useState(false);
 
-  const { data: firstRun } = useQuery({
+  const queryClient = useQueryClient();
+  const { data: firstRun, isError: isFirstRunError } = useQuery({
     queryKey: ["firstRunStatus"],
     queryFn: firstRunStatus,
     retry: 1,
@@ -158,6 +163,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [profile],
   );
 
+  // Detect permanent startup failure: query failed after retries and firstRun is still undefined.
+  const startupFailed = isFirstRunError && firstRun === undefined;
+
+  const retryStartup = React.useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["firstRunStatus"] });
+  }, [queryClient]);
+
   const value = React.useMemo<SessionContextValue>(
     () => ({
       status,
@@ -169,8 +181,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       unlock,
       logout,
       hasPermission,
+      startupError: startupFailed,
+      retryStartup,
     }),
-    [status, profile, busy, applyLogin, refresh, lock, unlock, logout, hasPermission],
+    [status, profile, busy, applyLogin, refresh, lock, unlock, logout, hasPermission, startupFailed, retryStartup],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

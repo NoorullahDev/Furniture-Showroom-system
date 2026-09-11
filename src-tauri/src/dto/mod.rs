@@ -51,10 +51,13 @@ pub struct PdfResultDto {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupResultDto {
+    pub name: String,
     pub backup_path: String,
     pub sha256: String,
     pub verified: bool,
     pub bytes: u64,
+    pub created_at: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,6 +117,25 @@ pub struct FirstRunStatusDto {
 pub struct LoginResultDto {
     pub session_id: String,
     pub profile: SessionProfileDto,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LicenseStatusDto {
+    pub status: String,
+    pub label: String,
+    pub is_activated: bool,
+    pub license_id: Option<String>,
+    pub customer: Option<String>,
+    pub activated_at: Option<String>,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrinterDto {
+    pub name: String,
+    pub is_default: bool,
 }
 
 #[derive(Debug, Serialize)]

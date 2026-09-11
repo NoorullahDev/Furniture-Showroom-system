@@ -2,11 +2,16 @@ const PAISA_PER_RUPEE = 100;
 
 /** Format integer minor units (paisa) as a PKR string, e.g. `PKR 12,345.67`. */
 export function formatPkr(minor: number): string {
+  return formatCurrency(minor, "PKR");
+}
+
+/** Format integer minor units using the shop's configured ISO currency code. */
+export function formatCurrency(minor: number, currency = "PKR"): string {
   const negative = minor < 0;
   const abs = Math.abs(minor);
   const rupees = Math.floor(abs / PAISA_PER_RUPEE);
   const paisa = abs % PAISA_PER_RUPEE;
-  return `${negative ? "-" : ""}PKR ${rupees.toLocaleString("en-PK")}.${String(
+  return `${negative ? "-" : ""}${currency.toUpperCase()} ${rupees.toLocaleString("en-PK")}.${String(
     paisa,
   ).padStart(2, "0")}`;
 }

@@ -83,6 +83,7 @@ import {
 import { formatDateTime, formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 
 type Tab = "stock" | "ledger" | "valuation" | "low" | "count";
 
@@ -112,7 +113,8 @@ export function InventoryPage() {
   const canMutate = hasPermission("inventory.create");
   const canViewValuation = hasPermission("inventory.valuation");
 
-  const [view, setView] = React.useState<Tab>("stock");
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("inventory"), []);
+  const [view, setView] = React.useState<Tab>(dashboardTarget?.target === "low-stock" ? "low" : "stock");
   const [locationId, setLocationId] = React.useState<number | null>(null);
   const [historyProductId, setHistoryProductId] = React.useState<number | null>(null);
   const [dialog, setDialog] = React.useState<

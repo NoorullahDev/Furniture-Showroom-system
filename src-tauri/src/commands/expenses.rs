@@ -4,8 +4,8 @@ use crate::commands::wrapper::{run_command, run_command_with_correlation};
 use crate::commands::{authed, authenticated};
 use crate::dto::expenses::{
     ExpenseCategoryDto, ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseDto, ExpenseInput,
-    ExpenseListInput, ExpenseReverseInput, OwnerTransactionDto, OwnerTransactionInput,
-    ProfitSummaryDto,
+    ExpenseListInput, ExpensePageDto, ExpensePageInput, ExpenseReverseInput, OwnerTransactionDto,
+    OwnerTransactionInput, ProfitSummaryDto,
 };
 use crate::dto::AppErrorDto;
 use crate::error::new_correlation_id;
@@ -80,6 +80,19 @@ pub async fn expense_list(
     run_command("expense_list", async move {
         let principal = authenticated(&state, &session).await?;
         crate::application::expenses::expense_list(&state, &principal, input).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn expense_page(
+    state: State<'_, AppState>,
+    session: String,
+    input: ExpensePageInput,
+) -> Result<ExpensePageDto, AppErrorDto> {
+    run_command("expense_page", async move {
+        let principal = authenticated(&state, &session).await?;
+        crate::application::expenses::expense_page(&state, &principal, input).await
     })
     .await
 }

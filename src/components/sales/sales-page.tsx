@@ -53,6 +53,8 @@ import {
 import { useToast } from "@/components/ui/toast";
 import { isSessionError, useSession } from "@/components/session/session-provider";
 import { StoredImage } from "@/components/catalogue/stored-image";
+import { loadPrintSettings, type InvoicePrintSettings } from "@/components/invoices/invoice-settings";
+import { printInvoiceA4 } from "@/components/invoices/invoices-page";
 import {
   bundleAvailability,
   bundleCreate,
@@ -60,17 +62,16 @@ import {
   bundleUpdate,
   cashAccountList,
   customerCreate,
+  customerGet,
   customerLedger,
   customerList,
   customerReceiptCreate,
   customerReceiptList,
-  customerReceiptPdf,
   customerReceiptPreview,
   customerReceiptVoid,
   customerStatement,
   customerUpdate,
   locationList,
-  openFile,
   paymentMethodList,
   productList,
   receivables,
@@ -78,8 +79,9 @@ import {
   saleConfirm,
   saleCreate,
   saleGet,
-  saleInvoicePdf,
   saleList,
+  settingsGet,
+  shopLogoGet,
   stockBalanceList,
   type BundleDto,
   type BundleItemInput,
@@ -103,6 +105,7 @@ import {
 import { formatDateTime, formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 
 type SalesTab = "pos" | "sales" | "customers" | "sets" | "due";
 
@@ -192,7 +195,20 @@ export function SalesPage() {
   const canPrint = hasPermission("invoice.print");
   const canReceive = hasPermission("payment.receive");
 
-  const [view, setView] = React.useState<SalesTab>(() => (canSell ? "pos" : "sales"));
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("sales"), []);
+  const initialView: SalesTab = dashboardTarget?.target === "new-sale"
+    ? "pos"
+    : dashboardTarget?.target === "customer-dues"
+      ? "due"
+      : dashboardTarget?.target === "payments-today" || dashboardTarget?.target === "payment"
+        ? "customers"
+        : dashboardTarget
+          ? "sales"
+          : canSell ? "pos" : "sales";
+  const [view, setView] = React.useState<SalesTab>(initialView);
+  const [dashboardSalesFilter, setDashboardSalesFilter] = React.useState<"today" | "month" | null>(
+    dashboardTarget?.target === "sales-today" ? "today" : dashboardTarget?.target === "sales-month" ? "month" : null,
+  );
   const [dialog, setDialog] = React.useState<
     | null
     | "customer"
@@ -257,6 +273,30 @@ export function SalesPage() {
   const methods = methodsQuery.data ?? [];
   const accounts = accountsQuery.data ?? [];
   const products = productsQuery.data ?? [];
+  const dashboardShopDate = dashboardTarget && "shopDate" in dashboardTarget ? dashboardTarget.shopDate ?? "" : "";
+  const dashboardFilteredSales = dashboardSalesFilter && dashboardShopDate
+    ? sales.filter((sale) => dashboardSalesFilter === "today"
+      ? sale.saleDate === dashboardShopDate
+      : sale.saleDate.startsWith(dashboardShopDate.slice(0, 7)))
+    : sales;
+
+  React.useEffect(() => {
+    if (!dashboardTarget) return;
+    if (dashboardTarget.target === "sale" && salesQuery.data) {
+      const sale = salesQuery.data.find((candidate) => candidate.id === dashboardTarget.id);
+      if (sale) {
+        setActiveSale(sale);
+        setDialog("sale-detail");
+      }
+    }
+    if (dashboardTarget.target === "payment" && customersQuery.data) {
+      const customer = customersQuery.data.find((candidate) => candidate.id === dashboardTarget.customerId);
+      if (customer) {
+        setActiveCustomer(customer);
+        setDialog("ledger");
+      }
+    }
+  }, [dashboardTarget, salesQuery.data, customersQuery.data]);
 
   const confirmedSales = sales.filter((s) => s.status === "confirmed");
   const totalSales = confirmedSales.reduce((acc, s) => acc + s.totalMinor, 0);
@@ -381,21 +421,29 @@ export function SalesPage() {
           />
         )}
         {view === "sales" && (
-          <SalesTable
-            session={session}
-            rows={sales}
-            loading={salesQuery.isLoading}
-            canCancel={canCancel}
-            canPrint={canPrint}
-            onView={(s) => {
-              setActiveSale(s);
-              setDialog("sale-detail");
-            }}
-            onCancel={(s) => {
-              setActiveSale(s);
-              setDialog("cancel-sale");
-            }}
-          />
+          <div>
+            {dashboardSalesFilter && (
+              <div className="mb-3 flex items-center justify-between rounded-md border border-forest-200 bg-forest-50 px-3 py-2 text-sm text-forest-800">
+                Showing {dashboardSalesFilter === "today" ? "today's sales" : "this month's sales"} from the Dashboard.
+                <Button variant="ghost" size="sm" onClick={() => setDashboardSalesFilter(null)}>Show all</Button>
+              </div>
+            )}
+            <SalesTable
+              session={session}
+              rows={dashboardFilteredSales}
+              loading={salesQuery.isLoading}
+              canCancel={canCancel}
+              canPrint={canPrint}
+              onView={(s) => {
+                setActiveSale(s);
+                setDialog("sale-detail");
+              }}
+              onCancel={(s) => {
+                setActiveSale(s);
+                setDialog("cancel-sale");
+              }}
+            />
+          </div>
         )}
         {view === "customers" && (
           <CustomersTable
@@ -1079,11 +1127,26 @@ function PrintInvoiceButton({
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
+  const brandingQuery = usePrintBranding(session);
   const run = async () => {
     setBusy(true);
     try {
-      const pdf = await saleInvoicePdf(session, saleId);
-      await openFile(session, pdf.reportPath);
+      const [sale, branding] = await Promise.all([
+        saleGet(session, saleId),
+        resolvePrintBranding(brandingQuery),
+      ]);
+      const cust = sale.customerId ? await customerGet(session, sale.customerId) : null;
+      await printInvoiceA4(
+        sale,
+        loadPrintSettings(),
+        branding.name,
+        branding.address,
+        branding.phone,
+        branding.logo,
+        cust?.phone,
+        cust?.address,
+      );
+      toast({ variant: "success", title: "Invoice print window opened" });
       if (onClose) onClose();
     } catch (e) {
       toast({ variant: "error", title: "Could not generate invoice", description: commandErrorMessage(e) });
@@ -1093,7 +1156,7 @@ function PrintInvoiceButton({
     }
   };
   return (
-    <Button type="button" variant="outline" onClick={() => void run()} disabled={busy} className={className}>
+    <Button type="button" variant="outline" onClick={() => void run()} disabled={busy || brandingQuery.isLoading} className={className}>
       {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
       Print invoice
     </Button>
@@ -1102,22 +1165,24 @@ function PrintInvoiceButton({
 
 function PrintReceiptButton({
   session,
-  paymentId,
+  payment,
   className,
   onError,
 }: {
   session: string;
-  paymentId: number;
+  payment: CustomerPaymentDto;
   className?: string;
   onError?: (e: Error) => void;
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
+  const brandingQuery = usePrintBranding(session);
   const run = async () => {
     setBusy(true);
     try {
-      const pdf = await customerReceiptPdf(session, paymentId);
-      await openFile(session, pdf.reportPath);
+      const branding = await resolvePrintBranding(brandingQuery);
+      await printPaymentReceipt(payment, loadPrintSettings(), branding);
+      toast({ variant: "success", title: "Receipt print window opened" });
     } catch (e) {
       toast({ variant: "error", title: "Could not generate receipt", description: commandErrorMessage(e) });
       onError?.(e as Error);
@@ -1126,11 +1191,124 @@ function PrintReceiptButton({
     }
   };
   return (
-    <Button type="button" variant="outline" size="sm" onClick={() => void run()} disabled={busy} className={className}>
+    <Button type="button" variant="outline" size="sm" onClick={() => void run()} disabled={busy || brandingQuery.isLoading} className={className}>
       {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Printer className="mr-1 h-3.5 w-3.5" />}
       Print
     </Button>
   );
+}
+
+type PrintBranding = { name: string; address: string | null; phone: string | null; logo: string | null };
+
+function usePrintBranding(session: string) {
+  return useQuery({
+    queryKey: ["receipt-print", "branding"],
+    queryFn: async () => {
+      const [name, address, phone, logo] = await Promise.all([
+        settingsGet(session, "shop.name"),
+        settingsGet(session, "shop.address"),
+        settingsGet(session, "shop.phone"),
+        shopLogoGet(session),
+      ]);
+      return {
+        name: parseSavedString(name) ?? "Furniture Showroom",
+        address: parseSavedString(address),
+        phone: parseSavedString(phone),
+        logo,
+      };
+    },
+    enabled: Boolean(session),
+  });
+}
+
+async function resolvePrintBranding(
+  query: ReturnType<typeof usePrintBranding>,
+): Promise<PrintBranding> {
+  if (query.data) return query.data;
+  const result = await query.refetch();
+  if (!result.data) throw result.error ?? new Error("Could not load document branding.");
+  return result.data;
+}
+
+function parseSavedString(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return raw;
+  }
+}
+
+function escapeReceiptHtml(value: string): string {
+  return value
+    .replace(/[&]/g, "&amp;")
+    .replace(/[<]/g, "&lt;")
+    .replace(/[>]/g, "&gt;")
+    .replace(/[\"]/g, "&quot;")
+    .replace(/[']/g, "&#39;");
+}
+
+async function printPaymentReceipt(
+  payment: CustomerPaymentDto,
+  settings: InvoicePrintSettings,
+  branding: { name: string; address: string | null; phone: string | null; logo: string | null },
+): Promise<void> {
+  const money = (minor: number) => formatPkr(minor);
+  const fontSize = settings.fontSize === "small" ? "10pt" : settings.fontSize === "large" ? "12pt" : "11pt";
+  const copies = Math.max(1, Math.min(settings.copies, 10));
+  const allocations = payment.allocations.map((allocation) => `
+    <tr style="page-break-inside:avoid;border-bottom:1px solid #e5e7eb">
+      <td style="padding:8px">${escapeReceiptHtml(allocation.saleNumber ?? `Sale #${allocation.saleId}`)}</td>
+      <td style="padding:8px;text-align:right">${escapeReceiptHtml(money(allocation.amountMinor))}</td>
+    </tr>`).join("");
+  const receipt = `
+    <section class="receipt">
+      <header style="display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid #16345f;padding-bottom:16px;margin-bottom:24px">
+        <div>
+          ${settings.showLogo ? branding.logo ? `<img src="${escapeReceiptHtml(branding.logo)}" alt="" style="width:56px;height:56px;object-fit:contain;margin-bottom:8px">` : '<div style="width:52px;height:52px;border-radius:8px;background:#16345f;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:8px">FS</div>' : ""}
+          <div style="font-size:18px;font-weight:700;color:#16345f">${escapeReceiptHtml(branding.name)}</div>
+          ${settings.showAddress && branding.address ? `<div style="margin-top:3px;color:#4b5563">${escapeReceiptHtml(branding.address)}</div>` : ""}
+          ${settings.showPhone && branding.phone ? `<div style="color:#4b5563">Tel: ${escapeReceiptHtml(branding.phone)}</div>` : ""}
+        </div>
+        <div style="text-align:right"><div style="font-size:22px;font-weight:700;color:#16345f">PAYMENT RECEIPT</div><div style="margin-top:8px"><strong>${escapeReceiptHtml(payment.receiptNumber ?? `#${payment.id}`)}</strong></div><div>${escapeReceiptHtml(payment.paymentDate)}</div></div>
+      </header>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin-bottom:22px">
+        <div><div class="label">Received from</div><strong>${escapeReceiptHtml(payment.customerName)}</strong></div>
+        <div style="text-align:right"><div class="label">Amount received</div><strong style="font-size:18px;color:#16345f">${escapeReceiptHtml(money(payment.amountMinor))}</strong></div>
+        ${settings.showPaymentDetails ? `<div><div class="label">Payment method</div>${escapeReceiptHtml(payment.paymentMethodName)}</div><div style="text-align:right"><div class="label">Account</div>${escapeReceiptHtml(payment.cashAccountName)}</div>` : ""}
+      </div>
+      ${settings.showPaymentDetails ? `<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#16345f;color:white"><th style="padding:9px;text-align:left">Applied invoice</th><th style="padding:9px;text-align:right">Amount</th></tr></thead><tbody>${allocations || '<tr><td colspan="2" style="padding:12px;color:#64748b">Unallocated customer advance</td></tr>'}</tbody></table>${payment.advanceAllocMinor > 0 ? `<p style="margin-top:12px;text-align:right"><strong>Advance retained: ${escapeReceiptHtml(money(payment.advanceAllocMinor))}</strong></p>` : ""}` : ""}
+      ${payment.notes ? `<p style="margin-top:18px"><strong>Notes:</strong> ${escapeReceiptHtml(payment.notes)}</p>` : ""}
+      ${settings.footerText ? `<footer style="margin-top:32px;border-top:1px solid #e2e8f0;padding-top:14px;text-align:center;color:#64748b">${escapeReceiptHtml(settings.footerText)}</footer>` : ""}
+    </section>`;
+  const body = Array.from({ length: copies }, (_, index) => `${index ? '<div class="copy-break"></div>' : ""}${receipt}`).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${escapeReceiptHtml(payment.receiptNumber ?? String(payment.id))}</title><style>@page{size:A4 ${settings.orientation};margin:${settings.marginMm}mm}*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;font-size:${fontSize};color:#111827;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.label{font-size:8pt;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:3px}thead{display:table-header-group}.receipt{break-inside:auto}.copy-break{break-before:page;page-break-before:always}</style></head><body>${body}</body></html>`;
+
+  await new Promise<void>((resolve, reject) => {
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    const cleanup = () => frame.remove();
+    frame.onload = () => {
+      try {
+        const printWindow = frame.contentWindow;
+        if (!printWindow) throw new Error("Could not open the receipt print window.");
+        printWindow.focus();
+        printWindow.print();
+        window.setTimeout(() => { cleanup(); resolve(); }, 1500);
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    };
+    frame.onerror = () => { cleanup(); reject(new Error("Could not prepare the receipt preview.")); };
+    document.body.appendChild(frame);
+    const frameDocument = frame.contentDocument ?? frame.contentWindow?.document;
+    if (!frameDocument) { cleanup(); reject(new Error("Could not access the receipt preview.")); return; }
+    frameDocument.open();
+    frameDocument.write(html);
+    frameDocument.close();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1969,7 +2147,7 @@ function LedgerDialog({
                         <TableCell className="text-right">
                           {canReceive && p.status === "posted" && (
                             <div className="flex items-center justify-end gap-2">
-                              <PrintReceiptButton session={session} paymentId={p.id} onError={onError} />
+                              <PrintReceiptButton session={session} payment={p} onError={onError} />
                               <Button
                                 variant="outline"
                                 size="sm"

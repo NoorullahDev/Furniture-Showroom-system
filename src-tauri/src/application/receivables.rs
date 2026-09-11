@@ -365,6 +365,18 @@ pub async fn customer_receipt_pdf(
         receipt_number: row.get::<Option<String>, _>(1).unwrap_or_default(),
         payment_date: row.get(4),
         customer_name: row.get(3),
+        customer_phone: sqlx::query_scalar("SELECT phone FROM customers WHERE id = ?")
+            .bind(row.get::<i64, _>(2))
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten(),
+        customer_address: sqlx::query_scalar("SELECT address FROM customers WHERE id = ?")
+            .bind(row.get::<i64, _>(2))
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten(),
         method: row.get(8),
         cash_account: row.get(9),
         amount_minor: row.get(5),

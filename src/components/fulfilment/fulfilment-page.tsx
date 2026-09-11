@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -1315,7 +1316,10 @@ export function FulfilmentPage() {
   const canUseCredit = hasPermission("credit.note.use");
   const canDamage = hasPermission("damage.record");
 
-  const defaultTab: Tab = canViewDeliveries
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("fulfilment"), []);
+  const defaultTab: Tab = dashboardTarget?.target === "damage"
+    ? "damage"
+    : canViewDeliveries
     ? "deliveries"
     : canReturn
       ? "returns"
@@ -1380,6 +1384,12 @@ export function FulfilmentPage() {
   const locations = locationsQuery.data ?? [];
   const accounts = accountsQuery.data ?? [];
   const products = productsQuery.data ?? [];
+
+  React.useEffect(() => {
+    if (dashboardTarget?.target !== "delivery" || !deliveriesQuery.data) return;
+    const delivery = deliveriesQuery.data.find((candidate) => candidate.id === dashboardTarget.id);
+    if (delivery) setDialog({ kind: "delivery-detail", delivery });
+  }, [dashboardTarget, deliveriesQuery.data]);
 
   const done = (message: string) => () => {
     invalidate();

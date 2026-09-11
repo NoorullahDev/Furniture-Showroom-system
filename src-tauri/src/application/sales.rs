@@ -1221,7 +1221,7 @@ pub async fn invoice_pdf(
     let row = sqlx::query(
         "SELECT id, sale_number, sale_date, customer_name, kind, status,
                 subtotal_minor, discount_minor, delivery_charge_minor, tax_minor,
-                total_minor, paid_minor, advance_used_minor, due_minor
+                total_minor, paid_minor, advance_used_minor, due_minor, customer_id
          FROM sales WHERE id = ?",
     )
     .bind(sale_id)
@@ -1235,6 +1235,8 @@ pub async fn invoice_pdf(
             "only confirmed sales can generate invoices".into(),
         ));
     }
+
+    let customer_id: Option<i64> = row.try_get(14).ok().flatten();
 
     let items: Vec<(String, String, i64, i64, i64)> = sqlx::query(
         "SELECT article_number, product_name, quantity, unit_price_minor, line_total_minor
@@ -1266,10 +1268,33 @@ pub async fn invoice_pdf(
     .and_then(|v| v.as_str().map(str::to_string));
 
     let sale_number = row.get::<Option<String>, _>(1).unwrap_or_default();
+
+    let (customer_phone, customer_address) = if let Some(cid) = customer_id {
+        let phone: Option<String> = sqlx::query_scalar("SELECT phone FROM customers WHERE id = ?")
+            .bind(cid)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+        let addr: Option<String> = sqlx::query_scalar("SELECT address FROM customers WHERE id = ?")
+            .bind(cid)
+            .fetch_optional(&state.pool)
+            .await
+            .ok()
+            .flatten();
+        (phone, addr)
+    } else {
+        (None, None)
+    };
+
     let record = InvoiceRecord {
         number: sale_number.clone(),
         sale_date: row.get(2),
         customer_name: row.try_get(3).ok(),
+        customer_phone,
+        customer_address,
+        notes: None,
+        footer_text: None,
         shop_name,
         shop_address,
         items: items
