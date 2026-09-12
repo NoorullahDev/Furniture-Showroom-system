@@ -21,8 +21,24 @@ function InvoiceBody({ sale, shopName, shopAddress, shopPhone, logoDataUrl, cust
   const balance = sale.dueMinor;
   const totalPaid = sale.paidMinor + sale.advanceUsedMinor;
   const fs = settings.fontSize === "small" ? "10pt" : settings.fontSize === "large" ? "12pt" : "11pt";
+  const marginMm = Math.max(2, settings.marginMm ?? 15);
+  const pageHeight = settings.orientation === "landscape" ? "210mm" : "297mm";
   return (
-    <div className="invoice-body" style={{ fontFamily: "'Segoe UI', Arial, sans-serif", fontSize: fs, color: "#1a1a1a", lineHeight: 1.5, background: "#fff", width: "100%", boxSizing: "border-box" }}>
+    <div
+      className="invoice-body"
+      style={{
+        fontFamily: "'Segoe UI', Arial, sans-serif",
+        fontSize: fs,
+        color: "#1a1a1a",
+        lineHeight: 1.5,
+        background: "#fff",
+        width: "100%",
+        minHeight: `calc(${pageHeight} - ${marginMm * 2}mm)`,
+        paddingBottom: "8mm",
+        position: "relative",
+        boxSizing: "border-box",
+      }}
+    >
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "20px" }}>
         <tbody>
           <tr>
@@ -192,6 +208,20 @@ function InvoiceBody({ sale, shopName, shopAddress, shopPhone, logoDataUrl, cust
           </tr>
         </tfoot>
       </table>
+      <div
+        className="invoice-developer-footer"
+        style={{
+          position: "absolute",
+          right: 0,
+          bottom: `-${marginMm / 2}mm`,
+          left: 0,
+          textAlign: "center",
+          fontSize: "8pt",
+          color: "#777",
+        }}
+      >
+        Software developed by <strong>EagleNest Creations</strong> (0346-4451505)
+      </div>
     </div>
   );
 }

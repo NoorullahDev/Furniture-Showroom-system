@@ -5,12 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownCircle,
   Banknote,
-  ClipboardList,
   FileText,
   Loader2,
   Plus,
   Search,
-  Truck,
   Undo2,
   UserPlus,
   Wallet,
@@ -78,7 +76,7 @@ import {
   type SupplierPaymentDto,
   type SupplierReturnDto,
 } from "@/lib/tauri/api";
-import { formatDateTime, formatPkr } from "@/lib/format";
+import { formatDateTime, formatPkr, todayIso } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
 import { takeDashboardTarget } from "@/lib/dashboard-navigation";
@@ -100,13 +98,9 @@ const CASH_ENTRY_LABELS: Record<string, string> = {
   supplier_refund: "Supplier refund",
 };
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 type PurchaseLine = { key: number; productId: number | null; quantity: string; unitCostMinor: number };
 
-export function PurchasesPage() {
+export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) {
   const { toast } = useToast();
   const { refresh, profile, hasPermission } = useSession();
   const queryClient = useQueryClient();
@@ -119,7 +113,18 @@ export function PurchasesPage() {
   const canView = hasPermission("payable.view");
 
   const dashboardTarget = React.useMemo(() => takeDashboardTarget("purchases"), []);
-  const [view, setView] = React.useState<Tab>(dashboardTarget?.target === "payables" ? "payables" : "purchases");
+  const [view, setView] = React.useState<Tab>(
+    dashboardTarget?.target === "payables"
+      ? "payables"
+      : dashboardTarget?.target === "suppliers"
+        ? "suppliers"
+        : activeTab,
+  );
+
+  React.useEffect(() => {
+    setView(activeTab);
+  }, [activeTab]);
+
   const [dialog, setDialog] = React.useState<
     null | "purchase" | "post-purchase" | "supplier" | "pay" | "return" | "post-return" | "cash-account" | "ledger" | "purchase-detail"
   >(null);
@@ -210,14 +215,33 @@ export function PurchasesPage() {
     toast({ variant: "error", title: "Operation failed", description: commandErrorMessage(e) });
   };
 
+  let title = "Purchases";
+  let subtitle = "Suppliers, purchases, payables and supplier cash movements.";
+  if (view === "suppliers") {
+    title = "Suppliers";
+    subtitle = "Manage supplier accounts and details.";
+  } else if (view === "payables") {
+    title = "Supplier Dues";
+    subtitle = "Manage outstanding payables.";
+  } else if (view === "payments") {
+    title = "Payment History";
+    subtitle = "History of payments to suppliers.";
+  } else if (view === "returns") {
+    title = "Supplier Returns";
+    subtitle = "Returns registered with suppliers.";
+  } else if (view === "cash") {
+    title = "Cash Accounts";
+    subtitle = "Cash accounts for supplier transactions.";
+  }
+
   return (
     <div>
       <PageHeader
-        title="Purchases"
-        subtitle="Suppliers, purchases, payables and supplier cash movements."
+        title={title}
+        subtitle={subtitle}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {canView && (
+            {(view === "cash" || view === "payments") && canView && (
               <Select
                 value={cashAccountFilter ? String(cashAccountFilter) : "all"}
                 onValueChange={(v) => setCashAccountFilter(v === "all" ? null : Number(v))}
@@ -235,25 +259,45 @@ export function PurchasesPage() {
                 </SelectContent>
               </Select>
             )}
-            {canCreateSupplier && (
+            
+            {view === "purchases" && (
+              <>
+                <Button variant="outline" onClick={() => setView("returns")}>
+                  <ArrowDownCircle className="h-4 w-4" />
+                  Supplier Returns
+                </Button>
+                <Button variant="outline" onClick={() => setView("cash")}>
+                  <Wallet className="h-4 w-4" />
+                  Cash Accounts
+                </Button>
+              </>
+            )}
+            {view === "payables" && (
+              <Button variant="outline" onClick={() => setView("payments")}>
+                <Banknote className="h-4 w-4" />
+                Payment History
+              </Button>
+            )}
+            
+            {(view === "purchases" || view === "suppliers") && canCreateSupplier && (
               <Button variant="outline" onClick={() => setDialog("supplier")}>
                 <UserPlus className="h-4 w-4" />
                 New supplier
               </Button>
             )}
-            {canPay && (
+            {(view === "payables" || view === "payments") && canPay && (
               <Button variant="outline" onClick={() => setDialog("pay")}>
                 <Banknote className="h-4 w-4" />
                 Pay supplier
               </Button>
             )}
-            {canReturn && (
+            {(view === "purchases" || view === "returns") && canReturn && (
               <Button variant="outline" onClick={() => setDialog("return")}>
                 <ArrowDownCircle className="h-4 w-4" />
                 Register return
               </Button>
             )}
-            {canRecordPurchase && (
+            {view === "purchases" && canRecordPurchase && (
               <Button onClick={() => setDialog("purchase")}>
                 <Plus className="h-4 w-4" />
                 Record purchase
@@ -264,33 +308,24 @@ export function PurchasesPage() {
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <SummaryCard label="Total purchases" value={totalPurchases} money accent="forest" />
-        <SummaryCard label="Total paid" value={totalPaid} money accent="green" />
-        <SummaryCard label="Outstanding payables" value={outstanding} money accent="rose" />
-        <SummaryCard label="Cash on hand" value={cashOnHand} money accent="gold" />
-        <SummaryCard label="Suppliers" value={suppliers.length} accent="neutral" />
-        <SummaryCard label="Payments" value={payments.length} accent="neutral" />
-      </div>
-
-      <div className="mt-5 flex items-center gap-1 overflow-x-auto border-b border-neutral-200">
-        <TabButton active={view === "purchases"} onClick={() => setView("purchases")} icon={<Truck className="h-4 w-4" />}>
-          Purchases
-        </TabButton>
-        <TabButton active={view === "suppliers"} onClick={() => setView("suppliers")} icon={<ClipboardList className="h-4 w-4" />}>
-          Suppliers
-        </TabButton>
-        <TabButton active={view === "payables"} onClick={() => setView("payables")} icon={<Search className="h-4 w-4" />}>
-          Payables {outstanding > 0 && <Badge variant="danger" className="ml-1 h-5 px-1.5 text-xs">{formatPkr(outstanding)}</Badge>}
-        </TabButton>
-        <TabButton active={view === "payments"} onClick={() => setView("payments")} icon={<Banknote className="h-4 w-4" />}>
-          Payments
-        </TabButton>
-        <TabButton active={view === "returns"} onClick={() => setView("returns")} icon={<ArrowDownCircle className="h-4 w-4" />}>
-          Returns
-        </TabButton>
-        <TabButton active={view === "cash"} onClick={() => setView("cash")} icon={<Wallet className="h-4 w-4" />}>
-          Cash accounts
-        </TabButton>
+        {(view === "purchases" || view === "returns") && (
+          <SummaryCard label="Total purchases" value={totalPurchases} money accent="forest" />
+        )}
+        {(view === "payables" || view === "payments" || view === "purchases") && (
+          <SummaryCard label="Total paid" value={totalPaid} money accent="green" />
+        )}
+        {(view === "payables" || view === "suppliers" || view === "purchases") && (
+          <SummaryCard label="Outstanding payables" value={outstanding} money accent="rose" />
+        )}
+        {(view === "cash" || view === "purchases") && (
+          <SummaryCard label="Cash on hand" value={cashOnHand} money accent="gold" />
+        )}
+        {view === "suppliers" && (
+          <SummaryCard label="Suppliers" value={suppliers.length} accent="neutral" />
+        )}
+        {view === "payments" && (
+          <SummaryCard label="Payments" value={payments.length} accent="neutral" />
+        )}
       </div>
 
       <div className="mt-5">
@@ -482,33 +517,7 @@ function SummaryCard({
   );
 }
 
-function TabButton({
-  active,
-  onClick,
-  icon,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors",
-        active
-          ? "border-forest-600 text-forest-700"
-          : "border-transparent text-neutral-500 hover:text-neutral-800",
-      )}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
+
 
 function LoadingRow() {
   return (
@@ -1062,6 +1071,19 @@ function ProductPicker({
   label: string;
 }) {
   const { q, setQ, results, selected, setSelected, open, setOpen } = picker;
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, setOpen]);
+
   return (
     <div className="grid gap-1.5">
       <Label>{label}</Label>
@@ -1083,7 +1105,7 @@ function ProductPicker({
           </button>
         </div>
       ) : (
-        <div className="relative">
+        <div className="relative" ref={wrapperRef}>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
           <Input
             value={q}
@@ -1249,7 +1271,7 @@ function RecordPurchaseDialog({
   onError,
 }: DialogProps & { suppliers: SupplierDto[]; locations: LocationDto[] }) {
   const [supplierId, setSupplierId] = React.useState<number | null>(null);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [invoiceNumber, setInvoiceNumber] = React.useState("");
   const [invoiceDate, setInvoiceDate] = React.useState(todayIso());
   const [purchaseDate, setPurchaseDate] = React.useState(todayIso());
@@ -1296,7 +1318,7 @@ function RecordPurchaseDialog({
       submitDisabled={!valid}
     >
       <SupplierSelect suppliers={suppliers} value={supplierId} onChange={setSupplierId} />
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
+      <ShowroomField name={locations[0]?.name} />
       <div className="grid gap-1.5">
         <Label>Supplier invoice number</Label>
         <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} placeholder="INV-1024" />
@@ -1751,7 +1773,7 @@ function ReturnDialog({
 }) {
   const [supplierId, setSupplierId] = React.useState<number | null>(null);
   const [purchaseId, setPurchaseId] = React.useState<number | null>(null);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [returnDate, setReturnDate] = React.useState(todayIso());
   const [refund, setRefund] = React.useState(0);
   const [notes, setNotes] = React.useState("");
@@ -1817,7 +1839,7 @@ function ReturnDialog({
           </Select>
         </div>
       )}
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
+      <ShowroomField name={locations[0]?.name} />
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
           <Label>Return date</Label>
@@ -1976,30 +1998,13 @@ function SupplierSelect({
   );
 }
 
-function LocationSelect({
-  locations,
-  value,
-  onChange,
-}: {
-  locations: LocationDto[];
-  value: number | null;
-  onChange: (id: number | null) => void;
-}) {
+function ShowroomField({ name }: { name?: string }) {
   return (
     <div className="grid gap-1.5">
-      <Label>Location</Label>
-      <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
-        <SelectTrigger>
-          <SelectValue placeholder="Select a location" />
-        </SelectTrigger>
-        <SelectContent>
-          {locations.map((l) => (
-            <SelectItem key={l.id} value={String(l.id)}>
-              {l.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <Label>Showroom</Label>
+      <div className="flex h-9 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-700">
+        {name ?? "Loading…"}
+      </div>
     </div>
   );
 }

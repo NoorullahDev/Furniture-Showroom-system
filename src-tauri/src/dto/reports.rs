@@ -10,6 +10,31 @@ pub struct ReportFilterInput {
     pub status: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportViewColumnInput {
+    pub header: String,
+    pub align_right: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportViewSummaryInput {
+    pub label: String,
+    pub value: String,
+}
+
+/// The already-filtered table shown on the Reports page. Supplying this with
+/// an export keeps CSV, PDF, preview, and print output on the exact same data.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportViewInput {
+    pub title: String,
+    pub columns: Vec<ReportViewColumnInput>,
+    pub rows: Vec<Vec<String>>,
+    pub summary: Vec<ReportViewSummaryInput>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {

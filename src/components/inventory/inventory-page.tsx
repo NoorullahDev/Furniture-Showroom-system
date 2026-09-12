@@ -3,7 +3,6 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeftRight,
   Boxes,
   CheckCircle,
   ClipboardList,
@@ -33,13 +32,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Table,
   TableBody,
   TableCell,
@@ -68,7 +60,6 @@ import {
   stockRepair,
   stockReserve,
   stockReverse,
-  stockTransfer,
   stockValuation,
   type CountSessionDto,
   type LocationDto,
@@ -115,10 +106,9 @@ export function InventoryPage() {
 
   const dashboardTarget = React.useMemo(() => takeDashboardTarget("inventory"), []);
   const [view, setView] = React.useState<Tab>(dashboardTarget?.target === "low-stock" ? "low" : "stock");
-  const [locationId, setLocationId] = React.useState<number | null>(null);
   const [historyProductId, setHistoryProductId] = React.useState<number | null>(null);
   const [dialog, setDialog] = React.useState<
-    null | "opening" | "transfer" | "adjust" | "damage" | "reserve" | "count" | "import"
+    null | "opening" | "adjust" | "damage" | "reserve" | "count" | "import"
   >(null);
 
   const locationsQuery = useQuery({
@@ -126,18 +116,19 @@ export function InventoryPage() {
     queryFn: () => locationList(session),
     enabled: !!session,
   });
+  const locationId = locationsQuery.data?.[0]?.id ?? null;
 
   const balancesQuery = useQuery({
     queryKey: ["inventory", "balances", locationId],
     queryFn: () => stockBalanceList(session, locationId),
-    enabled: !!session,
+    enabled: !!session && locationId !== null,
   });
 
   const movementsQuery = useQuery({
     queryKey: ["inventory", "movements", locationId, historyProductId],
     queryFn: () =>
       stockMovementList(session, { productId: historyProductId, locationId, limit: 200 }),
-    enabled: !!session,
+    enabled: !!session && locationId !== null,
   });
 
   const valuationQuery = useQuery({
@@ -155,7 +146,7 @@ export function InventoryPage() {
   const countSessionsQuery = useQuery({
     queryKey: ["inventory", "count-sessions"],
     queryFn: () => stockCountList(session, locationId),
-    enabled: !!session && canCount,
+    enabled: !!session && canCount && locationId !== null,
   });
 
   const invalidate = () => {
@@ -208,28 +199,11 @@ export function InventoryPage() {
         subtitle="Stock balances, movement ledger and FIFO valuation."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={locationId ? String(locationId) : "all"}
-              onValueChange={(v) => setLocationId(v === "all" ? null : Number(v))}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All locations</SelectItem>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={String(l.id)}>
-                    {l.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex h-9 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-700">
+              {locations[0]?.name ?? "Loading…"}
+            </div>
             {canMutate && (
               <>
-                <Button variant="outline" onClick={() => setDialog("transfer")}>
-                  <ArrowLeftRight className="h-4 w-4" />
-                  Transfer
-                </Button>
                 <Button variant="outline" onClick={() => setDialog("adjust")}>
                   <Scale className="h-4 w-4" />
                   Adjust
@@ -397,25 +371,6 @@ export function InventoryPage() {
           }}
         />
       )}
-      {dialog === "transfer" && canMutate && (
-        <TransferDialog
-          session={session}
-          locations={locations}
-          onClose={() => setDialog(null)}
-          onDone={() => {
-            invalidate();
-            setDialog(null);
-            toast({ variant: "success", title: "Stock transferred" });
-          }}
-          onError={(e) => {
-            if (isSessionError(e)) {
-              refresh();
-              return;
-            }
-            toast({ variant: "error", title: "Transfer failed", description: commandErrorMessage(e) });
-          }}
-        />
-      )}
       {dialog === "adjust" && canMutate && (
         <AdjustDialog
           session={session}
@@ -476,7 +431,6 @@ export function InventoryPage() {
       {dialog === "count" && canCount && (
         <CountSessionDialog
           session={session}
-          locations={locations}
           locationId={locationId}
           onClose={() => setDialog(null)}
           onDone={() => {
@@ -1083,24 +1037,21 @@ function CountLinesPanel({
 
 function CountSessionDialog({
   session,
-  locations,
   locationId,
   onClose,
   onDone,
   onError,
 }: {
   session: string;
-  locations: LocationDto[];
   locationId: number | null;
   onClose: () => void;
   onDone: () => void;
   onError: (e: Error) => void;
 }) {
-  const [locId, setLocId] = React.useState(locationId);
   const [notes, setNotes] = React.useState("");
   const mutation = useMutation({
     mutationFn: () =>
-      stockCountStart(session, { locationId: locId!, notes: notes || undefined }),
+      stockCountStart(session, { locationId: locationId!, notes: notes || undefined }),
     onSuccess: () => onDone(),
     onError,
   });
@@ -1110,28 +1061,13 @@ function CountSessionDialog({
       title="Start stock count"
       description="Create a new physical count session. Expected quantities will be pre-populated from current stock balances."
       onSubmit={() => {
-        if (locId) mutation.mutate();
+        if (locationId) mutation.mutate();
       }}
       busy={mutation.isPending}
       submitLabel="Start count"
       onClose={onClose}
     >
       <div className="grid gap-4">
-        <div>
-          <Label>Location</Label>
-          <Select value={locId ? String(locId) : ""} onValueChange={(v) => setLocId(Number(v))}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select location" />
-            </SelectTrigger>
-            <SelectContent>
-              {locations.map((l) => (
-                <SelectItem key={l.id} value={String(l.id)}>
-                  {l.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
         <div>
           <Label>Notes (optional)</Label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. weekly count" />
@@ -1149,7 +1085,7 @@ function OpeningImportDialog({
   onError,
 }: Omit<DialogProps, "onDone"> & { onDone: (result: OpeningBatchResultDto) => void }) {
   const [raw, setRaw] = React.useState("");
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [result, setResult] = React.useState<OpeningBatchResultDto | null>(null);
 
   const parsed = React.useMemo(() => {
@@ -1171,7 +1107,6 @@ function OpeningImportDialog({
 
   const validationErrors = React.useMemo(() => {
     const errors: { rowIndex: number; message: string }[] = [];
-    if (!locationId) errors.push({ rowIndex: -1, message: "choose a location" });
     parsed.forEach((r) => {
       if (!r.articleNumber) errors.push({ rowIndex: r.rowIndex, message: "missing article number" });
       else if (!/^[A-Za-z0-9 ._-]+$/.test(r.articleNumber))
@@ -1208,7 +1143,7 @@ function OpeningImportDialog({
   return (
     <StockDialog
       title="Import opening stock"
-      description="One row per line: ArticleNumber, Quantity, UnitCostMinor (optional). Location applies to all rows."
+      description="One row per line: ArticleNumber, Quantity, UnitCostMinor (optional). All rows use the showroom."
       onSubmit={() => submitMutation.mutate()}
       busy={submitMutation.isPending}
       submitLabel="Post rows"
@@ -1228,21 +1163,6 @@ function OpeningImportDialog({
           <p className="text-xs text-neutral-500">
             Columns: articleNumber, quantity, unitCostMinor. Only existing active products are matched.
           </p>
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Location</Label>
-          <Select value={locationId ? String(locationId) : ""} onValueChange={(v) => setLocationId(Number(v))}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select location" />
-            </SelectTrigger>
-            <SelectContent>
-              {locations.map((l) => (
-                <SelectItem key={l.id} value={String(l.id)}>
-                  {l.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
         {validationErrors.length > 0 && (
           <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
@@ -1412,7 +1332,7 @@ function ProductPicker({
 
 function OpeningDialog({ session, locations, onClose, onDone, onError }: DialogProps) {
   const picker = useProductPicker(session);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [qty, setQty] = React.useState("1");
   const [cost, setCost] = React.useState(0);
   const [reason, setReason] = React.useState("");
@@ -1433,7 +1353,7 @@ function OpeningDialog({ session, locations, onClose, onDone, onError }: DialogP
   return (
     <StockDialog
       title="Post opening stock"
-      description="Set the starting balance for a product at a location. A positive unit cost seeds the FIFO cost layer."
+      description="Set the starting showroom balance for a product. A positive unit cost seeds the FIFO cost layer."
       onSubmit={() => {
         if (picker.selected && locationId && Number(qty) > 0) mutation.mutate();
       }}
@@ -1442,7 +1362,6 @@ function OpeningDialog({ session, locations, onClose, onDone, onError }: DialogP
       onClose={onClose}
     >
       <ProductPicker picker={picker} label="Product" />
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
       <div className="grid gap-1.5">
         <Label>Quantity</Label>
         <Input
@@ -1464,68 +1383,9 @@ function OpeningDialog({ session, locations, onClose, onDone, onError }: DialogP
   );
 }
 
-function TransferDialog({ session, locations, onClose, onDone, onError }: DialogProps) {
-  const picker = useProductPicker(session);
-  const [fromId, setFromId] = React.useState<number | null>(null);
-  const [toId, setToId] = React.useState<number | null>(null);
-  const [qty, setQty] = React.useState("");
-  const [reason, setReason] = React.useState("");
-
-  const mutation = useMutation({
-    mutationFn: () =>
-      stockTransfer(session, {
-        productId: picker.selected!.id,
-        fromLocationId: fromId!,
-        toLocationId: toId!,
-        quantity: Number(qty),
-        reason: reason || null,
-      }),
-    onSuccess: onDone,
-    onError,
-  });
-
-  return (
-    <StockDialog
-      title="Transfer stock"
-      description="Move sellable stock from one location to another. Both an out and an in movement are posted."
-      onSubmit={() => {
-        if (picker.selected && fromId && toId && fromId !== toId && Number(qty) > 0)
-          mutation.mutate();
-      }}
-      busy={mutation.isPending}
-      submitLabel="Transfer"
-      onClose={onClose}
-    >
-      <ProductPicker picker={picker} label="Product" />
-      <div className="grid grid-cols-2 gap-3">
-        <LocationSelect
-          locations={locations.filter((l) => l.id !== toId)}
-          value={fromId}
-          onChange={setFromId}
-          label="From"
-        />
-        <LocationSelect
-          locations={locations.filter((l) => l.id !== fromId)}
-          value={toId}
-          onChange={setToId}
-          label="To"
-        />
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Quantity</Label>
-        <Input inputMode="numeric" value={qty} onChange={(e) => setQty(e.target.value.replace(/[^0-9]/g, ""))} placeholder="3" />
-      </div>
-      <div className="grid gap-1.5">
-        <Label>Reason (optional)</Label>
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Replenish showroom" />
-      </div>
-    </StockDialog>
-  );
-}
-
 function AdjustDialog({ session, locations, onClose, onDone, onError }: DialogProps) {
   const picker = useProductPicker(session);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [qty, setQty] = React.useState("");
   const [cost, setCost] = React.useState(0);
   const [reason, setReason] = React.useState("");
@@ -1558,7 +1418,6 @@ function AdjustDialog({ session, locations, onClose, onDone, onError }: DialogPr
       onClose={onClose}
     >
       <ProductPicker picker={picker} label="Product" />
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
       <div className="grid gap-1.5">
         <Label>Adjustment (+add / âˆ’remove)</Label>
         <Input
@@ -1584,7 +1443,7 @@ function AdjustDialog({ session, locations, onClose, onDone, onError }: DialogPr
 
 function DamageDialog({ session, locations, onClose, onDone, onError }: DialogProps) {
   const picker = useProductPicker(session);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [mode, setMode] = React.useState<"damage" | "repair">("damage");
   const [qty, setQty] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -1615,7 +1474,6 @@ function DamageDialog({ session, locations, onClose, onDone, onError }: DialogPr
       onClose={onClose}
     >
       <ProductPicker picker={picker} label="Product" />
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
       <div className="grid gap-1.5">
         <Label>Action</Label>
         <div className="flex gap-2">
@@ -1641,7 +1499,7 @@ function DamageDialog({ session, locations, onClose, onDone, onError }: DialogPr
 
 function ReserveDialog({ session, locations, onClose, onDone, onError }: DialogProps) {
   const picker = useProductPicker(session);
-  const [locationId, setLocationId] = React.useState<number | null>(null);
+  const locationId = locations[0]?.id ?? null;
   const [mode, setMode] = React.useState<"reserve" | "release">("reserve");
   const [qty, setQty] = React.useState("");
   const [reason, setReason] = React.useState("");
@@ -1672,7 +1530,6 @@ function ReserveDialog({ session, locations, onClose, onDone, onError }: DialogP
       onClose={onClose}
     >
       <ProductPicker picker={picker} label="Product" />
-      <LocationSelect locations={locations} value={locationId} onChange={setLocationId} />
       <div className="grid gap-1.5">
         <Label>Action</Label>
         <div className="flex gap-2">
@@ -1693,36 +1550,6 @@ function ReserveDialog({ session, locations, onClose, onDone, onError }: DialogP
         <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Customer hold" />
       </div>
     </StockDialog>
-  );
-}
-
-function LocationSelect({
-  locations,
-  value,
-  onChange,
-  label = "Location",
-}: {
-  locations: LocationDto[];
-  value: number | null;
-  onChange: (id: number | null) => void;
-  label?: string;
-}) {
-  return (
-    <div className="grid gap-1.5">
-      <Label>{label}</Label>
-      <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
-        <SelectTrigger>
-          <SelectValue placeholder="Select a location" />
-        </SelectTrigger>
-        <SelectContent>
-          {locations.map((l) => (
-            <SelectItem key={l.id} value={String(l.id)}>
-              {l.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
   );
 }
 

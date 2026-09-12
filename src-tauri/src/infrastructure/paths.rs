@@ -12,6 +12,7 @@ pub struct FilePaths {
     pub backups_dir: PathBuf,
     pub fonts_dir: PathBuf,
     pub logs_dir: PathBuf,
+    pub license_dir: PathBuf,
     pub db_path: PathBuf,
 }
 
@@ -23,6 +24,7 @@ impl FilePaths {
         let backups_dir = data_dir.join("backups");
         let fonts_dir = data_dir.join("fonts");
         let logs_dir = data_dir.join("logs");
+        let license_dir = data_dir.join("license");
         let db_path = data_dir.join("furniture_shop.db");
 
         for dir in [
@@ -32,6 +34,7 @@ impl FilePaths {
             &backups_dir,
             &fonts_dir,
             &logs_dir,
+            &license_dir,
         ] {
             fs::create_dir_all(dir)?;
         }
@@ -44,6 +47,7 @@ impl FilePaths {
             backups_dir,
             fonts_dir,
             logs_dir,
+            license_dir,
             db_path,
         })
     }

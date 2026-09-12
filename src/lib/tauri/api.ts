@@ -24,11 +24,18 @@ export type LoginResult = {
 export type LicenseStatus = {
   status: string;
   label: string;
+  message: string;
   isActivated: boolean;
+  hardwareId: string;
   licenseId?: string | null;
   customer?: string | null;
-  activatedAt?: string | null;
+  issueDate?: string | null;
+  lastRenewed?: string | null;
+  grantedDays?: number | null;
   expiresAt?: string | null;
+  daysRemaining: number;
+  validityPercent: number;
+  maskedKey?: string | null;
 };
 
 export type UserDto = {
@@ -80,7 +87,6 @@ export type FirstRunCompleteInput = {
   shopEmail: string;
   currency: string;
   timezone: string;
-  firstLocation: string;
   invoicePrefix?: string | null;
   backupLocation?: string | null;
   ownerUsername: string;
@@ -98,7 +104,6 @@ export const firstRunComplete = (input: FirstRunCompleteInput) =>
     shopEmail: input.shopEmail,
     currency: input.currency,
     timezone: input.timezone,
-    firstLocation: input.firstLocation,
     invoicePrefix: input.invoicePrefix || null,
     backupLocation: input.backupLocation || null,
     ownerUsername: input.ownerUsername,
@@ -107,6 +112,9 @@ export const firstRunComplete = (input: FirstRunCompleteInput) =>
   });
 
 export const licenseStatus = () => runCommand<LicenseStatus>("license_status");
+
+export const licenseActivate = (licenseKey: string) =>
+  runCommand<LicenseStatus>("license_activate", { licenseKey });
 
 // --- Authentication ----------------------------------------------------------
 
@@ -120,9 +128,6 @@ export const authCurrent = (session: string) =>
   runCommand<SessionProfile | null>("auth_current", { session });
 
 export const authLock = (session: string) => runCommand<void>("auth_lock", { session });
-
-export const authUnlock = (session: string, password: string) =>
-  runCommand<SessionProfile>("auth_unlock", { session, password });
 
 export const authChangePassword = (
   session: string,
@@ -1992,13 +1997,27 @@ export type ReportExportResult = {
   generatedAt: string;
 };
 
+export type ReportViewInput = {
+  title: string;
+  columns: { header: string; alignRight: boolean }[];
+  rows: string[][];
+  summary: { label: string; value: string }[];
+};
+
 export const reportExport = (
   session: string,
   reportType: string,
   filter: ReportFilterInput,
   format: "csv" | "pdf",
+  view?: ReportViewInput,
 ) =>
-  runCommand<ReportExportResult>("report_export", { session, reportType, filter, format });
+  runCommand<ReportExportResult>("report_export", {
+    session,
+    reportType,
+    filter,
+    format,
+    view: view ?? null,
+  });
 
 export const openFile = (session: string, path: string) =>
   runCommand<void>("open_file", { session, path });
@@ -2110,9 +2129,9 @@ export const backupRestoreImport = (session: string, path: string) =>
 export const backupRestart = (session: string) =>
   runCommand<void>("backup_restart", { session });
 
-export const backupCloseRetry = () => runCommand<void>("backup_close_retry");
-export const backupCloseCancel = () => runCommand<void>("backup_close_cancel");
-export const backupCloseWithout = () => runCommand<void>("backup_close_without");
+export const backupCloseRetry = (session: string) => runCommand<void>("backup_close_retry", { session });
+export const backupCloseCancel = (session: string) => runCommand<void>("backup_close_cancel", { session });
+export const backupCloseWithout = (session: string) => runCommand<void>("backup_close_without", { session });
 
 export const maintenanceIntegrity = (session: string) =>
   runCommand<IntegrityResult>("maintenance_integrity", { session });
@@ -2128,6 +2147,13 @@ export type SeedResult = {
   purchases: number;
   sales: number;
   expenses: number;
+  bundles: number;
+  customerPayments: number;
+  supplierPayments: number;
+  salesReturns: number;
+  creditNotes: number;
+  deliveries: number;
+  damageRecords: number;
 };
 
 export const seedDemoData = (session: string) =>

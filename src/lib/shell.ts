@@ -12,4 +12,12 @@ export type ShellView =
   | "reports"
   | "invoices"
   | "settings"
-  | "maintenance";
+  | "maintenance"
+  | "new-sale"
+  | "sales-history"
+  | "returns-exchanges"
+  | "customers-tab"
+  | "customer-dues"
+  | "suppliers-list"
+  | "supplier-dues"
+  | "deliveries";

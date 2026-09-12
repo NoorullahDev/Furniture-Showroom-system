@@ -2,7 +2,7 @@ use tauri::State;
 
 use crate::commands::wrapper::run_command;
 use crate::commands::{authed, authenticated};
-use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput};
+use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput, ReportViewInput};
 use crate::dto::AppErrorDto;
 use crate::state::AppState;
 
@@ -13,18 +13,30 @@ pub async fn report_export(
     report_type: String,
     filter: ReportFilterInput,
     format: ExportFormat,
+    view: Option<ReportViewInput>,
 ) -> Result<ReportExportResult, AppErrorDto> {
     run_command("report_export", async move {
         let principal = authed(&state, &session, "report.export").await?;
         let generated_by = Some(principal.username.clone());
-        crate::application::reports::export_report_with_user(
-            &state,
-            &report_type,
-            &filter,
-            format,
-            generated_by,
-        )
-        .await
+        if let Some(view) = view {
+            crate::application::reports::export_report_view(
+                &state,
+                &filter,
+                format,
+                generated_by,
+                view,
+            )
+            .await
+        } else {
+            crate::application::reports::export_report_with_user(
+                &state,
+                &report_type,
+                &filter,
+                format,
+                generated_by,
+            )
+            .await
+        }
     })
     .await
 }

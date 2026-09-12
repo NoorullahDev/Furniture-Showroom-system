@@ -7,7 +7,6 @@ import {
   authCurrent,
   authLock,
   authLogout,
-  authUnlock,
   firstRunStatus,
   type LoginResult,
   type SessionProfile,
@@ -28,10 +27,9 @@ type SessionContextValue = {
   /** True while a session/lock transition is in flight. */
   busy: boolean;
   applyLogin: (result: LoginResult) => void;
-  /** Re-resolve the current session (also recovers from SESSION_LOCKED errors). */
+  /** Re-resolve the current session. */
   refresh: () => void;
   lock: () => Promise<void>;
-  unlock: (password: string) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (code: string) => boolean;
   /** True when startup query failed permanently. */
@@ -124,25 +122,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, [profile]);
 
-  const unlock = React.useCallback(
-    async (password: string) => {
-      const id = profile?.sessionId;
-      if (!id) {
-        refresh();
-        return;
-      }
-      setBusy(true);
-      try {
-        const resolved = await authUnlock(id, password);
-        setProfile(resolved);
-        setStatus("authenticated");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [profile, refresh],
-  );
-
   const logout = React.useCallback(async () => {
     const id = profile?.sessionId ?? getStoredSessionId();
     setBusy(true);
@@ -178,13 +157,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       applyLogin,
       refresh,
       lock,
-      unlock,
       logout,
       hasPermission,
       startupError: startupFailed,
       retryStartup,
     }),
-    [status, profile, busy, applyLogin, refresh, lock, unlock, logout, hasPermission, startupFailed, retryStartup],
+    [status, profile, busy, applyLogin, refresh, lock, logout, hasPermission, startupFailed, retryStartup],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

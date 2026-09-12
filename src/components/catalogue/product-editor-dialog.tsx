@@ -1,8 +1,9 @@
-﻿"use client";
+"use client";
 
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { Loader2, Plus, Trash2, Upload, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,8 @@ import {
   categoryList,
   productCreate,
   productGet,
+  productImageAdd,
+  productImageRemove,
   productTypeList,
   productUpdate,
   unitList,
@@ -37,8 +40,7 @@ import {
 } from "@/lib/tauri/api";
 import { formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
-
-const MAX_IMAGES = 8;
+import { StoredImage } from "@/components/catalogue/stored-image";
 
 export function ProductEditorDialog({
   productId,
@@ -101,25 +103,19 @@ export function ProductEditorDialog({
   const [notes, setNotes] = React.useState("");
   const [attributes, setAttributes] = React.useState<AttributeInputDto[]>([]);
   const [imagePaths, setImagePaths] = React.useState<string[]>([]);
+  const [removedImages, setRemovedImages] = React.useState<number[]>([]);
   const [error, setError] = React.useState<string | null>(null);
-  const originalCategoryId = React.useRef<number | null>(null);
-  const originalTypeId = React.useRef<number | null>(null);
-  const originalUnitId = React.useRef<number | null>(null);
-
-  const categoryChanged = isEdit && categoryId !== originalCategoryId.current;
+  const categoryChanged = isEdit && existing.data ? categoryId !== existing.data.categoryId : true;
   const selectableCategories = categories.filter((c) => c.isActive || c.id === categoryId);
   const selectableTypes = types.filter((t) => t.isActive || t.id === productTypeId);
-  const showTypeClear = !isEdit || (!categoryChanged && originalTypeId.current === null);
-  const showUnitClear = !isEdit || originalUnitId.current === null;
+  const showTypeClear = !isEdit || (!categoryChanged && existing.data && productTypeId !== existing.data.productTypeId);
+  const showUnitClear = !isEdit || (existing.data && existing.data.unitId === null);
 
   const isLoaded = !isEdit || !!existing.data;
 
   React.useEffect(() => {
     const product = existing.data;
     if (!product) return;
-    originalCategoryId.current = product.categoryId;
-    originalTypeId.current = product.productTypeId;
-    originalUnitId.current = product.unitId;
     setArticleNumber(product.articleNumber);
     setName(product.name);
     setCategoryId(product.categoryId);
@@ -142,31 +138,39 @@ export function ProductEditorDialog({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (isEdit && existing.data) {
-        return productUpdate(session, existing.data.id, {
-          articleNumber,
-          name,
-          categoryId: categoryChanged ? (categoryId as number) : undefined,
-          productTypeId:
-            categoryChanged || productTypeId !== originalTypeId.current
-              ? (productTypeId ?? undefined)
-              : undefined,
-          unitId: unitId ?? undefined,
-          description: description || null,
-          material: material || null,
-          color: color || null,
-          dimensionsText: dimensionsText || null,
-          brand: brand || null,
-          barcode: barcode || null,
-          warrantyMonths: warrantyMonths !== "" ? Number(warrantyMonths) : null,
-          notes: notes || null,
-          costMinor: canViewCost ? costMinor : null,
-          salePriceMinor,
-          minimumStock,
-          trackStock,
-          attributes,
-        });
-      }
+        if (isEdit && existing.data) {
+          const detail = await productUpdate(session, existing.data.id, {
+            articleNumber,
+            name,
+            categoryId: categoryChanged ? (categoryId as number) : undefined,
+            productTypeId:
+              categoryChanged || productTypeId !== existing.data.productTypeId
+                ? (productTypeId ?? undefined)
+                : undefined,
+            unitId: unitId !== existing.data.unitId ? (unitId ?? undefined) : undefined,
+            description: description || null,
+            material: material || null,
+            color: color || null,
+            dimensionsText: dimensionsText || null,
+            brand: brand || null,
+            barcode: barcode || null,
+            warrantyMonths: warrantyMonths !== "" ? Number(warrantyMonths) : null,
+            notes: notes || null,
+            costMinor: canViewCost ? costMinor : null,
+            salePriceMinor,
+            minimumStock,
+            trackStock,
+            attributes,
+          });
+          
+          for (const id of removedImages) {
+            await productImageRemove(session, detail.id, id);
+          }
+          for (const path of imagePaths) {
+            await productImageAdd(session, detail.id, path);
+          }
+          return detail;
+        }
       return productCreate(session, {
         articleNumber,
         name,
@@ -224,24 +228,22 @@ export function ProductEditorDialog({
       setError("Choose a category.");
       return;
     }
-    if (categoryChanged && productTypeId === null) {
-      setError("Changing the category requires choosing a product type for the new category.");
-      return;
-    }
     setError(null);
     saveMutation.mutate();
   }
 
-  async function pickImages() {
+  const pickImages = async () => {
     const selected = await open({
       multiple: true,
-      title: "Add product images",
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"] }],
+      filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp"] }],
     });
     if (!selected) return;
     const list = Array.isArray(selected) ? selected : [selected];
-    setImagePaths((prev) => [...prev, ...list].slice(0, MAX_IMAGES));
-  }
+    setImagePaths((prev) => [...prev, ...list]);
+  };
+
+  const existingImages = (existing.data?.images || []).filter(img => !removedImages.includes(img.id));
+  const totalImageCount = existingImages.length + imagePaths.length;
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -487,34 +489,42 @@ export function ProductEditorDialog({
               </Button>
             </div>
 
-            {!isEdit && (
-              <div className="grid gap-1.5">
-                <Label>Images ({imagePaths.length}/{MAX_IMAGES})</Label>
-                {imagePaths.length > 0 && (
-                  <ul className="grid gap-1">
-                    {imagePaths.map((p, i) => (
-                      <li key={p} className="flex items-center justify-between gap-2 rounded-md border border-neutral-200 bg-white px-3 py-1.5">
-                        <span className="truncate text-xs text-neutral-600">
-                          {i + 1}. {p}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setImagePaths((prev) => prev.filter((x) => x !== p))}
-                          className="rounded p-0.5 text-neutral-400 hover:text-red-600"
-                          aria-label="Remove image"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <Button type="button" variant="outline" size="sm" onClick={pickImages} disabled={imagePaths.length >= MAX_IMAGES}>
-                  <Upload className="h-4 w-4" />
-                  Choose image files
-                </Button>
-              </div>
-            )}
+            <div className="grid gap-1.5">
+              <Label>Images ({totalImageCount})</Label>
+              {totalImageCount > 0 && (
+                <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {existingImages.map((img) => (
+                    <li key={img.id} className="relative aspect-square overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                      <StoredImage path={img.imagePath} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setRemovedImages((prev) => [...prev, img.id])}
+                        className="absolute right-1 top-1 rounded-full bg-white/80 p-1 text-neutral-600 hover:text-red-600"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  ))}
+                  {imagePaths.map((p) => (
+                    <li key={p} className="relative aspect-square overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={convertFileSrc(p)} alt="Upload preview" className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setImagePaths((prev) => prev.filter((x) => x !== p))}
+                        className="absolute right-1 top-1 rounded-full bg-white/80 p-1 text-neutral-600 hover:text-red-600"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Button type="button" variant="outline" size="sm" onClick={pickImages}>
+                <Upload className="mr-2 h-4 w-4" />
+                Choose image files
+              </Button>
+            </div>
 
             {error && (
               <p role="alert" className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">

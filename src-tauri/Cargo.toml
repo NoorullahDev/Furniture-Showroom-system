@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 opener = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -26,6 +26,9 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 uuid = { version = "1", features = ["v4", "v7"] }
 sha2 = "0.10"
+base64 = "0.22"
+rsa = { version = "0.9", features = ["sha2"] }
+rand = "0.8"
 argon2 = "0.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 printpdf = "=0.7.0"
@@ -36,7 +39,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Graphics_Printing"] }
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Graphics_Printing", "Win32_System_SystemInformation", "Win32_Security_Cryptography", "Win32_Foundation"] }
 
 [profile.release]
 codegen-units = 1

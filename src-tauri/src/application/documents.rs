@@ -2,6 +2,17 @@ use sqlx::sqlite::SqliteConnection;
 
 use crate::error::AppError;
 
+/// Allowed table names for `replay_guard` to prevent SQL injection via table
+/// interpolation. Every call site must use one of these values.
+const ALLOWED_TABLES: &[&str] = &[
+    "sales",
+    "purchases",
+    "supplier_returns",
+    "sales_returns",
+    "credit_notes",
+    "damage_records",
+];
+
 /// Consume one number from a `document_sequences` row. The UPDATE happens inside
 /// the caller's transaction, so a failed posting never burns a document number.
 pub(crate) async fn next_document_number(
@@ -37,6 +48,11 @@ pub(crate) async fn replay_guard(
     document_id: i64,
     idempotency_key: &Option<String>,
 ) -> Result<bool, AppError> {
+    if !ALLOWED_TABLES.contains(&table) {
+        return Err(AppError::Internal(format!(
+            "replay_guard: invalid table name '{table}'"
+        )));
+    }
     let Some(key) = idempotency_key.as_deref().filter(|k| !k.trim().is_empty()) else {
         return Ok(false);
     };

@@ -54,6 +54,7 @@ pub fn run() {
             tracing::debug!("startup integrity check passed");
 
             let state = AppState::new(pool, paths);
+            application::licensing::initialize(&state.paths)?;
             let administrator_created = tauri::async_runtime::block_on(
                 application::first_run::ensure_initial_administrator(&state),
             )?;
@@ -75,6 +76,7 @@ pub fn run() {
             commands::first_run::first_run_status,
             commands::first_run::first_run_complete,
             commands::licensing::license_status,
+            commands::licensing::license_activate,
             commands::auth::auth_login,
             commands::auth::auth_logout,
             commands::auth::auth_current,
@@ -222,6 +224,11 @@ pub fn run() {
         .on_window_event(|window, event| {
             use tauri::WindowEvent;
             if let WindowEvent::CloseRequested { api, .. } = event {
+                // An expired/invalid installation may close, but it must not
+                // run protected background application workflows.
+                if application::licensing::ensure_command_allowed("backup_close").is_err() {
+                    return;
+                }
                 let state = window.state::<AppState>();
                 let auto_enabled = match infrastructure::backup_preferences::load(&state.paths.data_dir) {
                     Ok(settings) => settings.auto_backup_on_close,

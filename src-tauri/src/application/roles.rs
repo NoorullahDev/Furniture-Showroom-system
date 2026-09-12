@@ -12,23 +12,29 @@ pub async fn list_roles(state: &AppState, principal: &Principal) -> Result<Vec<R
             .fetch_all(&state.pool)
             .await?;
 
+    let all_perms: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT rp.role_id, p.code FROM role_permissions rp
+         JOIN permissions p ON p.id = rp.permission_id
+         ORDER BY rp.role_id, p.code",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    use std::collections::HashMap;
+    let mut perm_map: HashMap<i64, Vec<String>> = HashMap::new();
+    for (role_id, code) in all_perms {
+        perm_map.entry(role_id).or_default().push(code);
+    }
+
     let mut out = Vec::with_capacity(roles.len());
     for (id, code, name, description, is_system) in roles {
-        let permissions: Vec<String> = sqlx::query_scalar(
-            "SELECT p.code FROM role_permissions rp
-             JOIN permissions p ON p.id = rp.permission_id
-             WHERE rp.role_id = ? ORDER BY p.code",
-        )
-        .bind(id)
-        .fetch_all(&state.pool)
-        .await?;
         out.push(RoleDto {
             id,
             code,
             name,
             description,
             is_system: is_system != 0,
-            permissions,
+            permissions: perm_map.remove(&id).unwrap_or_default(),
         });
     }
     Ok(out)
@@ -124,12 +130,20 @@ pub async fn set_role_permissions(
         })
         .await?;
 
+    let (code, name, description, is_system): (String, String, Option<String>, i64) =
+        sqlx::query_as(
+            "SELECT code, name, description, is_system FROM roles WHERE id = ?",
+        )
+        .bind(role_id)
+        .fetch_one(&state.pool)
+        .await?;
+
     Ok(RoleDto {
         id: role_id,
-        code: String::new(),
-        name: String::new(),
-        description: None,
-        is_system: false,
+        code,
+        name,
+        description,
+        is_system: is_system != 0,
         permissions: resulting_permissions,
     })
 }

@@ -35,6 +35,10 @@ export async function runCommand<T>(
   try {
     return (await invoke<T>(command, args)) as T;
   } catch (e) {
-    throw toCommandError(e);
+    const error = toCommandError(e);
+    if (error.code === "LICENSE_REQUIRED" && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("furniture-license-required"));
+    }
+    throw error;
   }
 }

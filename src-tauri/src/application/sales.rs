@@ -628,21 +628,41 @@ pub async fn confirm_sale(
                 .map(|r| (r.get(0), r.get(1), r.get(2)))
                 .collect();
 
+                // Bundle-component stock check — only for products that track stock.
                 for (_sid, pid, qty) in &comps {
-                    let avail = available_product(&mut *tx, *pid, location_id).await?;
-                    if avail < *qty {
-                        return Err(AppError::Validation(format!(
-                            "insufficient component stock product {pid}: need {qty}, available {avail}"
-                        )));
-                    }
-                }
-                for (sale_item_id, pid, _bid, qty, _price) in &items {
-                    if pid.is_some() {
-                        let avail = available_product(&mut *tx, pid.unwrap(), location_id).await?;
+                    let tracks: Option<bool> = sqlx::query_scalar(
+                        "SELECT track_stock FROM products WHERE id = ?",
+                    )
+                    .bind(*pid)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .map(|v: i64| v != 0);
+                    if tracks.unwrap_or(true) {
+                        let avail = available_product(&mut *tx, *pid, location_id).await?;
                         if avail < *qty {
                             return Err(AppError::Validation(format!(
-                                "insufficient stock for sale item {sale_item_id}: need {qty}, available {avail}"
+                                "insufficient component stock product {pid}: need {qty}, available {avail}"
                             )));
+                        }
+                    }
+                }
+                // Direct-item stock check — only for products that track stock.
+                for (sale_item_id, pid, _bid, qty, _price) in &items {
+                    if let Some(product_id) = pid {
+                        let tracks: Option<bool> = sqlx::query_scalar(
+                            "SELECT track_stock FROM products WHERE id = ?",
+                        )
+                        .bind(*product_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .map(|v: i64| v != 0);
+                        if tracks.unwrap_or(true) {
+                            let avail = available_product(&mut *tx, *product_id, location_id).await?;
+                            if avail < *qty {
+                                return Err(AppError::Validation(format!(
+                                    "insufficient stock for sale item {sale_item_id}: need {qty}, available {avail}"
+                                )));
+                            }
                         }
                     }
                 }

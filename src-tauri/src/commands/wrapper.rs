@@ -18,6 +18,9 @@ pub async fn run_command_with_correlation<T>(
     correlation_id: String,
     fut: impl std::future::Future<Output = Result<T, AppError>>,
 ) -> Result<T, AppErrorDto> {
+    if let Err(error) = crate::application::licensing::ensure_command_allowed(name) {
+        return Err(error.to_dto(&correlation_id));
+    }
     let span = tracing::info_span!("command", command = %name, correlation_id = %correlation_id);
     let _enter = span.enter();
 
@@ -30,5 +33,20 @@ pub async fn run_command_with_correlation<T>(
             tracing::error!(code = e.code(), message = %e, "command failed");
             Err(AppErrorDto::from_error(&e, &correlation_id))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn normal_commands_fail_closed_before_license_runtime_initialization() {
+        let result = run_command("auth_login", async { Ok::<_, AppError>(()) }).await;
+        let error = result.expect_err("normal command must be blocked");
+        assert_eq!(error.code, "LICENSE_REQUIRED");
+
+        let public_probe = run_command("license_status", async { Ok::<_, AppError>(()) }).await;
+        assert!(public_probe.is_ok());
     }
 }

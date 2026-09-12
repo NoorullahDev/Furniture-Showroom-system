@@ -231,7 +231,7 @@ fn rename_with_retry(source: &Path, destination: &Path) -> Result<(), AppError> 
         "could not move {} to {}: {}",
         source.display(),
         destination.display(),
-        last_error.expect("rename retry records an error")
+        last_error.unwrap_or_else(|| std::io::Error::other("unknown error after retries"))
     )))
 }
 
@@ -256,6 +256,6 @@ fn remove_file_with_retry(path: &Path) -> Result<(), AppError> {
     Err(AppError::Backup(format!(
         "could not remove database sidecar {}: {}",
         path.display(),
-        last_error.expect("remove retry records an error")
+        last_error.unwrap_or_else(|| std::io::Error::other("unknown error after retries"))
     )))
 }

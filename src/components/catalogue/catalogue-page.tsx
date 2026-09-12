@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -44,15 +44,21 @@ import {
   productList,
   productTypeList,
   productUnarchive,
+  bundleList,
+  locationList,
   type ProductListItemDto,
+  type BundleDto,
 } from "@/lib/tauri/api";
 import { formatPkr } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 import { StoredImage } from "@/components/catalogue/stored-image";
 import { ProductDetailDialog } from "@/components/catalogue/product-detail-dialog";
 import { ProductEditorDialog } from "@/components/catalogue/product-editor-dialog";
 import { CategoryManagerDialog } from "@/components/catalogue/category-manager-dialog";
 import { DuplicateProductDialog } from "@/components/catalogue/duplicate-product-dialog";
+import { SetsTable, BundleDialog, BundleAvailabilityDialog } from "@/components/sales/sales-page";
+import { Layers, Package } from "lucide-react";
 
 type Scope = "active" | "archived" | "all";
 
@@ -64,6 +70,9 @@ export function CataloguePage() {
 
   const canMutate = hasPermission("product.create");
   const canViewCost = hasPermission("product.cost.view");
+  const canManageBundles = hasPermission("bundle.create");
+  const canViewBundles = hasPermission("bundle.view");
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("catalogue"), []);
 
   const [q, setQ] = React.useState("");
   const [debouncedQ, setDebouncedQ] = React.useState("");
@@ -74,12 +83,17 @@ export function CataloguePage() {
   const [priceMax, setPriceMax] = React.useState("");
   const [attributeQ, setAttributeQ] = React.useState("");
   const [view, setView] = React.useState<"grid" | "table">("grid");
+  const [viewTab, setViewTab] = React.useState<"products" | "sets">("products");
 
   const [detail, setDetail] = React.useState<ProductListItemDto | null>(null);
   const [editing, setEditing] = React.useState<ProductListItemDto | null>(null);
-  const [creating, setCreating] = React.useState(false);
+  const [creating, setCreating] = React.useState(
+    dashboardTarget?.target === "new-product" && canMutate,
+  );
   const [duplicating, setDuplicating] = React.useState<ProductListItemDto | null>(null);
   const [managing, setManaging] = React.useState(false);
+  const [activeBundle, setActiveBundle] = React.useState<BundleDto | null>(null);
+  const [dialog, setDialog] = React.useState<null | "bundle" | "bundle-detail">(null);
 
   React.useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q), 300);
@@ -124,10 +138,21 @@ export function CataloguePage() {
       }),
     enabled: !!session,
   });
+  const bundlesQuery = useQuery({
+    queryKey: ["selling", "bundles"],
+    queryFn: () => bundleList(session),
+    enabled: !!session && (canViewBundles || canManageBundles),
+  });
+  const locationsQuery = useQuery({
+    queryKey: ["selling", "locations"],
+    queryFn: () => locationList(session),
+    enabled: !!session,
+  });
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["catalogue", "products"] });
     void queryClient.invalidateQueries({ queryKey: ["catalogue", "categories"] });
+    void queryClient.invalidateQueries({ queryKey: ["selling", "bundles"] });
   };
 
   const archiveMutation = useMutation({
@@ -166,6 +191,8 @@ export function CataloguePage() {
   const categories = categoriesQuery.data ?? [];
   const products = productsQuery.data ?? [];
   const types = typesQuery.data ?? [];
+  const bundles = bundlesQuery.data ?? [];
+  const locations = locationsQuery.data ?? [];
 
   return (
     <div>
@@ -178,17 +205,65 @@ export function CataloguePage() {
               <FolderTree className="h-4 w-4" />
               Organize
             </Button>
-            {canMutate && (
+            {viewTab === "products" && canMutate && (
               <Button onClick={() => setCreating(true)}>
                 <Plus className="h-4 w-4" />
                 New product
+              </Button>
+            )}
+            {viewTab === "sets" && canViewBundles && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setActiveBundle(null);
+                  setDialog("bundle-detail");
+                }}
+              >
+                <Layers className="h-4 w-4" />
+                Set availability
+              </Button>
+            )}
+            {viewTab === "sets" && canManageBundles && (
+              <Button
+                onClick={() => {
+                  setActiveBundle(null);
+                  setDialog("bundle");
+                }}
+              >
+                <Package className="h-4 w-4" />
+                New set
               </Button>
             )}
           </>
         }
       />
 
-      <div className="mt-5 flex flex-wrap items-end gap-2">
+      <div className="mt-5 flex items-center gap-1 overflow-x-auto border-b border-neutral-200">
+        <button
+          type="button"
+          onClick={() => setViewTab("products")}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+            viewTab === "products" ? "border-forest-600 text-forest-700" : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          <Package className="h-4 w-4" />
+          Products
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewTab("sets")}
+          className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+            viewTab === "sets" ? "border-forest-600 text-forest-700" : "border-transparent text-neutral-500 hover:text-neutral-700"
+          }`}
+        >
+          <Layers className="h-4 w-4" />
+          Furniture sets
+        </button>
+      </div>
+
+      {viewTab === "products" && (
+        <>
+          <div className="mt-5 flex flex-wrap items-end gap-2">
         <div className="relative min-w-52 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
           <Input
@@ -307,58 +382,72 @@ export function CataloguePage() {
       </div>
 
       {productsQuery.isLoading && !products.length ? (
-        <div className="mt-10 flex items-center justify-center gap-2 text-neutral-500">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading products…
-        </div>
-      ) : products.length === 0 ? (
-        <div className="mt-10 flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-300 bg-white py-16 text-neutral-500">
-          <PackageOpen className="h-8 w-8 text-neutral-300" />
-          <p className="text-sm">No products found{debouncedQ ? " for this search" : ""}.</p>
-        </div>
-      ) : view === "table" ? (
-        <ProductsTable
-          products={products}
-          canViewCost={canViewCost}
-          canMutate={canMutate}
-          onOpen={(p) => setDetail(p)}
-          onEdit={(p) => {
-            setEditing(p);
-            setDetail(null);
-          }}
-          onDuplicate={(p) => {
-            setDuplicating(p);
-            setDetail(null);
-          }}
-          onArchive={(p) => {
-            if (window.confirm(`Archive “${p.name}”?`)) archiveMutation.mutate(p.id);
-          }}
-          onUnarchive={(p) => unarchiveMutation.mutate(p.id)}
-        />
-      ) : (
-        <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
-          {products.map((p) => (
-            <ProductCard
-              key={p.id}
-              product={p}
+            <div className="mt-10 flex items-center justify-center gap-2 text-neutral-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading products…
+            </div>
+          ) : products.length === 0 ? (
+            <div className="mt-10 flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-neutral-300 bg-white py-16 text-neutral-500">
+              <PackageOpen className="h-8 w-8 text-neutral-300" />
+              <p className="text-sm">No products found{debouncedQ ? " for this search" : ""}.</p>
+            </div>
+          ) : view === "table" ? (
+            <ProductsTable
+              products={products}
               canViewCost={canViewCost}
               canMutate={canMutate}
-              onOpen={() => setDetail(p)}
-              onEdit={() => {
+              onOpen={(p) => setDetail(p)}
+              onEdit={(p) => {
                 setEditing(p);
                 setDetail(null);
               }}
-              onDuplicate={() => {
+              onDuplicate={(p) => {
                 setDuplicating(p);
                 setDetail(null);
               }}
-              onArchive={() => {
+              onArchive={(p) => {
                 if (window.confirm(`Archive “${p.name}”?`)) archiveMutation.mutate(p.id);
               }}
-              onUnarchive={() => unarchiveMutation.mutate(p.id)}
+              onUnarchive={(p) => unarchiveMutation.mutate(p.id)}
             />
-          ))}
-        </div>
+          ) : (
+            <div className="mt-5 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+              {products.map((p) => (
+                <ProductCard
+                  key={p.id}
+                  product={p}
+                  canViewCost={canViewCost}
+                  canMutate={canMutate}
+                  onOpen={() => setDetail(p)}
+                  onEdit={() => {
+                    setEditing(p);
+                    setDetail(null);
+                  }}
+                  onDuplicate={() => {
+                    setDuplicating(p);
+                    setDetail(null);
+                  }}
+                  onArchive={() => {
+                    if (window.confirm(`Archive “${p.name}”?`)) archiveMutation.mutate(p.id);
+                  }}
+                  onUnarchive={() => unarchiveMutation.mutate(p.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {viewTab === "sets" && (
+        <SetsTable
+          rows={bundles}
+          loading={bundlesQuery.isLoading}
+          canManage={canManageBundles}
+          onEdit={(b) => {
+            setActiveBundle(b);
+            setDialog("bundle");
+          }}
+        />
       )}
 
       {detail && <ProductDetailDialog productId={detail.id} onClose={() => setDetail(null)} />}
@@ -381,6 +470,31 @@ export function CataloguePage() {
       )}
       {managing && (
         <CategoryManagerDialog onClose={() => setManaging(false)} onChanged={invalidate} />
+      )}
+      {dialog === "bundle" && (
+        <BundleDialog
+          session={session}
+          bundle={activeBundle}
+          onClose={() => setDialog(null)}
+          onDone={() => {
+            invalidate();
+            setDialog(null);
+            setActiveBundle(null);
+            toast({ variant: "success", title: activeBundle ? "Set updated" : "Set created" });
+          }}
+          onError={(e) => {
+            if (isSessionError(e)) return refresh();
+            toast({ variant: "error", title: "Operation failed", description: commandErrorMessage(e) });
+          }}
+        />
+      )}
+      {dialog === "bundle-detail" && (
+        <BundleAvailabilityDialog
+          session={session}
+          bundles={bundles}
+          locations={locations}
+          onClose={() => setDialog(null)}
+        />
       )}
     </div>
   );

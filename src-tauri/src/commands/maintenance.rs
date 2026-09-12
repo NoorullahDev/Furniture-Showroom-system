@@ -182,9 +182,10 @@ struct CloseBackupError {
 }
 
 #[tauri::command]
-pub async fn backup_close_retry(app: AppHandle) -> Result<(), AppErrorDto> {
+pub async fn backup_close_retry(app: AppHandle, session: String) -> Result<(), AppErrorDto> {
     run_command("backup_close_retry", async move {
         let state = app.state::<AppState>();
+        let _principal = authed(&state, &session, "backup.create").await?;
         if state
             .backup_close_state
             .compare_exchange(2, 1, Ordering::SeqCst, Ordering::SeqCst)
@@ -217,14 +218,32 @@ pub async fn backup_close_retry(app: AppHandle) -> Result<(), AppErrorDto> {
 }
 
 #[tauri::command]
-pub fn backup_close_cancel(state: State<'_, AppState>) {
-    state.backup_close_state.store(0, Ordering::SeqCst);
+pub async fn backup_close_cancel(
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<(), AppErrorDto> {
+    run_command("backup_close_cancel", async move {
+        let _principal = authed(&state, &session, "backup.view").await?;
+        state.backup_close_state.store(0, Ordering::SeqCst);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn backup_close_without(app: AppHandle, state: State<'_, AppState>) {
-    state.backup_close_state.store(0, Ordering::SeqCst);
-    app.exit(0);
+pub async fn backup_close_without(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session: String,
+) -> Result<(), AppErrorDto> {
+    run_command("backup_close_without", async move {
+        let _principal = authed(&state, &session, "backup.view").await?;
+        state.backup_close_state.store(0, Ordering::SeqCst);
+        app.exit(0);
+        #[allow(unreachable_code)]
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]

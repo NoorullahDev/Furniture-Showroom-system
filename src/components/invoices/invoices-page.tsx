@@ -712,7 +712,10 @@ export async function printInvoiceA4(
     const paper = "A4";
     const orientation =
       settings.orientation === "landscape" ? "landscape" : "portrait";
-    const margin = `${settings.marginMm ?? 15}mm`;
+    const marginMm = Math.max(2, settings.marginMm ?? 15);
+    // Bottom margin must be large enough to contain the fixed developer footer
+    const bottomMarginMm = Math.max(14, marginMm);
+    const margin = `${marginMm}mm ${marginMm}mm ${bottomMarginMm}mm ${marginMm}mm`;
     const fs =
       settings.fontSize === "small"
         ? "10pt"
@@ -827,11 +830,12 @@ export async function printInvoiceA4(
   body { font-family: 'Segoe UI', Arial, sans-serif; font-size: ${fs}; color: #1a1a1a; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   table { border-collapse: collapse; }
   thead { display: table-header-group; }
-  tfoot { display: table-footer-group; }
+  tfoot { display: table-row-group; }
   tr { page-break-inside: avoid; }
+  .developer-footer { position: fixed; right: 0; bottom: 0; left: 0; text-align: center; color: #777; font-size: 8pt; line-height: 1.2; }
 </style>
 </head>
-<body>${allCopies}</body>
+<body>${allCopies}<div class="developer-footer">Software developed by <strong>EagleNest Creations</strong> (0346-4451505)</div></body>
 </html>`;
 
     const iframe = document.createElement("iframe");

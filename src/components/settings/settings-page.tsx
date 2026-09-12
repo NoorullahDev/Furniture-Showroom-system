@@ -33,10 +33,18 @@ import {
   type PrinterDestination,
 } from "@/components/invoices/invoice-settings";
 import { MaintenancePage } from "@/components/maintenance/maintenance-page";
+import { HardwareId, LicenseKeyForm } from "@/components/license/license-gate";
 import { PageHeader } from "@/components/page-header";
 import { RoleManagement } from "@/components/roles/role-management";
 import { isSessionError, useSession } from "@/components/session/session-provider";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -306,6 +314,9 @@ function GeneralPanel({
       setError(null);
       await queryClient.invalidateQueries({ queryKey: ["settings"] });
       await queryClient.invalidateQueries({ queryKey: ["branding"] });
+      await queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey.includes("locations"),
+      });
       window.dispatchEvent(new CustomEvent("furniture-branding-changed"));
       toast({ variant: "success", title: "General settings saved" });
     },
@@ -662,24 +673,57 @@ function MyAccountPanel({ onDirtyChange }: { onDirtyChange: (dirty: boolean) => 
 }
 
 function LicensePanel({ status, loading }: { status?: LicenseStatus; loading: boolean }) {
+  const [renewing, setRenewing] = React.useState(false);
   if (loading) return <Loader2 className="h-5 w-5 animate-spin text-neutral-400" />;
   const activated = status?.isActivated === true && status.status === "active";
+  const formatDate = (value?: string | null) => value ? new Date(value).toLocaleString() : "—";
   return (
-    <Card title="License" description="Status is supplied by the backend license verifier; the interface never assumes activation.">
-      <div className="flex items-center gap-3">
-        {activated ? <CheckCircle2 className="h-6 w-6 text-emerald-600" /> : <ShieldCheck className="h-6 w-6 text-neutral-400" />}
-        <div><p className={cn("font-semibold", activated ? "text-emerald-700" : "text-neutral-800")}>{activated ? "License Activated" : status?.label ?? "License status unavailable"}</p><p className="text-xs text-neutral-500">State: {status?.status ?? "unavailable"}</p></div>
-      </div>
-      {(status?.licenseId || status?.customer || status?.activatedAt || status?.expiresAt) && (
-        <dl className="mt-5 grid gap-3 border-t border-neutral-100 pt-4 text-sm sm:grid-cols-2">
-          {status.licenseId && <Info label="License ID" value={status.licenseId} />}
-          {status.customer && <Info label="Licensed to" value={status.customer} />}
-          {status.activatedAt && <Info label="Activated" value={new Date(status.activatedAt).toLocaleString()} />}
-          {status.expiresAt && <Info label="Expires" value={new Date(status.expiresAt).toLocaleString()} />}
-        </dl>
-      )}
-      {!activated && status?.status === "not_configured" && <p className="mt-5 rounded-md bg-neutral-50 p-3 text-sm text-neutral-600">This release has no configured signed-license activation flow, so no activation controls or fake activated state are shown.</p>}
-    </Card>
+    <>
+      <Card
+        title="License"
+        description="Offline license status verified by the secure desktop backend."
+        action={<Button size="sm" onClick={() => setRenewing(true)}><KeyRound className="h-4 w-4" />Renew License</Button>}
+      >
+        <div className="flex items-center gap-3">
+          {activated ? <CheckCircle2 className="h-7 w-7 text-emerald-600" /> : <ShieldCheck className="h-7 w-7 text-red-500" />}
+          <div>
+            <p className={cn("font-semibold", activated ? "text-emerald-700" : "text-red-700")}>{status?.label ?? "License status unavailable"}</p>
+            <p className="text-xs text-neutral-500">{status?.message}</p>
+          </div>
+        </div>
+        {status && <div className="mt-5"><HardwareId value={status.hardwareId} /></div>}
+        {status && (
+          <dl className="mt-5 grid gap-x-6 gap-y-3 border-t border-neutral-100 pt-4 text-sm sm:grid-cols-2">
+            <Info label="Customer / Showroom" value={status.customer ?? "—"} />
+            <Info label="License ID" value={status.licenseId ?? "—"} />
+            <Info label="License Key" value={status.maskedKey ?? "—"} />
+            <Info label="Issue Date" value={formatDate(status.issueDate)} />
+            <Info label="Last Renewed" value={formatDate(status.lastRenewed)} />
+            <Info label="Granted Days" value={status.grantedDays?.toString() ?? "—"} />
+            <Info label="Expiry Date" value={formatDate(status.expiresAt)} />
+            <Info label="Days Remaining" value={status.daysRemaining.toString()} />
+          </dl>
+        )}
+        {status && (
+          <div className="mt-5">
+            <div className="mb-2 flex justify-between text-xs text-neutral-500"><span>Remaining validity</span><span>{status.validityPercent}%</span></div>
+            <div className="h-2 overflow-hidden rounded-full bg-neutral-100" role="progressbar" aria-label="Remaining license validity" aria-valuemin={0} aria-valuemax={100} aria-valuenow={status.validityPercent}>
+              <div className={cn("h-full rounded-full", activated ? "bg-emerald-500" : "bg-red-500")} style={{ width: `${status.validityPercent}%` }} />
+            </div>
+          </div>
+        )}
+      </Card>
+      <Dialog open={renewing} onOpenChange={setRenewing}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Renew License</DialogTitle>
+            <DialogDescription>Paste the newly issued offline license. It must match this computer&apos;s Hardware ID.</DialogDescription>
+          </DialogHeader>
+          {status && <HardwareId value={status.hardwareId} />}
+          <LicenseKeyForm onActivated={() => setRenewing(false)} />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -687,12 +731,12 @@ function SystemPanel({ rows, onOpenBackup }: { rows?: SettingsRows; onOpenBackup
   const { profile, hasPermission } = useSession();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const canSeed = hasPermission("settings.manage");
+  const canSeed = hasPermission("settings.manage") && window.location.protocol === "http:";
 
   const seedMutation = useMutation({
     mutationFn: () => seedDemoData(profile!.sessionId),
     onSuccess: (result) => {
-      toast({ title: "Demo data loaded", description: `${result.products} products, ${result.sales} sales, ${result.purchases} purchases, and more seeded.` });
+      toast({ title: "Demo data loaded", description: `${result.products} products, ${result.bundles} bundles, ${result.sales} sales, ${result.deliveries} deliveries, ${result.salesReturns} returns, and ${result.expenses} expenses seeded.` });
       queryClient.invalidateQueries();
     },
     onError: (caught: unknown) => {
@@ -711,7 +755,7 @@ function SystemPanel({ rows, onOpenBackup }: { rows?: SettingsRows; onOpenBackup
         </dl>
       </Card>
       {canSeed && (
-        <Card title="Demo data" description="Populate the catalogue, suppliers, customers, purchases, sales, and expenses with realistic sample data. Only works on a fresh database with no products.">
+        <Card title="Demo data" description="Populate the catalogue, suppliers, customers, purchases, sales, deliveries, returns, bundles, and expenses with realistic sample data. Safe to run multiple times — existing records are preserved.">
           <Button
             variant="outline"
             size="sm"

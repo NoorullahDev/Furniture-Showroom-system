@@ -4,7 +4,10 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Banknote,
   Boxes,
+  Building2,
+  ClipboardList,
   FileText,
   LayoutDashboard,
   Lock,
@@ -13,9 +16,11 @@ import {
   Package,
   PackageCheck,
   ReceiptText,
+  RotateCcw,
   Settings,
   ShoppingCart,
   Truck,
+  Users,
   Wallet,
   X,
 } from "lucide-react";
@@ -24,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/components/session/session-provider";
 import type { ShellView } from "@/lib/shell";
+import { setDashboardTarget, type DashboardTarget } from "@/lib/dashboard-navigation";
 import { DashboardView } from "@/components/dashboard/dashboard-view";
 import { QuickAddPalette, type QuickAddForm } from "@/components/shell/quick-add";
 import { SearchOverlay } from "@/components/shell/search-overlay";
@@ -53,26 +59,34 @@ type NavItem = {
   view?: ShellView;
   permission?: string;
   phase?: string;
+  highlight?: boolean;
+  dashboardTarget?: DashboardTarget;
 };
 
 // Primary nav items shown in the scrollable middle area.
 // Administration items (users, roles, audit, maintenance) are moved inside the
 // Settings page; their ShellView routes remain for backward-compatibility.
 const PRIMARY_NAV: NavItem[] = [
-  { id: "dashboard",  label: "Dashboard",  icon: LayoutDashboard, view: "dashboard" },
-  { id: "catalogue",  label: "Catalogue",  icon: Package,          view: "catalogue" },
-  { id: "inventory",  label: "Inventory",  icon: Boxes,            view: "inventory" },
-  { id: "purchases",  label: "Purchases",  icon: Truck,            view: "purchases" },
-  { id: "sales",      label: "Sales",      icon: ShoppingCart,     view: "sales" },
-  { id: "fulfilment", label: "Fulfilment", icon: PackageCheck,     view: "fulfilment" },
-  { id: "finance",    label: "Expenses",   icon: Wallet,           view: "finance",   permission: "expense.view" },
-  { id: "invoices",   label: "Invoices",   icon: ReceiptText,      view: "invoices",  permission: "invoice.print" },
-  { id: "reports",    label: "Reports",    icon: FileText,         view: "reports",   permission: "report.export" },
+  { id: "dashboard",         label: "Dashboard",           icon: LayoutDashboard,  view: "dashboard" },
+  { id: "new-sale",          label: "New Sale / POS",      icon: ShoppingCart,     view: "new-sale", highlight: true, dashboardTarget: { view: "sales", target: "new-sale" } },
+  { id: "sales-history",     label: "Sales History",       icon: ClipboardList,    view: "sales-history", dashboardTarget: { view: "sales", target: "sales-today" } },
+  { id: "returns-exchanges", label: "Returns & Exchanges", icon: RotateCcw,        view: "returns-exchanges", dashboardTarget: { view: "fulfilment", target: "returns" } },
+  { id: "products",          label: "Products",            icon: Package,          view: "catalogue" },
+  { id: "inventory",         label: "Inventory",           icon: Boxes,            view: "inventory" },
+  { id: "purchases",         label: "Purchases",           icon: Truck,            view: "purchases" },
+  { id: "customers",         label: "Customers",           icon: Users,            view: "customers-tab", dashboardTarget: { view: "sales", target: "payments-today" } },
+  { id: "customer-dues",     label: "Customer Dues",       icon: Wallet,           view: "customer-dues", dashboardTarget: { view: "sales", target: "customer-dues" } },
+  { id: "suppliers",         label: "Suppliers",           icon: Building2,        view: "suppliers-list", dashboardTarget: { view: "purchases", target: "suppliers" } },
+  { id: "supplier-dues",     label: "Supplier Dues",       icon: Banknote,         view: "supplier-dues", dashboardTarget: { view: "purchases", target: "payables" } },
+  { id: "deliveries",        label: "Deliveries",          icon: PackageCheck,     view: "deliveries", dashboardTarget: { view: "fulfilment", target: "deliveries" } },
+  { id: "finance",           label: "Expenses",            icon: Wallet,           view: "finance",   permission: "expense.view" },
+  { id: "invoices",          label: "Invoices",            icon: ReceiptText,      view: "invoices",  permission: "invoice.print" },
+  { id: "reports",           label: "Reports",             icon: FileText,         view: "reports",   permission: "report.export" },
 ];
 
 const VIEW_TITLES: Record<ShellView, string> = {
   dashboard: "Dashboard",
-  catalogue: "Catalogue",
+  catalogue: "Products",
   inventory: "Inventory",
   purchases: "Purchases",
   sales: "Sales",
@@ -85,6 +99,14 @@ const VIEW_TITLES: Record<ShellView, string> = {
   invoices: "Invoices",
   settings: "Settings",
   maintenance: "Backup & maintenance",
+  "new-sale": "New Sale / POS",
+  "sales-history": "Sales History",
+  "returns-exchanges": "Returns & Exchanges",
+  "customers-tab": "Customers",
+  "customer-dues": "Customer Dues",
+  "suppliers-list": "Suppliers",
+  "supplier-dues": "Supplier Dues",
+  deliveries: "Deliveries",
 };
 
 function useIdleLock(onIdle: () => void) {
@@ -110,18 +132,23 @@ function SidebarContent({
   current,
   onNavigate,
   shopName,
+  ownerName,
   logo,
   closeMenu,
 }: {
   current: ShellView;
   onNavigate: (view: ShellView) => void;
   shopName: string;
+  ownerName: string | null;
   logo: string | null;
   closeMenu?: () => void;
 }) {
   const { hasPermission, profile, lock, logout, busy } = useSession();
 
-  const initial = (profile?.fullName || profile?.username || "?")
+  const isOwner = (profile?.roles ?? []).some((role) => role.toLowerCase() === "owner");
+  const profileName = profile?.fullName || profile?.username || "?";
+  const displayName = isOwner && ownerName?.trim() ? ownerName.trim() : profileName;
+  const initial = displayName
     .split(/\s+/)
     .slice(0, 2)
     .map((s) => s[0] ?? "")
@@ -139,8 +166,10 @@ function SidebarContent({
     current === "audit" ||
     current === "maintenance";
 
-  function go(view: ShellView) {
-    onNavigate(view);
+  function go(item: NavItem) {
+    if (!item.view) return;
+    if (item.dashboardTarget) setDashboardTarget(item.dashboardTarget);
+    onNavigate(item.view);
     closeMenu?.();
   }
 
@@ -179,14 +208,16 @@ function SidebarContent({
               <li key={item.id}>
                 <button
                   type="button"
-                  onClick={() => item.view && go(item.view)}
+                  onClick={() => go(item)}
                   disabled={!item.view}
                   aria-current={active ? "page" : undefined}
                   className={cn(
                     "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
                   )}
                   style={{
-                    background: active ? "#2563eb" : "transparent",
+                    background: active
+                      ? item.highlight ? "#059669" : "#2563eb"
+                      : "transparent",
                     color: active ? "#fff" : "rgba(255,255,255,0.65)",
                   }}
                   onMouseEnter={(e) => {
@@ -216,7 +247,7 @@ function SidebarContent({
         {/* Settings */}
         <button
           type="button"
-          onClick={() => go("settings")}
+          onClick={() => { onNavigate("settings"); closeMenu?.(); }}
           aria-current={isSettingsActive ? "page" : undefined}
           className="mb-1 flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
           style={{
@@ -250,7 +281,7 @@ function SidebarContent({
           </span>
           <div className="min-w-0 flex-1 leading-tight">
             <p className="truncate text-sm font-medium text-white">
-              {profile?.fullName || profile?.username}
+              {displayName}
             </p>
             <p
               className="truncate text-[10px] capitalize"
@@ -319,6 +350,11 @@ export function AppShell() {
     queryFn: () => settingsGet(session, "shop.name"),
     enabled: Boolean(session),
   });
+  const ownerNameQuery = useQuery({
+    queryKey: ["branding", "owner-name"],
+    queryFn: () => settingsGet(session, "shop.owner_name"),
+    enabled: Boolean(session),
+  });
   const logoQuery = useQuery({
     queryKey: ["branding", "logo"],
     queryFn: () => shopLogoGet(session),
@@ -332,6 +368,15 @@ export function AppShell() {
       if (typeof parsed === "string" && parsed.trim()) shopName = parsed;
     } catch {
       // Retain the safe fallback for malformed legacy settings.
+    }
+  }
+  let ownerName: string | null = null;
+  if (ownerNameQuery.data) {
+    try {
+      const parsed = JSON.parse(ownerNameQuery.data) as unknown;
+      if (typeof parsed === "string" && parsed.trim()) ownerName = parsed;
+    } catch {
+      // Empty or malformed legacy values use the authenticated user's name.
     }
   }
 
@@ -363,7 +408,7 @@ export function AppShell() {
     <div className="flex h-screen overflow-hidden bg-cream">
       {/* Desktop sidebar — dark navy */}
       <aside className="hidden w-56 shrink-0 lg:block" style={{ background: "#0f172a" }}>
-        <SidebarContent current={view} onNavigate={navigate} shopName={shopName} logo={logoQuery.data ?? null} />
+        <SidebarContent current={view} onNavigate={navigate} shopName={shopName} ownerName={ownerName} logo={logoQuery.data ?? null} />
       </aside>
 
       {/* Mobile drawer */}
@@ -390,6 +435,7 @@ export function AppShell() {
               current={view}
               onNavigate={navigate}
               shopName={shopName}
+              ownerName={ownerName}
               logo={logoQuery.data ?? null}
               closeMenu={() => setMobileOpen(false)}
             />
@@ -432,11 +478,19 @@ export function AppShell() {
           )}
           {view === "catalogue" && <CataloguePage />}
           {view === "inventory" && <InventoryPage />}
-          {view === "purchases" && <PurchasesPage />}
-          {view === "sales" && <SalesPage />}
+          {view === "purchases" && <PurchasesPage activeTab="purchases" />}
+          {view === "suppliers-list" && <PurchasesPage activeTab="suppliers" />}
+          {view === "supplier-dues" && <PurchasesPage activeTab="payables" />}
+          {view === "sales" && <SalesPage activeTab="sales" />}
+          {view === "new-sale" && <SalesPage activeTab="pos" />}
+          {view === "sales-history" && <SalesPage activeTab="sales" />}
+          {view === "customers-tab" && <SalesPage activeTab="customers" />}
+          {view === "customer-dues" && <SalesPage activeTab="due" />}
           {view === "fulfilment" && <FulfilmentPage />}
+          {view === "returns-exchanges" && <FulfilmentPage />}
+          {view === "deliveries" && <FulfilmentPage />}
           {view === "finance" && <ExpensesPage />}
-            {view === "reports" && <ReportsPage />}
+          {view === "reports" && <ReportsPage />}
           {view === "invoices" && <InvoicesPage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}

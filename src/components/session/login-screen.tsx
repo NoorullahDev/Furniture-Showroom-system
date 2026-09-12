@@ -3,16 +3,14 @@
 import * as React from "react";
 import {
   Armchair,
-  CheckCircle2,
   CircleAlert,
   Eye,
   EyeOff,
   Loader2,
-  ShieldQuestion,
 } from "lucide-react";
 
 import { useSession } from "@/components/session/session-provider";
-import { authLogin, licenseStatus, type LicenseStatus } from "@/lib/tauri/api";
+import { authLogin, shopLogoGet } from "@/lib/tauri/api";
 import type { CommandError } from "@/lib/tauri/client";
 
 export function LoginScreen() {
@@ -23,20 +21,17 @@ export function LoginScreen() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [waitSecs, setWaitSecs] = React.useState(0);
-  const [license, setLicense] = React.useState<LicenseStatus | null>(null);
-  const [licenseUnavailable, setLicenseUnavailable] = React.useState(false);
+  const [logo, setLogo] = React.useState<string | null>(null);
   const usernameRef = React.useRef<HTMLInputElement>(null);
   const passwordRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     let active = true;
-    void licenseStatus()
-      .then((result) => {
-        if (active) setLicense(result);
-      })
-      .catch(() => {
-        if (active) setLicenseUnavailable(true);
-      });
+
+    void shopLogoGet("").then((res) => {
+      if (active && res) setLogo(res);
+    }).catch(() => {});
+
     return () => {
       active = false;
     };
@@ -99,11 +94,15 @@ export function LoginScreen() {
         className="w-full max-w-[460px] rounded-2xl border border-[#e2e6ec] bg-white px-6 py-8 shadow-[0_8px_28px_rgba(23,42,76,0.08)] sm:px-10 sm:py-10"
       >
         <header className="text-center">
-          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-[#192f58] text-white shadow-sm">
-            <Armchair className="h-7 w-7" strokeWidth={1.8} aria-hidden="true" />
-          </span>
+          {logo ? (
+            <img src={logo} alt="Showroom Logo" className="mx-auto h-16 w-auto object-contain" />
+          ) : (
+            <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-[#192f58] text-white shadow-sm">
+              <Armchair className="h-7 w-7" strokeWidth={1.8} aria-hidden="true" />
+            </span>
+          )}
           <h1 id="login-title" className="mt-5 text-[22px] font-semibold tracking-[-0.02em] text-[#172033]">
-            Furniture Showroom Management
+            Furniture Showroom Manager
           </h1>
           <p className="mt-1.5 text-sm text-[#8a94a6]">Professional Furniture Management</p>
         </header>
@@ -118,7 +117,7 @@ export function LoginScreen() {
         <form onSubmit={submit} noValidate className="space-y-5">
           <div>
             <label htmlFor="login-username" className="mb-2 block text-sm font-medium text-[#3c4658]">
-              Username
+              Username <span className="text-red-500">*</span>
             </label>
             <input
               ref={usernameRef}
@@ -143,7 +142,7 @@ export function LoginScreen() {
 
           <div>
             <label htmlFor="login-password" className="mb-2 block text-sm font-medium text-[#3c4658]">
-              Password
+              Password <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <input
@@ -209,55 +208,11 @@ export function LoginScreen() {
             )}
           </button>
 
-          <p className="pt-1 text-center text-sm text-[#8a94a6]">
-            Forgot your password?{" "}
-            <span className="font-medium text-[#315f9d]">Contact your administrator</span>
+          <p className="pt-1 text-center text-xs text-[#8a94a6]">
+            Powered by <strong className="font-semibold text-[#3c4658]">EagleNest Creations</strong> (0346-4451505)
           </p>
         </form>
       </section>
-
-      <LicenseIndicator license={license} unavailable={licenseUnavailable} />
     </main>
-  );
-}
-
-function LicenseIndicator({
-  license,
-  unavailable,
-}: {
-  license: LicenseStatus | null;
-  unavailable: boolean;
-}) {
-  if (unavailable) {
-    return (
-      <p className="mt-7 flex items-center gap-2 text-sm text-[#7f899b]" role="status">
-        <ShieldQuestion className="h-4 w-4" aria-hidden="true" />
-        License status unavailable
-      </p>
-    );
-  }
-
-  if (!license) {
-    return (
-      <p className="mt-7 flex items-center gap-2 text-sm text-[#7f899b]" role="status">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Checking license status…
-      </p>
-    );
-  }
-
-  const activated = license.isActivated && license.status === "active";
-  return (
-    <p
-      className={`mt-7 flex items-center gap-2 text-sm ${activated ? "text-emerald-600" : "text-[#7f899b]"}`}
-      role="status"
-    >
-      {activated ? (
-        <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-      ) : (
-        <ShieldQuestion className="h-4 w-4" aria-hidden="true" />
-      )}
-      {activated ? "License Activated" : license.label}
-    </p>
   );
 }

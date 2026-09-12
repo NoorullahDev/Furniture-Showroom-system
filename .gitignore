@@ -30,3 +30,5 @@ src-tauri/app-icon.png
 .env
 .env.*
 !.env.example
+license-issuer-private.pem
+*.license-private.pem

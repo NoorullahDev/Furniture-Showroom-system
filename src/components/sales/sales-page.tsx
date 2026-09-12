@@ -7,20 +7,19 @@ import {
   CheckCircle2,
   ClipboardList,
   Copy,
-  FileText,
   Layers,
   Loader2,
-  Package,
   Pencil,
   Plus,
   Printer,
   Search,
-  ShoppingCart,
   TriangleAlert,
+  Upload,
   UserPlus,
   X,
 } from "lucide-react";
 
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -102,12 +101,11 @@ import {
   type SaleDto,
   type StockBalanceDto,
 } from "@/lib/tauri/api";
-import { formatDateTime, formatPkr } from "@/lib/format";
+import { formatDateTime, formatPkr, todayIso } from "@/lib/format";
 import { commandErrorMessage } from "@/lib/tauri/client";
 import { cn } from "@/lib/utils";
 import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 
-type SalesTab = "pos" | "sales" | "customers" | "sets" | "due";
 
 type CartLine = {
   key: string;
@@ -128,16 +126,6 @@ const SALES_LEDGER_LABELS: Record<string, string> = {
   sale_cancellation: "Sale cancelled",
   payment_refund: "Payment refund",
 };
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function isoDate(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
-}
 
 function saleReminderText(s: ReceivableSaleDto): string {
   const invoice = s.saleNumber ?? `#${s.saleId}`;
@@ -178,7 +166,7 @@ function CopyReminderButton({ text, label = "Copy reminder" }: { text: string; l
   );
 }
 
-export function SalesPage() {
+export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "customers" | "due" }) {
   const { toast } = useToast();
   const { refresh, profile, hasPermission } = useSession();
   const queryClient = useQueryClient();
@@ -196,16 +184,6 @@ export function SalesPage() {
   const canReceive = hasPermission("payment.receive");
 
   const dashboardTarget = React.useMemo(() => takeDashboardTarget("sales"), []);
-  const initialView: SalesTab = dashboardTarget?.target === "new-sale"
-    ? "pos"
-    : dashboardTarget?.target === "customer-dues"
-      ? "due"
-      : dashboardTarget?.target === "payments-today" || dashboardTarget?.target === "payment"
-        ? "customers"
-        : dashboardTarget
-          ? "sales"
-          : canSell ? "pos" : "sales";
-  const [view, setView] = React.useState<SalesTab>(initialView);
   const [dashboardSalesFilter, setDashboardSalesFilter] = React.useState<"today" | "month" | null>(
     dashboardTarget?.target === "sales-today" ? "today" : dashboardTarget?.target === "sales-month" ? "month" : null,
   );
@@ -219,7 +197,7 @@ export function SalesPage() {
     | "bundle-detail"
     | "sale-detail"
     | "cancel-sale"
-  >(null);
+  >(dashboardTarget?.target === "new-customer" && canManageCustomer ? "customer" : null);
   const [activeCustomer, setActiveCustomer] = React.useState<CustomerDto | null>(null);
   const [activeBundle, setActiveBundle] = React.useState<BundleDto | null>(null);
   const [activeSale, setActiveSale] = React.useState<SaleDto | null>(null);
@@ -321,26 +299,21 @@ export function SalesPage() {
     toast({ variant: "error", title: "Operation failed", description: commandErrorMessage(e) });
   };
 
+  const titles = {
+    pos: { title: "New Sale / POS", subtitle: "Select products, customer, and complete the sale." },
+    sales: { title: "Sales History", subtitle: "Saved sales, invoices, and printing." },
+    customers: { title: "Customers", subtitle: "Manage customer directory." },
+    due: { title: "Customer Dues", subtitle: "Track balances, advances, and collect payments." },
+  };
+
   return (
     <div>
       <PageHeader
-        title="Sales"
-        subtitle="Point of sale, customers, receipts and furniture sets."
+        title={titles[activeTab].title}
+        subtitle={titles[activeTab].subtitle}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {canViewBundles && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setActiveBundle(null);
-                  setDialog("bundle-detail");
-                }}
-              >
-                <Layers className="h-4 w-4" />
-                Set availability
-              </Button>
-            )}
-            {canManageCustomer && (
+            {activeTab === "customers" && canManageCustomer && (
               <Button
                 variant="outline"
                 onClick={() => {
@@ -352,53 +325,30 @@ export function SalesPage() {
                 New customer
               </Button>
             )}
-            {canManageBundles && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setActiveBundle(null);
-                  setDialog("bundle");
-                }}
-              >
-                <Package className="h-4 w-4" />
-                New set
-              </Button>
-            )}
+            {/* The Add Customer action in POS is rendered locally in the POS panel, so we only need it here for the Customers tab */}
           </div>
         }
       />
 
-      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <SummaryCard label="Confirmed sales" value={sales.filter((s) => s.status === "confirmed").length} accent="forest" />
-        <SummaryCard label="Sales value" value={totalSales} money accent="gold" />
-        <SummaryCard label="Collected" value={totalPaid} money accent="green" />
-        <SummaryCard label="Outstanding" value={outstanding} money accent="rose" />
-        <SummaryCard label="Customer advances" value={advanceOnHand} money accent="neutral" />
-        <SummaryCard label="Cash on hand" value={cashOnHand} money accent="neutral" />
-      </div>
-
-      <div className="mt-5 flex items-center gap-1 overflow-x-auto border-b border-neutral-200">
-        <TabButton active={view === "pos"} onClick={() => setView("pos")} icon={<ShoppingCart className="h-4 w-4" />}>
-          Point of sale
-        </TabButton>
-        <TabButton active={view === "sales"} onClick={() => setView("sales")} icon={<FileText className="h-4 w-4" />}>
-          Sales
-        </TabButton>
-        <TabButton active={view === "customers"} onClick={() => setView("customers")} icon={<ClipboardList className="h-4 w-4" />}>
-          Customers
-        </TabButton>
-        <TabButton active={view === "sets"} onClick={() => setView("sets")} icon={<Layers className="h-4 w-4" />}>
-          Furniture sets
-        </TabButton>
-        {canReceive && (
-          <TabButton active={view === "due"} onClick={() => setView("due")} icon={<TriangleAlert className="h-4 w-4" />}>
-            Due control
-          </TabButton>
-        )}
-      </div>
+      {activeTab === "sales" && (
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
+          <SummaryCard label="Confirmed sales" value={sales.filter((s) => s.status === "confirmed").length} accent="forest" />
+          <SummaryCard label="Sales value" value={totalSales} money accent="gold" />
+          <SummaryCard label="Collected" value={totalPaid} money accent="green" />
+          <SummaryCard label="Outstanding" value={outstanding} money accent="rose" />
+        </div>
+      )}
+      
+      {activeTab === "due" && (
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <SummaryCard label="Outstanding dues" value={outstanding} money accent="rose" />
+          <SummaryCard label="Customer advances" value={advanceOnHand} money accent="neutral" />
+          <SummaryCard label="Cash on hand" value={cashOnHand} money accent="neutral" />
+        </div>
+      )}
 
       <div className="mt-5">
-        {view === "pos" && (
+        {activeTab === "pos" && (
           <PosPanel
             session={session}
             locations={locations}
@@ -420,7 +370,7 @@ export function SalesPage() {
             onFailed={failed}
           />
         )}
-        {view === "sales" && (
+        {activeTab === "sales" && (
           <div>
             {dashboardSalesFilter && (
               <div className="mb-3 flex items-center justify-between rounded-md border border-forest-200 bg-forest-50 px-3 py-2 text-sm text-forest-800">
@@ -445,7 +395,7 @@ export function SalesPage() {
             />
           </div>
         )}
-        {view === "customers" && (
+        {activeTab === "customers" && (
           <CustomersTable
             rows={customers}
             loading={customersQuery.isLoading}
@@ -460,18 +410,7 @@ export function SalesPage() {
             }}
           />
         )}
-        {view === "sets" && (
-          <SetsTable
-            rows={bundles}
-            loading={bundlesQuery.isLoading}
-            canManage={canManageBundles}
-            onEdit={(b) => {
-              setActiveBundle(b);
-              setDialog("bundle");
-            }}
-          />
-        )}
-        {view === "due" && canReceive && <DueControlPanel session={session} onError={failed} />}
+        {activeTab === "due" && canReceive && <DueControlPanel session={session} onError={failed} />}
       </div>
 
       {dialog === "customer" && (
@@ -572,7 +511,7 @@ function PosPanel({
   onDone: () => void;
   onFailed: (e: Error) => void;
 }) {
-  const [locationId, setLocationId] = React.useState<number | null>(locations[0]?.id ?? null);
+  const locationId = locations[0]?.id ?? null;
   const [q, setQ] = React.useState("");
   const [cart, setCart] = React.useState<CartLine[]>([]);
   const [customerId, setCustomerId] = React.useState<number | null>(null);
@@ -596,12 +535,6 @@ function PosPanel({
     for (const row of stockQuery.data ?? []) map[row.productId] = row;
     return map;
   }, [stockQuery.data]);
-
-  React.useEffect(() => {
-    if (locations.length > 0 && (locationId === null || !locations.some((l) => l.id === locationId))) {
-      setLocationId(locations[0].id);
-    }
-  }, [locations, locationId]);
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
 
@@ -747,19 +680,10 @@ function PosPanel({
       <div className="rounded-lg border border-neutral-200 bg-white p-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="grid gap-1.5">
-            <Label>Location</Label>
-            <Select value={locationId ? String(locationId) : ""} onValueChange={(v) => setLocationId(Number(v))}>
-              <SelectTrigger className="w-48">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={String(l.id)}>
-                    {l.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Showroom</Label>
+            <div className="flex h-9 min-w-48 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-700">
+              {locations[0]?.name ?? "Loading…"}
+            </div>
           </div>
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
@@ -805,12 +729,21 @@ function PosPanel({
               onClick={() => addBundle(b)}
               className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/40 p-2 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
             >
-              <div className="flex items-center justify-between">
-                <Layers className="h-4 w-4 text-amber-600" />
-                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-                  Set
-                </span>
-              </div>
+              {b.coverImagePath ? (
+                <div className="relative h-20 w-full overflow-hidden rounded-md bg-amber-100">
+                  <StoredImage path={b.coverImagePath} className="h-full w-full object-cover" />
+                  <span className="absolute right-1 top-1 rounded bg-amber-100/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 backdrop-blur-sm">
+                    Set
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <Layers className="h-4 w-4 text-amber-600" />
+                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                    Set
+                  </span>
+                </div>
+              )}
               <div className="grid gap-0.5">
                 <span className="truncate text-sm font-medium text-neutral-900">{b.name}</span>
                 <span className="text-[11px] text-neutral-500">{b.code} · {b.items.length} item(s)</span>
@@ -1975,7 +1908,7 @@ function LedgerDialog({
   const [mode, setMode] = React.useState<LedgerMode>({ tab: "view" });
   const [statementRange, setStatementRange] = React.useState<{ from: string; to: string }>(() => {
     const now = new Date();
-    return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDate(now) };
+    return { from: todayIso(new Date(now.getFullYear(), now.getMonth(), 1)), to: todayIso(now) };
   });
 
   const ledgerQuery = useQuery({
@@ -2494,7 +2427,7 @@ function VoidReceiptDialog({
 // Furniture sets (bundles)
 // ---------------------------------------------------------------------------
 
-function SetsTable({
+export function SetsTable({
   rows,
   loading,
   canManage,
@@ -2513,6 +2446,7 @@ function SetsTable({
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-12">Image</TableHead>
               <TableHead>Code</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Description</TableHead>
@@ -2526,6 +2460,17 @@ function SetsTable({
           <TableBody>
             {rows.map((b) => (
               <TableRow key={b.id}>
+                <TableCell>
+                  <div className="h-10 w-10 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+                    {b.coverImagePath ? (
+                      <StoredImage path={b.coverImagePath} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center">
+                        <Layers className="h-4 w-4 text-neutral-300" />
+                      </div>
+                    )}
+                  </div>
+                </TableCell>
                 <TableCell className="font-medium text-neutral-900">{b.code}</TableCell>
                 <TableCell>{b.name}</TableCell>
                 <TableCell className="max-w-xs truncate">{b.description ?? "—"}</TableCell>
@@ -2551,8 +2496,10 @@ function SetsTable({
 }
 
 type BundleLine = { key: number; productId: number | null; quantity: string };
+// initialProductName is carried alongside productId so the picker can pre-display it in edit mode
+type BundleLineWithName = BundleLine & { initialProductName?: string; initialArticle?: string };
 
-function BundleDialog({
+export function BundleDialog({
   session,
   bundle,
   onClose,
@@ -2568,13 +2515,23 @@ function BundleDialog({
   const [code, setCode] = React.useState(bundle?.code ?? "");
   const [name, setName] = React.useState(bundle?.name ?? "");
   const [description, setDescription] = React.useState(bundle?.description ?? "");
+  // When editing, coverImagePath is already a full absolute path returned by the backend.
+  // When a new image is chosen, it is the raw filesystem path the user picked.
+  const [coverImagePath, setCoverImagePath] = React.useState<string | null>(bundle?.coverImagePath ?? null);
   const [price, setPrice] = React.useState(bundle?.defaultPriceMinor ?? 0);
   const [isActive, setIsActive] = React.useState(bundle?.isActive ?? true);
-  const [lines, setLines] = React.useState<BundleLine[]>(
+  const [lines, setLines] = React.useState<BundleLineWithName[]>(
     bundle
-      ? bundle.items.map((i, idx) => ({ key: idx + 1, productId: i.productId, quantity: String(i.quantity) }))
+      ? bundle.items.map((i, idx) => ({
+          key: idx + 1,
+          productId: i.productId,
+          quantity: String(i.quantity),
+          initialProductName: i.productName,
+          initialArticle: i.articleNumber,
+        }))
       : [{ key: 1, productId: null, quantity: "1" }],
   );
+  const [saveError, setSaveError] = React.useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -2582,7 +2539,9 @@ function BundleDialog({
         code: code.trim().toUpperCase(),
         name: name.trim(),
         description: description.trim() || null,
-        coverImagePath: null,
+        // Pass the raw path; the backend detects whether it is a new filesystem
+        // path (contains a separator) or a stored filename and handles accordingly.
+        coverImagePath,
         defaultPriceMinor: price,
         isActive,
         items: lines
@@ -2599,20 +2558,35 @@ function BundleDialog({
       }
       return bundleCreate(session, input);
     },
-    onSuccess: onDone,
-    onError,
+    onSuccess: () => {
+      setSaveError(null);
+      onDone();
+    },
+    onError: (e: Error) => {
+      // Show the error inline without closing the form so the user can fix it
+      setSaveError(commandErrorMessage(e));
+      onError(e);
+    },
   });
 
-  const valid =
-    code.trim().length > 0 &&
-    name.trim().length > 0 &&
-    lines.some((l) => l.productId !== null && (Number(l.quantity) || 0) > 0);
+  const missingCode = code.trim().length === 0;
+  const missingName = name.trim().length === 0;
+  const missingItem = !lines.some((l) => l.productId !== null && (Number(l.quantity) || 0) > 0);
+  const valid = !missingCode && !missingName && !missingItem;
+
+  const validationHint = missingCode
+    ? "Enter a set code."
+    : missingName
+    ? "Enter a set name."
+    : missingItem
+    ? "Search and select at least one product in the Items section, then confirm its quantity."
+    : null;
 
   return (
     <FormDialog
       title={bundle ? `Edit set ${bundle.name}` : "New furniture set"}
       description="A set groups products that are sold together as one line."
-      onSubmit={() => mutation.mutate()}
+      onSubmit={() => { setSaveError(null); mutation.mutate(); }}
       busy={mutation.isPending}
       submitLabel={bundle ? "Save set" : "Add set"}
       onClose={onClose}
@@ -2638,6 +2612,46 @@ function BundleDialog({
           className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
         />
       </div>
+      <div className="grid gap-1.5">
+        <Label>Full set image (optional)</Label>
+        <div className="flex flex-wrap items-center gap-4">
+          {coverImagePath && (
+            <div className="relative h-20 w-20 overflow-hidden rounded-md border border-neutral-200 bg-neutral-100">
+              {/* New pick: raw filesystem path (has separators). Existing: full abs path from backend — also has separators, so convertFileSrc works for preview. After save the backend stores and returns the managed path, so StoredImage takes over on next open. */}
+              {coverImagePath.includes("/") || coverImagePath.includes("\\") ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={convertFileSrc(coverImagePath)} alt="Furniture set" className="h-full w-full object-cover" />
+              ) : (
+                <StoredImage path={coverImagePath} className="h-full w-full object-cover" />
+              )}
+              <button
+                type="button"
+                aria-label="Remove full set image"
+                onClick={() => setCoverImagePath(null)}
+                className="absolute right-1 top-1 rounded-full bg-white/80 p-1 text-neutral-600 hover:text-red-600"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const { open } = await import("@tauri-apps/plugin-dialog");
+              const path = await open({
+                multiple: false,
+                filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png", "webp"] }],
+              });
+              if (typeof path === "string") setCoverImagePath(path);
+            }}
+          >
+            <Upload className="mr-2 h-4 w-4" />
+            Choose image
+          </Button>
+        </div>
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
           <Label>Default price</Label>
@@ -2657,6 +2671,17 @@ function BundleDialog({
         </div>
       </div>
       <BundleLinesEditor session={session} lines={lines} onChange={setLines} />
+      {/* Inline guidance — shown below the items list, just above the footer buttons */}
+      {validationHint && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {validationHint}
+        </p>
+      )}
+      {saveError && (
+        <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          Save failed: {saveError}
+        </p>
+      )}
     </FormDialog>
   );
 }
@@ -2667,12 +2692,12 @@ function BundleLinesEditor({
   onChange,
 }: {
   session: string;
-  lines: BundleLine[];
-  onChange: (lines: BundleLine[]) => void;
+  lines: BundleLineWithName[];
+  onChange: (lines: BundleLineWithName[]) => void;
 }) {
   const nextKey = React.useRef(Date.now() + 1);
   const addLine = () => onChange([...lines, { key: nextKey.current++, productId: null, quantity: "1" }]);
-  const update = (key: number, next: BundleLine) => onChange(lines.map((l) => (l.key === key ? next : l)));
+  const update = (key: number, next: BundleLineWithName) => onChange(lines.map((l) => (l.key === key ? next : l)));
   const remove = (key: number) => onChange(lines.filter((l) => l.key !== key));
 
   return (
@@ -2696,17 +2721,54 @@ function BundleLineEditor({
   onRemove,
 }: {
   session: string;
-  value: BundleLine;
-  onChange: (next: BundleLine) => void;
+  value: BundleLineWithName;
+  onChange: (next: BundleLineWithName) => void;
   onRemove: () => void;
 }) {
-  const picker = useProductPicker(session);
+  // Build the initial product stub from the names carried in the line (edit mode).
+  // useProductPicker will pre-select it so the picker shows the product name and
+  // the line's productId is never cleared on mount.
+  const initialProduct = React.useMemo<ProductListItemDto | null>(() => {
+    if (value.productId !== null && value.initialProductName) {
+      return {
+        id: value.productId,
+        name: value.initialProductName,
+        articleNumber: value.initialArticle ?? "",
+        // These fields are not needed for display; fill with safe defaults.
+        categoryId: 0,
+        category: "",
+        productTypeId: null,
+        productType: null,
+        unit: null,
+        salePriceMinor: 0,
+        costMinor: null,
+        minimumStock: 0,
+        trackStock: false,
+        isActive: true,
+        archivedAt: null,
+        primaryThumbnailPath: null,
+      } as ProductListItemDto;
+    }
+    return null;
+  }, []);
 
+  const picker = useProductPicker(session, initialProduct);
+
+  // Sync picker selection → line.productId.
+  // Only update when picker.selected actually changes; do NOT clear productId
+  // when picker.selected is still null (i.e. on first render before any interaction).
+  const prevSelectedIdRef = React.useRef<number | null | undefined>(undefined);
   React.useEffect(() => {
-    if (picker.selected && picker.selected.id !== value.productId) {
-      onChange({ ...value, productId: picker.selected.id });
-    } else if (!picker.selected && value.productId !== null) {
-      onChange({ ...value, productId: null });
+    const newId = picker.selected?.id ?? null;
+    if (prevSelectedIdRef.current === undefined) {
+      // First render — picker was just initialised; record the starting id
+      // but do not write back (avoids clearing a pre-populated productId).
+      prevSelectedIdRef.current = newId;
+      return;
+    }
+    if (newId !== prevSelectedIdRef.current) {
+      prevSelectedIdRef.current = newId;
+      onChange({ ...value, productId: newId });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picker.selected]);
@@ -2735,7 +2797,7 @@ function BundleLineEditor({
   );
 }
 
-function BundleAvailabilityDialog({
+export function BundleAvailabilityDialog({
   session,
   bundles,
   locations,
@@ -2747,7 +2809,7 @@ function BundleAvailabilityDialog({
   onClose: () => void;
 }) {
   const [bundleId, setBundleId] = React.useState<number | null>(null);
-  const [locationId, setLocationId] = React.useState<number | null>(locations[0]?.id ?? null);
+  const locationId = locations[0]?.id ?? null;
 
   const availabilityQuery = useQuery({
     queryKey: ["selling", "bundle-availability", bundleId, locationId],
@@ -2762,7 +2824,7 @@ function BundleAvailabilityDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Set availability</DialogTitle>
-          <DialogDescription>Check how many complete sets can be built at a location.</DialogDescription>
+          <DialogDescription>Check how many complete sets can be built in the showroom.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-2">
           <div className="grid gap-1.5">
@@ -2781,19 +2843,10 @@ function BundleAvailabilityDialog({
             </Select>
           </div>
           <div className="grid gap-1.5">
-            <Label>Location</Label>
-            <Select value={locationId ? String(locationId) : ""} onValueChange={(v) => setLocationId(Number(v))}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {locations.map((l) => (
-                  <SelectItem key={l.id} value={String(l.id)}>
-                    {l.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Showroom</Label>
+            <div className="flex h-9 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-700">
+              {locations[0]?.name ?? "Loading…"}
+            </div>
           </div>
         </div>
         {availabilityQuery.isLoading && <LoadingRow />}
@@ -2960,10 +3013,12 @@ function EmptyRow({ message }: { message: string }) {
   );
 }
 
-function useProductPicker(session: string) {
+function useProductPicker(session: string, initialProduct: ProductListItemDto | null = null) {
   const [q, setQ] = React.useState("");
   const [results, setResults] = React.useState<ProductListItemDto[]>([]);
-  const [selected, setSelected] = React.useState<ProductListItemDto | null>(null);
+  // Pre-populate with the initial product so edit-mode rows show the selected
+  // product name immediately without an extra API call.
+  const [selected, setSelected] = React.useState<ProductListItemDto | null>(initialProduct);
   const [open, setOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -2989,6 +3044,20 @@ function ProductPicker({
   label: string;
 }) {
   const { q, setQ, results, selected, setSelected, open, setOpen } = picker;
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+
+  // Close dropdown when user clicks outside this component.
+  React.useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open, setOpen]);
+
   return (
     <div className="grid gap-1.5">
       <Label>{label}</Label>
@@ -3010,7 +3079,7 @@ function ProductPicker({
           </button>
         </div>
       ) : (
-        <div className="relative">
+        <div className="relative" ref={wrapperRef}>
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
           <Input
             value={q}
@@ -3024,23 +3093,28 @@ function ProductPicker({
           />
           {open && q.trim() && (
             <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border border-neutral-200 bg-white shadow-lg">
-              {results.length === 0 && <p className="px-3 py-2 text-sm text-neutral-500">No matching products</p>}
-              {results.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-neutral-50"
-                  onClick={() => {
-                    setSelected(p);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-neutral-900">{p.name}</span>
-                    <span className="block text-[11px] text-neutral-500">{p.articleNumber}</span>
-                  </span>
-                </button>
-              ))}
+              {results.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-neutral-500">No matching products — keep typing…</p>
+              ) : (
+                results.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-neutral-50"
+                    onMouseDown={(e) => {
+                      // Use mousedown so the selection fires before the input loses focus
+                      e.preventDefault();
+                      setSelected(p);
+                      setOpen(false);
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-neutral-900">{p.name}</span>
+                      <span className="block text-[11px] text-neutral-500">{p.articleNumber}</span>
+                    </span>
+                  </button>
+                ))
+              )}
             </div>
           )}
         </div>

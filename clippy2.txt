@@ -1,0 +1,19 @@
+﻿cargo :     Checking furniture-shop v0.1.0 (D:\Projects\Furniture Showroom system\src-tauri)
+At line:1 char:1
++ cargo clippy -- -D warnings 2>&1 | Out-File "D:\Projects\Furniture Sh ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking fu...stem\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> src\application\seed_demo.rs:124:31
+    |
+124 |                 let products: &[(i64, i64, &str, &str, &str, i64, i64, i64)] = &[
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: could not compile `furniture-shop` (lib) due to 1 previous error

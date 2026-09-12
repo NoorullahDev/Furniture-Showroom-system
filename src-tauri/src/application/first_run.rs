@@ -17,7 +17,6 @@ pub struct FirstRunInput {
     pub shop_email: String,
     pub currency: String,
     pub timezone: String,
-    pub first_location: String,
     pub invoice_prefix: Option<String>,
     pub backup_location: Option<String>,
     pub owner_username: String,
@@ -150,8 +149,17 @@ pub async fn ensure_initial_administrator(state: &AppState) -> Result<bool, AppE
                         .bind(user_id)
                         .bind(&now)
                         .execute(&mut *tx)
-                        .await?;
+                            .await?;
                     }
+                    sqlx::query(
+                        "UPDATE locations
+                            SET name = 'Furniture Showroom', type = 'showroom',
+                                updated_at = ?
+                          WHERE is_active = 1",
+                    )
+                    .bind(&now)
+                    .execute(&mut *tx)
+                    .await?;
                 }
 
                 audits
@@ -180,7 +188,7 @@ pub async fn ensure_initial_administrator(state: &AppState) -> Result<bool, AppE
         .await
 }
 
-/// Create the owner, shop settings, first location, and the completion flag in
+/// Create the owner, shop settings, canonical showroom, and the completion flag in
 /// a single transaction. Idempotent: once any user exists the transaction
 /// refuses to run, so a crash mid-setup can never create a second owner.
 pub async fn complete(
@@ -204,12 +212,6 @@ pub async fn complete(
     if timezone.is_empty() || timezone.len() > 64 {
         return Err(AppError::Validation(
             "timezone is required and must be 64 characters or fewer".into(),
-        ));
-    }
-    let location = input.first_location.trim().to_string();
-    if location.is_empty() || location.chars().count() > 80 {
-        return Err(AppError::Validation(
-            "first location is required and must be 80 characters or fewer".into(),
         ));
     }
     let invoice_prefix = input
@@ -277,7 +279,6 @@ pub async fn complete(
         .write_coordinator
         .execute(&state.pool, move |tx| {
             let shop_name = shop_name.clone();
-            let location = location.clone();
             let username = username.clone();
             let full_name = full_name.clone();
             let currency = currency.clone();
@@ -382,12 +383,29 @@ pub async fn complete(
                     .await?;
                 }
 
-                sqlx::query(
-                    "INSERT OR IGNORE INTO locations (name, type, created_at, updated_at) VALUES (?, 'showroom', ?, ?)",
+                let location_id: i64 = sqlx::query_scalar(
+                    "SELECT id FROM locations WHERE is_active = 1 ORDER BY id LIMIT 1",
                 )
-                .bind(&location)
+                .fetch_one(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE locations
+                        SET name = '__retired_location_' || id, updated_at = ?
+                      WHERE id <> ? AND name = ?",
+                )
                 .bind(&now)
+                .bind(location_id)
+                .bind(&shop_name)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE locations
+                        SET name = ?, type = 'showroom', updated_at = ?
+                      WHERE id = ?",
+                )
+                .bind(&shop_name)
                 .bind(&now)
+                .bind(location_id)
                 .execute(&mut *tx)
                 .await?;
 
@@ -438,7 +456,6 @@ mod tests {
             shop_email: "shop@example.com".into(),
             currency: "PKR".into(),
             timezone: "Asia/Karachi".into(),
-            first_location: "Showroom".into(),
             invoice_prefix: Some("TEST/".into()),
             backup_location: None,
             owner_username: "owner".into(),

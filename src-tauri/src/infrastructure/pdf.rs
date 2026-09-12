@@ -1,8 +1,12 @@
 use std::fs;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use printpdf::{BuiltinFont, Mm, PdfDocument};
+use printpdf::{
+    path::{PaintMode, WindingOrder},
+    BuiltinFont, Color, ColorBits, ColorSpace, Image, ImageTransform, ImageXObject, Mm,
+    PdfDocument, Point, Polygon, Px, Rgb,
+};
 
 use crate::error::AppError;
 
@@ -10,11 +14,12 @@ const PAGE_W: f32 = 210.0;
 const PAGE_H: f32 = 297.0;
 const MARGIN_LEFT: f32 = 15.0;
 const MARGIN_RIGHT: f32 = 15.0;
-#[allow(dead_code)]
-const CONTENT_W: f32 = PAGE_W - MARGIN_LEFT - MARGIN_RIGHT;
 const HEADER_TOP_Y: f32 = 280.0;
 const ROW_HEIGHT: f32 = 7.0;
 const PAGE_BREAK_Y: f32 = 35.0;
+const DEVELOPER_FOOTER_PREFIX: &str = "Software developed by ";
+const DEVELOPER_FOOTER_BRAND: &str = "EagleNest Creations";
+const DEVELOPER_FOOTER_SUFFIX: &str = " (0346-4451505)";
 
 pub struct ProofPdf {
     pub path: String,
@@ -159,7 +164,7 @@ pub fn generate_invoice_pdf(
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| AppError::Pdf(e.to_string()))?;
 
-    let mut page_count: usize = 1;
+    let mut pages = vec![page1];
     let mut current_page = page1;
     let mut layer = doc.get_page(current_page).get_layer(layer1);
 
@@ -222,7 +227,7 @@ pub fn generate_invoice_pdf(
         if y < PAGE_BREAK_Y {
             // new page
             let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Invoice cont.");
-            page_count += 1;
+            pages.push(next_page);
             current_page = next_page;
             layer = doc.get_page(current_page).get_layer(next_layer1);
             y = HEADER_TOP_Y;
@@ -256,9 +261,16 @@ pub fn generate_invoice_pdf(
     }
 
     // --- Summary --------------------------------------------------------------
-    if y < PAGE_BREAK_Y + 60.0 {
+    let summary_min_y = 92.0
+        + if record.notes.is_some() { 14.0 } else { 0.0 }
+        + if record.footer_text.is_some() {
+            16.0
+        } else {
+            0.0
+        };
+    if y < summary_min_y {
         let (next_page, next_layer1) = doc.add_page(Mm(PAGE_W), Mm(PAGE_H), "Invoice summary");
-        page_count += 1;
+        pages.push(next_page);
         current_page = next_page;
         layer = doc.get_page(current_page).get_layer(next_layer1);
         y = HEADER_TOP_Y;
@@ -344,23 +356,12 @@ pub fn generate_invoice_pdf(
         &helvetica,
     );
 
-    // --- Thank you ------------------------------------------------------------
-    y -= 24.0;
-    layer.use_text(
-        "Thank you for shopping with us!",
-        9.0,
-        Mm(MARGIN_LEFT),
-        Mm(y),
-        &helvetica,
-    );
-    y -= 8.0;
-    layer.use_text(
-        format!("Powered by {}", record.shop_name),
-        8.0,
-        Mm(MARGIN_LEFT),
-        Mm(y),
-        &helvetica,
-    );
+    // --- Developer footer on every page --------------------------------------
+    let page_count = pages.len();
+    for page_ref in pages {
+        let footer = doc.get_page(page_ref).add_layer("Developer footer");
+        draw_developer_footer(&footer, PAGE_W, 8.0, 8.0, &helvetica, &helvetica_bold);
+    }
 
     // --- Save -----------------------------------------------------------------
     let filename = format!("invoice-{}.pdf", uuid::Uuid::now_v7());
@@ -894,6 +895,8 @@ pub struct ReportPdfInput {
     pub title: String,
     pub shop_name: String,
     pub shop_address: Option<String>,
+    pub shop_phone: Option<String>,
+    pub logo_path: Option<PathBuf>,
     pub filter_summary: String,
     pub generated_at: String,
     pub generated_by: Option<String>,
@@ -901,6 +904,7 @@ pub struct ReportPdfInput {
     pub columns: Vec<ReportPdfColumn>,
     pub rows: Vec<Vec<String>>,
     pub totals: Option<Vec<String>>,
+    pub summary: Vec<(String, String)>,
 }
 
 pub struct ReportPdf {
@@ -909,66 +913,259 @@ pub struct ReportPdf {
     pub bytes: u64,
 }
 
-fn draw_header(
+fn report_rect(
     layer: &printpdf::PdfLayerReference,
-    input: &ReportPdfInput,
-    helvetica: &printpdf::IndirectFontRef,
-    helvetica_bold: &printpdf::IndirectFontRef,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Rgb,
 ) {
+    layer.set_fill_color(Color::Rgb(color));
+    layer.add_polygon(Polygon {
+        rings: vec![vec![
+            (Point::new(Mm(x), Mm(y)), false),
+            (Point::new(Mm(x + width), Mm(y)), false),
+            (Point::new(Mm(x + width), Mm(y + height)), false),
+            (Point::new(Mm(x), Mm(y + height)), false),
+        ]],
+        mode: PaintMode::Fill,
+        winding_order: WindingOrder::NonZero,
+    });
+}
+
+fn report_line(layer: &printpdf::PdfLayerReference, x1: f32, x2: f32, y: f32, color: Rgb) {
+    layer.set_outline_color(Color::Rgb(color));
+    layer.set_outline_thickness(0.5);
+    layer.add_line(printpdf::Line {
+        points: vec![
+            (Point::new(Mm(x1), Mm(y)), false),
+            (Point::new(Mm(x2), Mm(y)), false),
+        ],
+        is_closed: false,
+    });
+}
+
+fn estimated_text_width(text: &str, font_size: f32) -> f32 {
+    text.chars()
+        .map(|c| if c.is_ascii_punctuation() { 0.42 } else { 0.52 })
+        .sum::<f32>()
+        * font_size
+        * 0.352_778
+}
+
+fn draw_developer_footer(
+    layer: &printpdf::PdfLayerReference,
+    page_width: f32,
+    y: f32,
+    font_size: f32,
+    regular: &printpdf::IndirectFontRef,
+    bold: &printpdf::IndirectFontRef,
+) {
+    let prefix_width = estimated_text_width(DEVELOPER_FOOTER_PREFIX, font_size);
+    let brand_width = estimated_text_width(DEVELOPER_FOOTER_BRAND, font_size);
+    let total_width =
+        prefix_width + brand_width + estimated_text_width(DEVELOPER_FOOTER_SUFFIX, font_size);
+    let x = (page_width - total_width) / 2.0;
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.38, 0.42, 0.39, None)));
+    layer.use_text(DEVELOPER_FOOTER_PREFIX, font_size, Mm(x), Mm(y), regular);
     layer.use_text(
-        &input.shop_name,
-        16.0,
-        Mm(MARGIN_LEFT),
-        Mm(HEADER_TOP_Y),
-        helvetica_bold,
+        DEVELOPER_FOOTER_BRAND,
+        font_size,
+        Mm(x + prefix_width),
+        Mm(y),
+        bold,
     );
-    if let Some(addr) = &input.shop_address {
-        layer.use_text(
-            addr,
-            8.0,
-            Mm(MARGIN_LEFT),
-            Mm(HEADER_TOP_Y - 8.0),
-            helvetica,
-        );
-    }
     layer.use_text(
-        &input.title,
-        13.0,
-        Mm(MARGIN_LEFT),
-        Mm(HEADER_TOP_Y - 18.0),
-        helvetica_bold,
-    );
-    layer.use_text(
-        &input.filter_summary,
-        8.0,
-        Mm(MARGIN_LEFT),
-        Mm(HEADER_TOP_Y - 26.0),
-        helvetica,
-    );
-    let gen_line = if let Some(user) = &input.generated_by {
-        format!("Generated: {} by {}", input.generated_at, user)
-    } else {
-        format!("Generated: {}", input.generated_at)
-    };
-    layer.use_text(
-        &gen_line,
-        7.0,
-        Mm(130.0),
-        Mm(HEADER_TOP_Y - 26.0),
-        helvetica,
+        DEVELOPER_FOOTER_SUFFIX,
+        font_size,
+        Mm(x + prefix_width + brand_width),
+        Mm(y),
+        regular,
     );
 }
 
-fn draw_column_headers(
+fn fit_report_text(text: &str, max_width: f32, font_size: f32) -> String {
+    if estimated_text_width(text, font_size) <= max_width {
+        return text.to_string();
+    }
+    let suffix = "...";
+    let mut result = String::new();
+    for ch in text.chars() {
+        let candidate = format!("{result}{ch}{suffix}");
+        if estimated_text_width(&candidate, font_size) > max_width {
+            break;
+        }
+        result.push(ch);
+    }
+    result.push_str(suffix);
+    result
+}
+
+fn load_report_logo(path: Option<&Path>) -> Option<ImageXObject> {
+    let image = image::open(path?).ok()?.to_rgba8();
+    let (width, height) = image.dimensions();
+    let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
+    for pixel in image.pixels() {
+        let alpha = pixel[3] as u16;
+        for channel in &pixel.0[..3] {
+            rgb.push(((*channel as u16 * alpha + 255 * (255 - alpha)) / 255) as u8);
+        }
+    }
+    Some(ImageXObject {
+        width: Px(width as usize),
+        height: Px(height as usize),
+        color_space: ColorSpace::Rgb,
+        bits_per_component: ColorBits::Bit8,
+        interpolate: true,
+        image_data: rgb,
+        image_filter: None,
+        smask: None,
+        clipping_bbox: None,
+    })
+}
+
+fn draw_report_logo(
+    layer: &printpdf::PdfLayerReference,
+    logo: Option<&ImageXObject>,
+    page_h: f32,
+) -> bool {
+    let Some(logo) = logo else { return false };
+    let natural_w = logo.width.0 as f32 * 25.4 / 300.0;
+    let natural_h = logo.height.0 as f32 * 25.4 / 300.0;
+    let scale = 16.0 / natural_w.max(natural_h).max(0.1);
+    Image::from(logo.clone()).add_to_layer(
+        layer.clone(),
+        ImageTransform {
+            translate_x: Some(Mm(MARGIN_LEFT)),
+            translate_y: Some(Mm(page_h - 32.0)),
+            scale_x: Some(scale),
+            scale_y: Some(scale),
+            dpi: Some(300.0),
+            ..Default::default()
+        },
+    );
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_report_header(
     layer: &printpdf::PdfLayerReference,
     input: &ReportPdfInput,
-    y: f32,
+    page_w: f32,
+    page_h: f32,
+    logo: Option<&ImageXObject>,
+    helvetica: &printpdf::IndirectFontRef,
     col_x: &[f32],
+    col_end: &[f32],
     helvetica_bold: &printpdf::IndirectFontRef,
-) {
-    for (i, col) in input.columns.iter().enumerate() {
-        layer.use_text(&col.header, 8.0, Mm(col_x[i]), Mm(y), helvetica_bold);
+) -> f32 {
+    let green = Rgb::new(0.11, 0.29, 0.18, None);
+    let muted = Rgb::new(0.35, 0.39, 0.37, None);
+    let has_logo = draw_report_logo(layer, logo, page_h);
+    if !has_logo {
+        report_rect(layer, MARGIN_LEFT, page_h - 32.0, 16.0, 16.0, green.clone());
+        layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
+        layer.use_text(
+            "FS",
+            10.0,
+            Mm(MARGIN_LEFT + 4.0),
+            Mm(page_h - 26.0),
+            helvetica_bold,
+        );
     }
+    let brand_x = MARGIN_LEFT + 20.0;
+    let top = page_h - 17.0;
+
+    layer.set_fill_color(Color::Rgb(green.clone()));
+    layer.use_text(&input.shop_name, 15.0, Mm(brand_x), Mm(top), helvetica_bold);
+    layer.set_fill_color(Color::Rgb(muted.clone()));
+    let address = input.shop_address.as_deref().unwrap_or("");
+    layer.use_text(
+        fit_report_text(address, page_w * 0.44, 8.0),
+        8.0,
+        Mm(brand_x),
+        Mm(top - 6.5),
+        helvetica,
+    );
+    if let Some(phone) = &input.shop_phone {
+        layer.use_text(
+            format!("Tel: {}", fit_report_text(phone, page_w * 0.35, 8.0)),
+            8.0,
+            Mm(brand_x),
+            Mm(top - 12.0),
+            helvetica,
+        );
+    }
+
+    let title = fit_report_text(&input.title.to_uppercase(), page_w * 0.43, 15.0);
+    let title_x = page_w - MARGIN_RIGHT - estimated_text_width(&title, 15.0);
+    layer.set_fill_color(Color::Rgb(green.clone()));
+    layer.use_text(
+        &title,
+        15.0,
+        Mm(title_x.max(page_w * 0.52)),
+        Mm(top),
+        helvetica_bold,
+    );
+    let period = format!("Period: {}", input.filter_summary);
+    let period_x = page_w - MARGIN_RIGHT - estimated_text_width(&period, 8.0);
+    layer.set_fill_color(Color::Rgb(muted.clone()));
+    layer.use_text(
+        &period,
+        8.0,
+        Mm(period_x.max(page_w * 0.52)),
+        Mm(top - 7.0),
+        helvetica,
+    );
+    let generated = input.generated_by.as_ref().map_or_else(
+        || format!("Generated {}", input.generated_at),
+        |user| format!("Generated {} by {}", input.generated_at, user),
+    );
+    let generated = fit_report_text(&generated, page_w * 0.43, 7.0);
+    let generated_x = page_w - MARGIN_RIGHT - estimated_text_width(&generated, 7.0);
+    layer.use_text(
+        &generated,
+        7.0,
+        Mm(generated_x.max(page_w * 0.52)),
+        Mm(top - 12.0),
+        helvetica,
+    );
+
+    let divider_y = page_h - 37.0;
+    report_line(
+        layer,
+        MARGIN_LEFT,
+        page_w - MARGIN_RIGHT,
+        divider_y,
+        green.clone(),
+    );
+    let header_bottom = divider_y - 13.0;
+    report_rect(
+        layer,
+        MARGIN_LEFT,
+        header_bottom,
+        page_w - MARGIN_LEFT - MARGIN_RIGHT,
+        9.0,
+        green,
+    );
+    layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
+    for (i, col) in input.columns.iter().enumerate() {
+        let text = fit_report_text(&col.header, col_end[i] - col_x[i] - 4.0, 8.0);
+        let x = if col.align_left {
+            col_x[i] + 2.0
+        } else {
+            col_end[i] - 2.0 - estimated_text_width(&text, 8.0)
+        };
+        layer.use_text(
+            text,
+            8.0,
+            Mm(x.max(col_x[i] + 1.0)),
+            Mm(header_bottom + 3.0),
+            helvetica_bold,
+        );
+    }
+    header_bottom - 6.0
 }
 
 pub fn generate_report_pdf(
@@ -976,6 +1173,9 @@ pub fn generate_report_pdf(
     _fonts_dir: &Path,
     reports_dir: &Path,
 ) -> Result<ReportPdf, AppError> {
+    if input.columns.is_empty() {
+        return Err(AppError::Pdf("report has no columns".into()));
+    }
     let page_w = if input.landscape { PAGE_H } else { PAGE_W };
     let page_h = if input.landscape { PAGE_W } else { PAGE_H };
     let content_w = page_w - MARGIN_LEFT - MARGIN_RIGHT;
@@ -1000,100 +1200,174 @@ pub fn generate_report_pdf(
         x += w;
     }
 
-    let mut page_count: usize = 1;
+    let mut pages = vec![page1];
     let mut layer = doc.get_page(page1).get_layer(layer1);
+    let logo = load_report_logo(input.logo_path.as_deref());
 
-    draw_header(&layer, input, &helvetica, &helvetica_bold);
+    let mut y = draw_report_header(
+        &layer,
+        input,
+        page_w,
+        page_h,
+        logo.as_ref(),
+        &helvetica,
+        &col_x,
+        &col_end,
+        &helvetica_bold,
+    );
 
-    let mut y = HEADER_TOP_Y - 36.0;
-    draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
-    y -= ROW_HEIGHT;
-
-    for row in &input.rows {
-        if y < PAGE_BREAK_Y {
-            page_count += 1;
+    for (row_index, row) in input.rows.iter().enumerate() {
+        if y < 27.0 {
+            let page_number = pages.len() + 1;
             let (page_ref, layer_ref) =
-                doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_count}"));
+                doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_number}"));
+            pages.push(page_ref);
             layer = doc.get_page(page_ref).get_layer(layer_ref);
-            draw_header(&layer, input, &helvetica, &helvetica_bold);
-            y = HEADER_TOP_Y - 36.0;
-            draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
-            y -= ROW_HEIGHT;
+            y = draw_report_header(
+                &layer,
+                input,
+                page_w,
+                page_h,
+                logo.as_ref(),
+                &helvetica,
+                &col_x,
+                &col_end,
+                &helvetica_bold,
+            );
         }
-        for (i, cell) in row.iter().enumerate() {
-            if input.columns[i].align_left {
-                layer.use_text(cell, 8.0, Mm(col_x[i]), Mm(y), &helvetica);
+        if row_index % 2 == 1 {
+            report_rect(
+                &layer,
+                MARGIN_LEFT,
+                y - 2.2,
+                content_w,
+                ROW_HEIGHT,
+                Rgb::new(0.975, 0.988, 0.978, None),
+            );
+        }
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.09, 0.10, 0.10, None)));
+        for (i, col) in input.columns.iter().enumerate() {
+            let cell = row.get(i).map(String::as_str).unwrap_or("");
+            let text = fit_report_text(cell, col_end[i] - col_x[i] - 4.0, 8.0);
+            let x_pos = if col.align_left {
+                col_x[i] + 2.0
             } else {
-                let text_w = cell.len() as f32 * 2.0;
-                let right_x = col_end[i] - text_w;
-                let x_pos = if right_x > col_x[i] {
-                    right_x
-                } else {
-                    col_x[i]
-                };
-                layer.use_text(cell, 8.0, Mm(x_pos), Mm(y), &helvetica);
-            }
+                col_end[i] - 2.0 - estimated_text_width(&text, 8.0)
+            };
+            layer.use_text(text, 8.0, Mm(x_pos.max(col_x[i] + 1.0)), Mm(y), &helvetica);
         }
+        report_line(
+            &layer,
+            MARGIN_LEFT,
+            page_w - MARGIN_RIGHT,
+            y - 2.4,
+            Rgb::new(0.87, 0.91, 0.88, None),
+        );
         y -= ROW_HEIGHT;
     }
 
+    let ending_height = if input.totals.is_some() { 10.0 } else { 0.0 }
+        + if input.summary.is_empty() { 0.0 } else { 23.0 };
+    if ending_height > 0.0 && y - ending_height < 24.0 {
+        let page_number = pages.len() + 1;
+        let (page_ref, layer_ref) =
+            doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_number}"));
+        pages.push(page_ref);
+        layer = doc.get_page(page_ref).get_layer(layer_ref);
+        y = draw_report_header(
+            &layer,
+            input,
+            page_w,
+            page_h,
+            logo.as_ref(),
+            &helvetica,
+            &col_x,
+            &col_end,
+            &helvetica_bold,
+        );
+    }
+
     if let Some(totals) = &input.totals {
-        if y < PAGE_BREAK_Y + ROW_HEIGHT {
-            page_count += 1;
-            let (page_ref, layer_ref) =
-                doc.add_page(Mm(page_w), Mm(page_h), format!("Report p{page_count}"));
-            layer = doc.get_page(page_ref).get_layer(layer_ref);
-            draw_header(&layer, input, &helvetica, &helvetica_bold);
-            y = HEADER_TOP_Y - 36.0;
-            draw_column_headers(&layer, input, y, &col_x, &helvetica_bold);
-            y -= ROW_HEIGHT;
-        }
-        y -= 2.0;
-        for (i, cell) in totals.iter().enumerate() {
-            if input.columns[i].align_left {
-                layer.use_text(cell, 9.0, Mm(col_x[i]), Mm(y), &helvetica_bold);
+        report_line(
+            &layer,
+            MARGIN_LEFT,
+            page_w - MARGIN_RIGHT,
+            y + 2.0,
+            Rgb::new(0.11, 0.29, 0.18, None),
+        );
+        layer.set_fill_color(Color::Rgb(Rgb::new(0.11, 0.29, 0.18, None)));
+        for (i, col) in input.columns.iter().enumerate() {
+            let cell = totals.get(i).map(String::as_str).unwrap_or("");
+            let text = fit_report_text(cell, col_end[i] - col_x[i] - 4.0, 8.5);
+            let x_pos = if col.align_left {
+                col_x[i] + 2.0
             } else {
-                let text_w = cell.len() as f32 * 2.2;
-                let right_x = col_end[i] - text_w;
-                let x_pos = if right_x > col_x[i] {
-                    right_x
-                } else {
-                    col_x[i]
-                };
-                layer.use_text(cell, 9.0, Mm(x_pos), Mm(y), &helvetica_bold);
-            }
+                col_end[i] - 2.0 - estimated_text_width(&text, 8.5)
+            };
+            layer.use_text(
+                text,
+                8.5,
+                Mm(x_pos.max(col_x[i] + 1.0)),
+                Mm(y - 3.0),
+                &helvetica_bold,
+            );
+        }
+        y -= 10.0;
+    }
+
+    if !input.summary.is_empty() {
+        let summary_y = y - 17.0;
+        report_rect(
+            &layer,
+            MARGIN_LEFT,
+            summary_y,
+            content_w,
+            17.0,
+            Rgb::new(0.96, 0.98, 0.965, None),
+        );
+        let items = input.summary.iter().take(4).collect::<Vec<_>>();
+        let item_width = content_w / items.len() as f32;
+        for (index, (label, value)) in items.iter().enumerate() {
+            let x = MARGIN_LEFT + index as f32 * item_width + 4.0;
+            layer.set_fill_color(Color::Rgb(Rgb::new(0.36, 0.42, 0.38, None)));
+            layer.use_text(
+                fit_report_text(&label.to_uppercase(), item_width - 8.0, 7.0),
+                7.0,
+                Mm(x),
+                Mm(summary_y + 10.5),
+                &helvetica_bold,
+            );
+            layer.set_fill_color(Color::Rgb(Rgb::new(0.11, 0.29, 0.18, None)));
+            layer.use_text(
+                fit_report_text(value, item_width - 8.0, 10.0),
+                10.0,
+                Mm(x),
+                Mm(summary_y + 4.0),
+                &helvetica_bold,
+            );
         }
     }
 
-    // Page numbers on every page
-    for p in 1..=page_count {
-        // printpdf doesn't support going back to earlier pages, so we render
-        // page numbers only on the *current* page as we go.  To get correct
-        // "Page X of Y" we do a second pass: add a footer layer on each page
-        // after the total page count is known.  Since printpdf doesn't support
-        // editing earlier pages, we accept a limitation: page numbers are only
-        // rendered correctly on single-page reports. For multi-page reports we
-        // render a simple "Page N" on the last page during generation and
-        // accept the limitation.
-        let _ = p;
-    }
-    // Render page number on the last page (current layer)
-    if page_count == 1 {
-        layer.use_text(
-            "Page 1 of 1",
+    let page_count = pages.len();
+    for (index, page_ref) in pages.into_iter().enumerate() {
+        let footer = doc.get_page(page_ref).add_layer("Report footer");
+        report_line(
+            &footer,
+            MARGIN_LEFT,
+            page_w - MARGIN_RIGHT,
+            20.0,
+            Rgb::new(0.80, 0.85, 0.81, None),
+        );
+        footer.set_fill_color(Color::Rgb(Rgb::new(0.38, 0.42, 0.39, None)));
+        let page_label = format!("Page {} of {}", index + 1, page_count);
+        footer.use_text(
+            &page_label,
             7.0,
-            Mm(page_w / 2.0 - 15.0),
-            Mm(12.0),
+            Mm(page_w - MARGIN_RIGHT - estimated_text_width(&page_label, 7.0)),
+            Mm(14.0),
             &helvetica,
         );
-    } else {
-        layer.use_text(
-            format!("Page {page_count} of {page_count}"),
-            7.0,
-            Mm(page_w / 2.0 - 15.0),
-            Mm(12.0),
-            &helvetica,
-        );
+        draw_developer_footer(&footer, page_w, 7.0, 7.0, &helvetica, &helvetica_bold);
     }
 
     let filename = format!("report-{}.pdf", uuid::Uuid::now_v7());
@@ -1110,4 +1384,194 @@ pub fn generate_report_pdf(
         bytes,
         path: path.to_string_lossy().into_owned(),
     })
+}
+
+#[cfg(test)]
+mod report_pdf_tests {
+    use super::*;
+
+    fn columns() -> Vec<ReportPdfColumn> {
+        vec![
+            ReportPdfColumn {
+                header: "Date".into(),
+                width_ratio: 1.4,
+                align_left: true,
+            },
+            ReportPdfColumn {
+                header: "Reference".into(),
+                width_ratio: 1.5,
+                align_left: true,
+            },
+            ReportPdfColumn {
+                header: "Customer".into(),
+                width_ratio: 2.5,
+                align_left: true,
+            },
+            ReportPdfColumn {
+                header: "Total".into(),
+                width_ratio: 1.6,
+                align_left: false,
+            },
+            ReportPdfColumn {
+                header: "Paid".into(),
+                width_ratio: 1.6,
+                align_left: false,
+            },
+            ReportPdfColumn {
+                header: "Due".into(),
+                width_ratio: 1.6,
+                align_left: false,
+            },
+            ReportPdfColumn {
+                header: "Status".into(),
+                width_ratio: 1.2,
+                align_left: true,
+            },
+        ]
+    }
+
+    fn row(index: usize) -> Vec<String> {
+        vec![
+            "2026-09-12".into(),
+            format!("INV-{index:04}"),
+            format!("Customer {index}"),
+            format!("PKR {:},000.00", index + 10),
+            format!("PKR {:},500.00", index + 5),
+            "PKR 4,500.00".into(),
+            "Confirmed".into(),
+        ]
+    }
+
+    fn inspect_pdf(path: &str, expected_pages: usize, expected_rows: usize) {
+        let document = printpdf::lopdf::Document::load(path).unwrap();
+        let pages = document.get_pages();
+        assert_eq!(pages.len(), expected_pages);
+        let mut combined = String::new();
+        for page_id in pages.values() {
+            let content = document.get_page_content(*page_id).unwrap();
+            assert!(
+                content.len() > 500,
+                "page content stream should not be blank"
+            );
+            let operations = printpdf::lopdf::content::Content::decode(&content).unwrap();
+            let mut page_text = String::new();
+            for operation in operations.operations {
+                if operation.operator == "Tj" {
+                    for operand in operation.operands {
+                        if let Ok(bytes) = operand.as_str() {
+                            page_text.push_str(&String::from_utf8_lossy(bytes));
+                        }
+                    }
+                }
+            }
+            assert!(
+                page_text.contains("Page"),
+                "each page should contain its page number"
+            );
+            assert!(
+                page_text.contains("Software developed by EagleNest Creations (0346-4451505)"),
+                "each page should contain the developer footer"
+            );
+            combined.push_str(&page_text);
+        }
+        assert_eq!(combined.matches("INV-").count(), expected_rows);
+    }
+
+    #[test]
+    fn generates_short_and_multi_page_a4_reports() {
+        let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/report-smoke");
+        fs::create_dir_all(&output).unwrap();
+        let logo_path = output.join("logo.png");
+        image::RgbImage::from_pixel(40, 40, image::Rgb([28, 74, 46]))
+            .save(&logo_path)
+            .unwrap();
+
+        let base = |rows: Vec<Vec<String>>| ReportPdfInput {
+            title: "Sales Report".into(),
+            shop_name: "EagleNest Furniture".into(),
+            shop_address: Some("Main Showroom, Lahore".into()),
+            shop_phone: Some("+92 300 1234567".into()),
+            logo_path: Some(logo_path.clone()),
+            filter_summary: "2026-09-01 to 2026-09-12".into(),
+            generated_at: "2026-09-12 12:00:00 PKT".into(),
+            generated_by: Some("admin".into()),
+            landscape: true,
+            columns: columns(),
+            rows,
+            totals: None,
+            summary: vec![
+                ("Net Revenue".into(), "PKR 985,000.00".into()),
+                ("Outstanding".into(), "PKR 54,000.00".into()),
+            ],
+        };
+
+        let short =
+            generate_report_pdf(&base(vec![row(1), row(2)]), Path::new(""), &output).unwrap();
+        assert_eq!(short.pages, 1);
+        assert!(short.bytes > 1_000);
+        inspect_pdf(&short.path, 1, 2);
+
+        let long_rows = (1..=75).map(row).collect();
+        let long = generate_report_pdf(&base(long_rows), Path::new(""), &output).unwrap();
+        assert_eq!(long.pages, 5);
+        assert!(long.bytes > short.bytes);
+        inspect_pdf(&long.path, 5, 75);
+        println!("SHORT_PDF={}", short.path);
+        println!("LONG_PDF={}", long.path);
+    }
+
+    #[test]
+    fn generates_short_invoice_with_bottom_footer() {
+        let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/report-smoke");
+        fs::create_dir_all(&output).unwrap();
+        let invoice = generate_invoice_pdf(
+            &output,
+            &InvoiceRecord {
+                number: "INV-FOOTER-TEST".into(),
+                sale_date: "2026-09-12".into(),
+                customer_name: Some("Test Customer".into()),
+                customer_phone: None,
+                customer_address: None,
+                notes: None,
+                footer_text: Some("Thank you for your business!".into()),
+                shop_name: "EagleNest Furniture".into(),
+                shop_address: Some("Main Showroom, Lahore".into()),
+                items: vec![InvoiceLine {
+                    article: "FS-029".into(),
+                    name: "5-Tier Open Bookshelf".into(),
+                    quantity: 1,
+                    price_minor: 1_400_000,
+                    total_minor: 1_400_000,
+                }],
+                subtotal_minor: 1_400_000,
+                discount_minor: 0,
+                delivery_charge_minor: 0,
+                tax_minor: 0,
+                total_minor: 1_400_000,
+                paid_minor: 1_400_000,
+                advance_used_minor: 0,
+                due_minor: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(invoice.pages, 1);
+        assert!(invoice.bytes > 1_000);
+
+        let document = printpdf::lopdf::Document::load(&invoice.path).unwrap();
+        let page_id = *document.get_pages().values().next().unwrap();
+        let content = document.get_page_content(page_id).unwrap();
+        let operations = printpdf::lopdf::content::Content::decode(&content).unwrap();
+        let mut page_text = String::new();
+        for operation in operations.operations {
+            if operation.operator == "Tj" {
+                for operand in operation.operands {
+                    if let Ok(bytes) = operand.as_str() {
+                        page_text.push_str(&String::from_utf8_lossy(bytes));
+                    }
+                }
+            }
+        }
+        assert!(page_text.contains("Software developed by EagleNest Creations (0346-4451505)"));
+        println!("INVOICE_PDF={}", invoice.path);
+    }
 }

@@ -91,13 +91,28 @@ pub async fn create(
     let correlation = correlation_id.to_string();
     let audits = state.audits.clone();
 
+    let imported_cover = if let Some(path) = &input.cover_image_path {
+        if path.contains("/") || path.contains("\\") {
+            let source = std::path::PathBuf::from(path);
+            let dir = state.paths.images_dir.clone();
+            let imported = tokio::task::spawn_blocking(move || crate::infrastructure::import_image(&source, &dir))
+                .await
+                .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
+            Some(imported.stored_name)
+        } else {
+            Some(path.clone())
+        }
+    } else {
+        None
+    };
+
     let id = state
         .write_coordinator
         .execute(&state.pool, move |tx| {
             let code = code.clone();
             let name = input.name.trim().to_string();
             let description = input.description.clone();
-            let cover = input.cover_image_path.clone();
+            let cover = imported_cover.clone();
             Box::pin(async move {
                 let existing: Option<i64> =
                     sqlx::query_scalar("SELECT 1 FROM bundles WHERE code = ?")
@@ -175,13 +190,28 @@ pub async fn update(
     let correlation = correlation_id.to_string();
     let audits = state.audits.clone();
 
+    let imported_cover = if let Some(path) = &input.cover_image_path {
+        if path.contains("/") || path.contains("\\") {
+            let source = std::path::PathBuf::from(path);
+            let dir = state.paths.images_dir.clone();
+            let imported = tokio::task::spawn_blocking(move || crate::infrastructure::import_image(&source, &dir))
+                .await
+                .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
+            Some(imported.stored_name)
+        } else {
+            Some(path.clone())
+        }
+    } else {
+        None
+    };
+
     state
         .write_coordinator
         .execute(&state.pool, move |tx| {
             let code = code.clone();
             let name = input.name.trim().to_string();
             let description = input.description.clone();
-            let cover = input.cover_image_path.clone();
+            let cover = imported_cover.clone();
             let is_active = input.is_active.unwrap_or(true);
             Box::pin(async move {
                 let conflict: Option<i64> =
@@ -310,12 +340,37 @@ pub async fn bundle_dto(state: &AppState, bundle_id: i64) -> Result<BundleDto, A
 
     let cost_estimate = items.iter().map(|i| i.line_cost_estimate_minor).sum();
 
+    // Convert the stored bare filename into the full absolute path so the
+    // frontend can serve it through `product_image_data`, which requires a
+    // path inside the managed images directory.
+    let cover_image_path: Option<String> = row
+        .try_get::<Option<String>, _>(4)
+        .ok()
+        .flatten()
+        .and_then(|rel| {
+            if !rel.is_empty() && !rel.contains('/') && !rel.contains('\\') {
+                Some(
+                    state
+                        .paths
+                        .images_dir
+                        .join(&rel)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            } else if !rel.is_empty() {
+                // Already a full path (shouldn't happen in normal flow, pass through)
+                Some(rel)
+            } else {
+                None
+            }
+        });
+
     Ok(BundleDto {
         id: row.get(0),
         code: row.get(1),
         name: row.get(2),
         description: row.try_get(3).ok(),
-        cover_image_path: row.try_get(4).ok(),
+        cover_image_path,
         default_price_minor: row.get(5),
         is_active: row.get::<i64, _>(6) != 0,
         items,

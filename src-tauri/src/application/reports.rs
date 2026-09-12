@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use sqlx::Row;
 
-use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput};
+use crate::dto::reports::{ExportFormat, ReportExportResult, ReportFilterInput, ReportViewInput};
 use crate::error::AppError;
 use crate::infrastructure::csv_export::{write_csv, CsvTable};
 use crate::infrastructure::{generate_report_pdf, ReportPdfColumn, ReportPdfInput};
@@ -107,6 +107,65 @@ pub async fn export_report_with_user(
             "unknown report type: {report_type}"
         ))),
     }
+}
+
+pub async fn export_report_view(
+    state: &AppState,
+    filter: &ReportFilterInput,
+    format: ExportFormat,
+    generated_by: Option<String>,
+    view: ReportViewInput,
+) -> Result<ReportExportResult, AppError> {
+    if view.title.trim().is_empty() || view.columns.is_empty() {
+        return Err(AppError::Validation(
+            "report title and columns are required".into(),
+        ));
+    }
+    if view.rows.iter().any(|row| row.len() != view.columns.len()) {
+        return Err(AppError::Validation(
+            "report rows must match the supplied columns".into(),
+        ));
+    }
+
+    let columns: Vec<ReportPdfColumn> = view
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let widest = view
+                .rows
+                .iter()
+                .map(|row| row[index].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(column.header.chars().count());
+            ReportPdfColumn {
+                header: column.header.clone(),
+                width_ratio: ((widest as f32) / 8.0).clamp(1.0, 4.0),
+                align_left: !column.align_right,
+            }
+        })
+        .collect();
+    let summary = view
+        .summary
+        .into_iter()
+        .map(|item| (item.label, item.value))
+        .collect();
+    let landscape = columns.len() > 5;
+
+    export_to_file_with_summary(
+        state,
+        view.title.trim(),
+        filter,
+        &columns,
+        view.rows,
+        None,
+        summary,
+        format,
+        generated_by,
+        landscape,
+    )
+    .await
 }
 
 async fn export_sales_summary(
@@ -774,7 +833,15 @@ async fn export_expense_report(
     .await
 }
 
-async fn shop_identity(db: &sqlx::SqlitePool) -> (String, Option<String>) {
+struct ShopIdentity {
+    name: String,
+    address: Option<String>,
+    phone: Option<String>,
+    logo_path: Option<std::path::PathBuf>,
+}
+
+async fn shop_identity(state: &AppState) -> ShopIdentity {
+    let db = &state.pool;
     let name: String =
         sqlx::query_as::<_, (String,)>("SELECT value_json FROM settings WHERE key = 'shop.name'")
             .fetch_optional(db)
@@ -791,7 +858,40 @@ async fn shop_identity(db: &sqlx::SqlitePool) -> (String, Option<String>) {
     .ok()
     .flatten()
     .and_then(|(v,)| serde_json::from_str::<String>(&v).ok());
-    (name, addr)
+    let phone: Option<String> =
+        sqlx::query_as::<_, (String,)>("SELECT value_json FROM settings WHERE key = 'shop.phone'")
+            .fetch_optional(db)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|(v,)| serde_json::from_str::<String>(&v).ok())
+            .filter(|value| !value.trim().is_empty());
+    let logo = state.paths.branding_dir.join("shop-logo.webp");
+
+    ShopIdentity {
+        name,
+        address: addr.filter(|value| !value.trim().is_empty()),
+        phone,
+        logo_path: logo.is_file().then_some(logo),
+    }
+}
+
+fn summary_from_totals(
+    columns: &[ReportPdfColumn],
+    totals: Option<&Vec<String>>,
+) -> Vec<(String, String)> {
+    totals
+        .into_iter()
+        .flat_map(|row| row.iter().enumerate())
+        .filter_map(|(index, value)| {
+            let value = value.trim();
+            if value.is_empty() || value.eq_ignore_ascii_case("total") {
+                return None;
+            }
+            Some((columns.get(index)?.header.clone(), value.to_string()))
+        })
+        .take(4)
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -802,6 +902,35 @@ async fn export_to_file(
     columns: &[ReportPdfColumn],
     data_rows: Vec<Vec<String>>,
     totals: Option<Vec<String>>,
+    format: ExportFormat,
+    generated_by: Option<String>,
+    landscape: bool,
+) -> Result<ReportExportResult, AppError> {
+    let summary = summary_from_totals(columns, totals.as_ref());
+    export_to_file_with_summary(
+        state,
+        title,
+        filter,
+        columns,
+        data_rows,
+        totals,
+        summary,
+        format,
+        generated_by,
+        landscape,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn export_to_file_with_summary(
+    state: &AppState,
+    title: &str,
+    filter: &ReportFilterInput,
+    columns: &[ReportPdfColumn],
+    data_rows: Vec<Vec<String>>,
+    totals: Option<Vec<String>>,
+    summary: Vec<(String, String)>,
     format: ExportFormat,
     generated_by: Option<String>,
     landscape: bool,
@@ -837,11 +966,13 @@ async fn export_to_file(
             })
         }
         ExportFormat::Pdf => {
-            let (shop_name, shop_address) = shop_identity(&state.pool).await;
+            let shop = shop_identity(state).await;
             let input = ReportPdfInput {
                 title: title.to_string(),
-                shop_name,
-                shop_address,
+                shop_name: shop.name,
+                shop_address: shop.address,
+                shop_phone: shop.phone,
+                logo_path: shop.logo_path,
                 filter_summary,
                 generated_at,
                 generated_by,
@@ -849,6 +980,7 @@ async fn export_to_file(
                 columns: columns.to_vec(),
                 rows: data_rows,
                 totals,
+                summary,
             };
             let pdf =
                 generate_report_pdf(&input, &state.paths.fonts_dir, &state.paths.reports_dir)?;

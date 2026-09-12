@@ -54,3 +54,11 @@ export function formatDateTime(iso: string): string {
     },
   );
 }
+
+/** Today's date in local timezone as `YYYY-MM-DD`. Uses local components to avoid UTC offset issues. */
+export function todayIso(date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}

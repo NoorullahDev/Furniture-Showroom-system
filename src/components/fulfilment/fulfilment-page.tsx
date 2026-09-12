@@ -39,7 +39,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { useToast } from "@/components/ui/toast";
 import { useSession, isSessionError } from "@/components/session/session-provider";
-import { formatDateTime, formatPkr } from "@/lib/format";
+import { formatDateTime, formatPkr, todayIso } from "@/lib/format";
 import {
   cashAccountList,
   CreditNoteDto,
@@ -81,13 +81,6 @@ type PageDialog =
   | { kind: "void-return"; ret: SaleReturnDto }
   | { kind: "record-damage" }
   | { kind: "decide-damage"; damage: DamageRecordDto };
-
-function today(): string {
-  const d = new Date();
-  const m = `${d.getMonth() + 1}`.padStart(2, "0");
-  const day = `${d.getDate()}`.padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${day}`;
-}
 
 function StatusBadge({ status }: { status: string }) {
   const variant =
@@ -949,7 +942,7 @@ function PostReturnDialog({
       saleReturnPost(session, {
         saleId,
         refundType,
-        returnDate: today(),
+        returnDate: todayIso(),
         cashAccountId: refundType === "cash" ? cashAccountId || null : null,
         notes: notes || null,
         idempotencyKey: crypto.randomUUID(),
@@ -1128,7 +1121,7 @@ function DamageRecordDialog({
   onError: (e: Error) => void;
 }) {
   const [productId, setProductId] = React.useState<number>(0);
-  const [locationId, setLocationId] = React.useState<number>(0);
+  const locationId = locations[0]?.id ?? 0;
   const [quantity, setQuantity] = React.useState(1);
   const [source, setSource] = React.useState<string>("in_hand");
   const [loss, setLoss] = React.useState(0);
@@ -1140,7 +1133,7 @@ function DamageRecordDialog({
         productId,
         locationId,
         quantity,
-        damageDate: today(),
+        damageDate: todayIso(),
         source,
         reason: reason || null,
         estimatedLossMinor: loss,
@@ -1176,19 +1169,10 @@ function DamageRecordDialog({
         </Select>
       </div>
       <div className="grid gap-1.5">
-        <Label>Location</Label>
-        <Select value={locationId ? String(locationId) : undefined} onValueChange={(v) => setLocationId(Number(v))}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select a location" />
-          </SelectTrigger>
-          <SelectContent>
-            {locations.map((l) => (
-              <SelectItem key={l.id} value={String(l.id)}>
-                {l.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Label>Showroom</Label>
+        <div className="flex h-9 items-center rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-700">
+          {locations[0]?.name ?? "Loading…"}
+        </div>
       </div>
       <div className="grid gap-1.5">
         <Label>Quantity</Label>
@@ -1319,13 +1303,15 @@ export function FulfilmentPage() {
   const dashboardTarget = React.useMemo(() => takeDashboardTarget("fulfilment"), []);
   const defaultTab: Tab = dashboardTarget?.target === "damage"
     ? "damage"
-    : canViewDeliveries
-    ? "deliveries"
-    : canReturn
+    : dashboardTarget?.target === "returns"
       ? "returns"
-      : canDamage
-        ? "damage"
-        : "deliveries";
+      : canViewDeliveries
+        ? "deliveries"
+        : canReturn
+          ? "returns"
+          : canDamage
+            ? "damage"
+            : "deliveries";
   const [view, setView] = React.useState<Tab>(defaultTab);
   const [dialog, setDialog] = React.useState<PageDialog>(null);
 

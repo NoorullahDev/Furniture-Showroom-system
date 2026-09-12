@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/table";
 import { useSession, isSessionError } from "@/components/session/session-provider";
 import { useToast } from "@/components/ui/toast";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, todayIso } from "@/lib/format";
 import {
   cashAccountList,
   expenseCategoryCreate,
@@ -71,6 +71,7 @@ import {
   type ProfitSummaryDto,
 } from "@/lib/tauri/api";
 import { commandErrorMessage } from "@/lib/tauri/client";
+import { takeDashboardTarget } from "@/lib/dashboard-navigation";
 import { cn } from "@/lib/utils";
 
 type SortKey = "date" | "category" | "note" | "amount";
@@ -78,13 +79,6 @@ type SortDirection = "asc" | "desc";
 type DateRange = { from: string; to: string };
 
 const PAGE_SIZE = 20;
-
-function localIso(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 function datePreset(kind: "today" | "yesterday" | "week" | "month" | "lastMonth"): DateRange {
   const now = new Date();
@@ -102,7 +96,7 @@ function datePreset(kind: "today" | "yesterday" | "week" | "month" | "lastMonth"
     from.setMonth(from.getMonth() - 1, 1);
     to.setDate(0);
   }
-  return { from: localIso(from), to: localIso(to) };
+  return { from: todayIso(from), to: todayIso(to) };
 }
 
 function readableDate(value: string): string {
@@ -145,6 +139,7 @@ export function ExpensesPage() {
   const canReverse = hasPermission("expense.reverse");
   const canOwner = hasPermission("owner.transfer");
   const canProfit = hasPermission("profit.view");
+  const dashboardTarget = React.useMemo(() => takeDashboardTarget("finance"), []);
 
   const [search, setSearch] = React.useState("");
   const deferredSearch = React.useDeferredValue(search);
@@ -154,7 +149,9 @@ export function ExpensesPage() {
   const [page, setPage] = React.useState(0);
   const [sortBy, setSortBy] = React.useState<SortKey>("date");
   const [sortDirection, setSortDirection] = React.useState<SortDirection>("desc");
-  const [addOpen, setAddOpen] = React.useState(false);
+  const [addOpen, setAddOpen] = React.useState(
+    dashboardTarget?.target === "new-expense" && canCreate,
+  );
   const [categoriesOpen, setCategoriesOpen] = React.useState(false);
   const [reverseTarget, setReverseTarget] = React.useState<ExpenseDto | null>(null);
   const [financeTool, setFinanceTool] = React.useState<"owner" | "profit" | null>(null);
@@ -456,7 +453,7 @@ function ExpenseFormDialog({ title, description, busy, valid, onSubmit, onClose,
 function AddExpenseDialog({ session, categories, accounts, methods, currency, onClose, onSaved, onError }: DialogActions & { categories: ExpenseCategoryDto[]; accounts: CashAccountDto[]; methods: PaymentMethodDto[]; currency: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [expenseDate, setExpenseDate] = React.useState(localIso());
+  const [expenseDate, setExpenseDate] = React.useState(todayIso());
   const [categoryId, setCategoryId] = React.useState<number | null>(null);
   const [amountMinor, setAmountMinor] = React.useState(0);
   const [methodId, setMethodId] = React.useState<number | null>(null);
@@ -563,7 +560,7 @@ function OwnerTransfers({ session, accounts, currency, onError }: { session: str
   const [openState, setOpenState] = React.useState(false);
   const [kind, setKind] = React.useState<"capital_in" | "withdrawal">("capital_in");
   const [amount, setAmount] = React.useState(0);
-  const [date, setDate] = React.useState(localIso());
+  const [date, setDate] = React.useState(todayIso());
   const [accountId, setAccountId] = React.useState<number | null>(null);
   const [notes, setNotes] = React.useState("");
   const query = useQuery({ queryKey: ["expenses", "owner"], queryFn: () => ownerTransactionList(session, 100), enabled: !!session });

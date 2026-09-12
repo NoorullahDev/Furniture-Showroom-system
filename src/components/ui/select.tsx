@@ -48,10 +48,14 @@ const SelectContent = React.forwardRef<
     >
       <SelectPrimitive.Viewport
         className={cn(
-          "p-0",
+          "overflow-y-auto p-0",
           position === "popper" &&
-            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]",
+            "w-full min-w-[var(--radix-select-trigger-width)]",
         )}
+        style={{
+          maxHeight: "min(20rem, var(--radix-select-content-available-height))",
+          overscrollBehavior: "contain",
+        }}
       >
         {children}
       </SelectPrimitive.Viewport>

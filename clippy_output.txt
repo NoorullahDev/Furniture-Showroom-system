@@ -1,0 +1,1023 @@
+﻿cargo :     Checking furniture-shop v0.1.0 (D:\Projects\Furniture Showroom system\src-tauri)
+At line:1 char:1
++ cargo clippy -- -D warnings 2>&1 | Out-File -FilePath "D:\Projects\Fu ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking fu...stem\src-tauri):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:112:95
+    |
+112 |                     (cat_sofas, pt_3seater, "FS-001", "Royal 3-Seater Sofa", "Sheesham Wood", 4_500_00, 
+6_500_00, 3),
+    |                                                                                               ^^^^^^^^ help: 
+consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+    = note: `-D clippy::inconsistent-digit-grouping` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::inconsistent_digit_grouping)]`
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:112:105
+    |
+112 |                     (cat_sofas, pt_3seater, "FS-001", "Royal 3-Seater Sofa", "Sheesham Wood", 4_500_00, 
+6_500_00, 3),
+    |                                                                                                         ^^^^^^^^ 
+help: consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:113:94
+    |
+113 |                     (cat_sofas, pt_lshape, "FS-002", "Modern L-Shape Sofa", "Sheesham Wood", 6_500_00, 9_500_00, 
+2),
+    |                                                                                              ^^^^^^^^ help: 
+consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:113:104
+    |
+113 |                     (cat_sofas, pt_lshape, "FS-002", "Modern L-Shape Sofa", "Sheesham Wood", 6_500_00, 9_500_00, 
+2),
+    |                                                                                                        ^^^^^^^^ 
+help: consider: `950_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:114:94
+    |
+114 |                     (cat_sofas, pt_recliner, "FS-003", "Comfort Recliner Sofa", "Pine Wood", 5_500_00, 8_000_00, 
+2),
+    |                                                                                              ^^^^^^^^ help: 
+consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:114:104
+    |
+114 |                     (cat_sofas, pt_recliner, "FS-003", "Comfort Recliner Sofa", "Pine Wood", 5_500_00, 8_000_00, 
+2),
+    |                                                                                                        ^^^^^^^^ 
+help: consider: `800_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:115:96
+    |
+115 |                     (cat_tables, pt_center, "FS-004", "Marble Center Table", "Marble & Steel", 1_200_00, 
+1_800_00, 5),
+    |                                                                                                ^^^^^^^^ help: 
+consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:115:106
+    |
+115 |                     (cat_tables, pt_center, "FS-004", "Marble Center Table", "Marble & Steel", 1_200_00, 
+1_800_00, 5),
+    |                                                                                                          
+^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:116:91
+    |
+116 |                     (cat_tables, pt_nesting, "FS-005", "Wood Nesting Tables", "Oak Wood", 800_00, 1_200_00, 4),
+    |                                                                                           ^^^^^^ help: consider: 
+`80_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:116:99
+    |
+116 |                     (cat_tables, pt_nesting, "FS-005", "Wood Nesting Tables", "Oak Wood", 800_00, 1_200_00, 4),
+    |                                                                                                   ^^^^^^^^ help: 
+consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:117:87
+    |
+117 |                     (cat_tv, pt_tvcab, "FS-006", "Elegant TV Cabinet", "MDF & Glass", 1_800_00, 2_800_00, 3),
+    |                                                                                       ^^^^^^^^ help: consider: 
+`180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:117:97
+    |
+117 |                     (cat_tv, pt_tvcab, "FS-006", "Elegant TV Cabinet", "MDF & Glass", 1_800_00, 2_800_00, 3),
+    |                                                                                                 ^^^^^^^^ help: 
+consider: `280_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:118:82
+    |
+118 |                     (cat_tv, pt_tvwall, "FS-007", "Wall-Mounted TV Unit", "MDF", 1_500_00, 2_200_00, 4),
+    |                                                                                  ^^^^^^^^ help: consider: 
+`150_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:118:92
+    |
+118 |                     (cat_tv, pt_tvwall, "FS-007", "Wall-Mounted TV Unit", "MDF", 1_500_00, 2_200_00, 4),
+    |                                                                                            ^^^^^^^^ help: 
+consider: `220_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:119:91
+    |
+119 |                     (cat_beds, pt_king, "FS-008", "King Size Bed Frame", "Sheesham Wood", 3_500_00, 5_200_00, 2),
+    |                                                                                           ^^^^^^^^ help: 
+consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:119:101
+    |
+119 |                     (cat_beds, pt_king, "FS-008", "King Size Bed Frame", "Sheesham Wood", 3_500_00, 5_200_00, 2),
+    |                                                                                                     ^^^^^^^^ 
+help: consider: `520_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:120:92
+    |
+120 |                     (cat_beds, pt_double, "FS-009", "Classic Double Bed", "Sheesham Wood", 2_500_00, 3_800_00, 
+3),
+    |                                                                                            ^^^^^^^^ help: 
+consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:120:102
+    |
+120 |                     (cat_beds, pt_double, "FS-009", "Classic Double Bed", "Sheesham Wood", 2_500_00, 3_800_00, 
+3),
+    |                                                                                                      ^^^^^^^^ 
+help: consider: `380_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:121:86
+    |
+121 |                     (cat_beds, pt_single, "FS-010", "Single Bed Frame", "Pine Wood", 1_500_00, 2_200_00, 4),
+    |                                                                                      ^^^^^^^^ help: consider: 
+`150_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:121:96
+    |
+121 |                     (cat_beds, pt_single, "FS-010", "Single Bed Frame", "Pine Wood", 1_500_00, 2_200_00, 4),
+    |                                                                                                ^^^^^^^^ help: 
+consider: `220_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:122:93
+    |
+122 |                     (cat_wardrobes, pt_4door, "FS-011", "4-Door Wardrobe", "Sheesham Wood", 4_500_00, 6_800_00, 
+2),
+    |                                                                                             ^^^^^^^^ help: 
+consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:122:103
+    |
+122 |                     (cat_wardrobes, pt_4door, "FS-011", "4-Door Wardrobe", "Sheesham Wood", 4_500_00, 6_800_00, 
+2),
+    |                                                                                                       ^^^^^^^^ 
+help: consider: `680_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:123:98
+    |
+123 |                     (cat_wardrobes, pt_slide, "FS-012", "Sliding Door Wardrobe", "MDF & Mirror", 5_500_00, 
+8_200_00, 1),
+    |                                                                                                  ^^^^^^^^ help: 
+consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:123:108
+    |
+123 |                     (cat_wardrobes, pt_slide, "FS-012", "Sliding Door Wardrobe", "MDF & Mirror", 5_500_00, 
+8_200_00, 1),
+    |                                                                                                            
+^^^^^^^^ help: consider: `820_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:124:99
+    |
+124 |                     (cat_nightstands, pt_night, "FS-013", "2-Drawer Nightstand", "Sheesham Wood", 800_00, 
+1_200_00, 6),
+    |                                                                                                   ^^^^^^ help: 
+consider: `80_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:124:107
+    |
+124 |                     (cat_nightstands, pt_night, "FS-013", "2-Drawer Nightstand", "Sheesham Wood", 800_00, 
+1_200_00, 6),
+    |                                                                                                           
+^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:125:97
+    |
+125 |                     (cat_dtables, pt_6dining, "FS-014", "6-Seater Dining Set", "Sheesham Wood", 5_500_00, 
+8_200_00, 2),
+    |                                                                                                 ^^^^^^^^ help: 
+consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:125:107
+    |
+125 |                     (cat_dtables, pt_6dining, "FS-014", "6-Seater Dining Set", "Sheesham Wood", 5_500_00, 
+8_200_00, 2),
+    |                                                                                                           
+^^^^^^^^ help: consider: `820_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:126:92
+    |
+126 |                     (cat_dtables, pt_4dining, "FS-015", "4-Seater Dining Set", "Oak Wood", 3_500_00, 5_200_00, 
+3),
+    |                                                                                            ^^^^^^^^ help: 
+consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:126:102
+    |
+126 |                     (cat_dtables, pt_4dining, "FS-015", "4-Seater Dining Set", "Oak Wood", 3_500_00, 5_200_00, 
+3),
+    |                                                                                                      ^^^^^^^^ 
+help: consider: `520_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:127:98
+    |
+127 |                     (cat_dchairs, pt_dchair, "FS-016", "Dining Chair Set of 4", "Sheesham Wood", 1_200_00, 
+1_800_00, 5),
+    |                                                                                                  ^^^^^^^^ help: 
+consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:127:108
+    |
+127 |                     (cat_dchairs, pt_dchair, "FS-016", "Dining Chair Set of 4", "Sheesham Wood", 1_200_00, 
+1_800_00, 5),
+    |                                                                                                            
+^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:128:96
+    |
+128 |                     (cat_odesks, pt_edesk, "FS-017", "Executive Office Desk", "Sheesham Wood", 2_500_00, 
+3_800_00, 2),
+    |                                                                                                ^^^^^^^^ help: 
+consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:128:106
+    |
+128 |                     (cat_odesks, pt_edesk, "FS-017", "Executive Office Desk", "Sheesham Wood", 2_500_00, 
+3_800_00, 2),
+    |                                                                                                          
+^^^^^^^^ help: consider: `380_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:129:92
+    |
+129 |                     (cat_odesks, pt_work, "FS-018", "L-Shaped Workstation", "MDF & Steel", 1_800_00, 2_800_00, 
+3),
+    |                                                                                            ^^^^^^^^ help: 
+consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:129:102
+    |
+129 |                     (cat_odesks, pt_work, "FS-018", "L-Shaped Workstation", "MDF & Steel", 1_800_00, 2_800_00, 
+3),
+    |                                                                                                      ^^^^^^^^ 
+help: consider: `280_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:130:102
+    |
+130 |                     (cat_ochairs, pt_echair, "FS-019", "Executive Office Chair", "Leather & Chrome", 1_200_00, 
+1_900_00, 4),
+    |                                                                                                      ^^^^^^^^ 
+help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:130:112
+    |
+130 |                     (cat_ochairs, pt_echair, "FS-019", "Executive Office Chair", "Leather & Chrome", 1_200_00, 
+1_900_00, 4),
+    |                                                                                                                
+^^^^^^^^ help: consider: `190_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:131:96
+    |
+131 |                     (cat_ochairs, pt_tchair, "FS-020", "Ergonomic Task Chair", "Mesh & Nylon", 800_00, 1_200_00, 
+6),
+    |                                                                                                ^^^^^^ help: 
+consider: `80_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:131:104
+    |
+131 |                     (cat_ochairs, pt_tchair, "FS-020", "Ergonomic Task Chair", "Mesh & Nylon", 800_00, 1_200_00, 
+6),
+    |                                                                                                        ^^^^^^^^ 
+help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:163:123
+    |
+163 |                     ("SUP-001", "Al-Hamd Furniture Industries", "042-35123456", "info@alhamd.pk", "Sialkot Road, 
+Lahore", 500_00_00),
+    |                                                                                                                  
+         ^^^^^^^^^ help: consider: `5_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:164:117
+    |
+164 |                     ("SUP-002", "Karachi Wood Works", "021-34567890", "sales@karachiwood.pk", "SITE Area, 
+Karachi", 300_00_00),
+    |                                                                                                                  
+   ^^^^^^^^^ help: consider: `3_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:165:120
+    |
+165 |                     ("SUP-003", "Pak Ceramic & Marble", "041-87654321", "orders@pakmarble.pk", "D-Ground, 
+Faisalabad", 200_00_00),
+    |                                                                                                                  
+      ^^^^^^^^^ help: consider: `2_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:166:114
+    |
+166 |                     ("SUP-004", "Sheesham Export Hub", "052-4567890", "export@sheesham.pk", "Bhai Wala, Gujrat", 
+400_00_00),
+    |                                                                                                                  
+^^^^^^^^^ help: consider: `4_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:194:94
+    |
+194 |                     ("CUS-001", "Ahmed Khan & Sons", "0300-1234567", "ahmed.khan@gmail.com", 500_00_00),
+    |                                                                                              ^^^^^^^^^ help: 
+consider: `5_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:195:95
+    |
+195 |                     ("CUS-002", "Fatima Enterprises", "0321-9876543", "fatima.ent@gmail.com", 300_00_00),
+    |                                                                                               ^^^^^^^^^ help: 
+consider: `3_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:196:100
+    |
+196 |                     ("CUS-003", "Muhammad Ali Builders", "0333-5551234", "ali.builders@gmail.com", 1_000_00_00),
+    |                                                                                                    ^^^^^^^^^^^ 
+help: consider: `10_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:197:107
+    |
+197 |                     ("CUS-004", "Sara Interior Design Studio", "0345-2223344", "sara.interior@gmail.com", 
+200_00_00),
+    |                                                                                                           
+^^^^^^^^^ help: consider: `2_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:198:91
+    |
+198 |                     ("CUS-005", "Habib Residence", "0312-8889900", "habib.res@gmail.com", 150_00_00),
+    |                                                                                           ^^^^^^^^^ help: 
+consider: `1_500_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:225:64
+    |
+225 |                 insert_purchase_item(tx, pur1_id, "FS-001", 5, 4_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:226:64
+    |
+226 |                 insert_purchase_item(tx, pur1_id, "FS-002", 3, 6_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:227:65
+    |
+227 |                 insert_purchase_item(tx, pur1_id, "FS-004", 10, 1_200_00).await?;
+    |                                                                 ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:228:43
+    |
+228 |                 let pur1_total: i64 = 5 * 4_500_00 + 3 * 6_500_00 + 10 * 1_200_00;
+    |                                           ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:228:58
+    |
+228 |                 let pur1_total: i64 = 5 * 4_500_00 + 3 * 6_500_00 + 10 * 1_200_00;
+    |                                                          ^^^^^^^^ help: consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:228:74
+    |
+228 |                 let pur1_total: i64 = 5 * 4_500_00 + 3 * 6_500_00 + 10 * 1_200_00;
+    |                                                                          ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:234:64
+    |
+234 |                 insert_purchase_item(tx, pur2_id, "FS-008", 4, 3_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:235:64
+    |
+235 |                 insert_purchase_item(tx, pur2_id, "FS-009", 6, 2_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:236:64
+    |
+236 |                 insert_purchase_item(tx, pur2_id, "FS-011", 2, 4_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:237:43
+    |
+237 |                 let pur2_total: i64 = 4 * 3_500_00 + 6 * 2_500_00 + 2 * 4_500_00;
+    |                                           ^^^^^^^^ help: consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:237:58
+    |
+237 |                 let pur2_total: i64 = 4 * 3_500_00 + 6 * 2_500_00 + 2 * 4_500_00;
+    |                                                          ^^^^^^^^ help: consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:237:73
+    |
+237 |                 let pur2_total: i64 = 4 * 3_500_00 + 6 * 2_500_00 + 2 * 4_500_00;
+    |                                                                         ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:243:64
+    |
+243 |                 insert_purchase_item(tx, pur3_id, "FS-014", 3, 5_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:244:64
+    |
+244 |                 insert_purchase_item(tx, pur3_id, "FS-016", 8, 1_200_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:245:64
+    |
+245 |                 insert_purchase_item(tx, pur3_id, "FS-019", 5, 1_200_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:246:43
+    |
+246 |                 let pur3_total: i64 = 3 * 5_500_00 + 8 * 1_200_00 + 5 * 1_200_00;
+    |                                           ^^^^^^^^ help: consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:246:58
+    |
+246 |                 let pur3_total: i64 = 3 * 5_500_00 + 8 * 1_200_00 + 5 * 1_200_00;
+    |                                                          ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:246:73
+    |
+246 |                 let pur3_total: i64 = 3 * 5_500_00 + 8 * 1_200_00 + 5 * 1_200_00;
+    |                                                                         ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:279:64
+    |
+279 |                 insert_sale_item(tx, sale1_id, 1, "FS-001", 1, 6_500_00, 4_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:279:74
+    |
+279 |                 insert_sale_item(tx, sale1_id, 1, "FS-001", 1, 6_500_00, 4_500_00).await?;
+    |                                                                          ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:280:64
+    |
+280 |                 insert_sale_item(tx, sale1_id, 4, "FS-004", 2, 1_800_00, 1_200_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:280:74
+    |
+280 |                 insert_sale_item(tx, sale1_id, 4, "FS-004", 2, 1_800_00, 1_200_00).await?;
+    |                                                                          ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:281:40
+    |
+281 |                 let sale1_total: i64 = 6_500_00 + 2 * 1_800_00;
+    |                                        ^^^^^^^^ help: consider: `650_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:281:55
+    |
+281 |                 let sale1_total: i64 = 6_500_00 + 2 * 1_800_00;
+    |                                                       ^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:282:39
+    |
+282 |                 let sale1_cost: i64 = 4_500_00 + 2 * 1_200_00;
+    |                                       ^^^^^^^^ help: consider: `450_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:282:54
+    |
+282 |                 let sale1_cost: i64 = 4_500_00 + 2 * 1_200_00;
+    |                                                      ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:294:64
+    |
+294 |                 insert_sale_item(tx, sale2_id, 8, "FS-008", 1, 5_200_00, 3_500_00).await?;
+    |                                                                ^^^^^^^^ help: consider: `520_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:294:74
+    |
+294 |                 insert_sale_item(tx, sale2_id, 8, "FS-008", 1, 5_200_00, 3_500_00).await?;
+    |                                                                          ^^^^^^^^ help: consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:295:65
+    |
+295 |                 insert_sale_item(tx, sale2_id, 13, "FS-013", 2, 1_200_00, 800_00).await?;
+    |                                                                 ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:295:75
+    |
+295 |                 insert_sale_item(tx, sale2_id, 13, "FS-013", 2, 1_200_00, 800_00).await?;
+    |                                                                           ^^^^^^ help: consider: `80_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:296:40
+    |
+296 |                 let sale2_total: i64 = 5_200_00 + 2 * 1_200_00;
+    |                                        ^^^^^^^^ help: consider: `520_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:296:55
+    |
+296 |                 let sale2_total: i64 = 5_200_00 + 2 * 1_200_00;
+    |                                                       ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:297:39
+    |
+297 |                 let sale2_cost: i64 = 3_500_00 + 2 * 800_00;
+    |                                       ^^^^^^^^ help: consider: `350_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:297:54
+    |
+297 |                 let sale2_cost: i64 = 3_500_00 + 2 * 800_00;
+    |                                                      ^^^^^^ help: consider: `80_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:304:37
+    |
+304 |                 .bind(sale2_total - 4_000_00)
+    |                                     ^^^^^^^^ help: consider: `400_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:309:65
+    |
+309 |                 insert_sale_item(tx, sale3_id, 14, "FS-014", 1, 8_200_00, 5_500_00).await?;
+    |                                                                 ^^^^^^^^ help: consider: `820_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:309:75
+    |
+309 |                 insert_sale_item(tx, sale3_id, 14, "FS-014", 1, 8_200_00, 5_500_00).await?;
+    |                                                                           ^^^^^^^^ help: consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:310:65
+    |
+310 |                 insert_sale_item(tx, sale3_id, 16, "FS-016", 2, 1_800_00, 1_200_00).await?;
+    |                                                                 ^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:310:75
+    |
+310 |                 insert_sale_item(tx, sale3_id, 16, "FS-016", 2, 1_800_00, 1_200_00).await?;
+    |                                                                           ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:311:65
+    |
+311 |                 insert_sale_item(tx, sale3_id, 17, "FS-017", 1, 3_800_00, 2_500_00).await?;
+    |                                                                 ^^^^^^^^ help: consider: `380_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:311:75
+    |
+311 |                 insert_sale_item(tx, sale3_id, 17, "FS-017", 1, 3_800_00, 2_500_00).await?;
+    |                                                                           ^^^^^^^^ help: consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:312:40
+    |
+312 |                 let sale3_total: i64 = 8_200_00 + 2 * 1_800_00 + 3_800_00;
+    |                                        ^^^^^^^^ help: consider: `820_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:312:55
+    |
+312 |                 let sale3_total: i64 = 8_200_00 + 2 * 1_800_00 + 3_800_00;
+    |                                                       ^^^^^^^^ help: consider: `180_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:312:66
+    |
+312 |                 let sale3_total: i64 = 8_200_00 + 2 * 1_800_00 + 3_800_00;
+    |                                                                  ^^^^^^^^ help: consider: `380_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:313:39
+    |
+313 |                 let sale3_cost: i64 = 5_500_00 + 2 * 1_200_00 + 2_500_00;
+    |                                       ^^^^^^^^ help: consider: `550_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:313:54
+    |
+313 |                 let sale3_cost: i64 = 5_500_00 + 2 * 1_200_00 + 2_500_00;
+    |                                                      ^^^^^^^^ help: consider: `120_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:313:65
+    |
+313 |                 let sale3_cost: i64 = 5_500_00 + 2 * 1_200_00 + 2_500_00;
+    |                                                                 ^^^^^^^^ help: consider: `250_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:368:32
+    |
+368 |                     (rent_cat, 1_500_00_00, "2026-08-01", "August shop rent"),
+    |                                ^^^^^^^^^^^ help: consider: `15_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:369:34
+    |
+369 |                     (salary_cat, 800_00_00, "2026-08-05", "Staff salaries - August"),
+    |                                  ^^^^^^^^^ help: consider: `8_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:370:32
+    |
+370 |                     (elec_cat, 350_00_00, "2026-08-10", "Electricity bill - August"),
+    |                                ^^^^^^^^^ help: consider: `3_500_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:371:37
+    |
+371 |                     (transport_cat, 120_00_00, "2026-08-15", "Delivery fuel costs"),
+    |                                     ^^^^^^^^^ help: consider: `1_200_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:372:32
+    |
+372 |                     (rent_cat, 1_500_00_00, "2026-09-01", "September shop rent"),
+    |                                ^^^^^^^^^^^ help: consider: `15_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: digits grouped inconsistently by underscores
+   --> src\application\seed_demo.rs:373:34
+    |
+373 |                     (salary_cat, 800_00_00, "2026-09-05", "Staff salaries - September"),
+    |                                  ^^^^^^^^^ help: consider: `8_000_000`
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#inconsistent_digit_grouping
+
+error: very complex type used. Consider factoring parts into `type` definitions
+   --> src\application\seed_demo.rs:110:31
+    |
+110 |                 let products: &[(i64, i64, &str, &str, &str, i64, i64, i64)] = &[
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit 
+https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#type_complexity
+    = note: `-D clippy::type-complexity` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::type_complexity)]`
+
+error: could not compile `furniture-shop` (lib) due to 103 previous errors

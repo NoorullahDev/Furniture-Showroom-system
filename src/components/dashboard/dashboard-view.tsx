@@ -9,10 +9,13 @@ import {
   CalendarDays,
   Clock3,
   PackageCheck,
+  PackageOpen,
   Plus,
   RefreshCw,
   ShoppingCart,
   Truck,
+  UserPlus,
+  Wallet,
   WalletCards,
 } from "lucide-react";
 
@@ -155,6 +158,9 @@ export function DashboardView({
   const permission = {
     sales: hasPermission("sale.create") || hasPermission("invoice.print"),
     newSale: hasPermission("sale.create"),
+    addCustomer: hasPermission("customer.create"),
+    addProduct: hasPermission("product.create"),
+    addExpense: hasPermission("expense.create") && hasPermission("expense.view"),
     receipts: hasPermission("payment.receive") || hasPermission("customer.view"),
     receivePayment: hasPermission("payment.receive") && hasPermission("payable.view"),
     payables: hasPermission("payable.view"),
@@ -163,9 +169,9 @@ export function DashboardView({
   };
   const data = summaryQuery.data;
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  const open = (target: DashboardTarget) => {
+  const open = (target: DashboardTarget, destination: ShellView = target.view) => {
     setDashboardTarget(target);
-    onNavigate(target.view);
+    onNavigate(destination);
   };
 
   if (summaryQuery.isLoading) {
@@ -221,11 +227,20 @@ export function DashboardView({
         subtitle={`Business date ${data.shopDate} · Updated ${formatDateTime(data.asOf)}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => open({ view: "sales", target: "new-sale" })} disabled={!permission.newSale}>
+            <Button onClick={() => open({ view: "sales", target: "new-sale" }, "new-sale")} disabled={!permission.newSale}>
               <Plus className="h-4 w-4" />New Sale
             </Button>
             <Button variant="outline" onClick={onReceivePayment} disabled={!permission.receivePayment}>
               <Banknote className="h-4 w-4" />Receive Payment
+            </Button>
+            <Button variant="outline" onClick={() => open({ view: "sales", target: "new-customer" }, "customers-tab")} disabled={!permission.addCustomer}>
+              <UserPlus className="h-4 w-4" />Add Customer
+            </Button>
+            <Button variant="outline" onClick={() => open({ view: "catalogue", target: "new-product" })} disabled={!permission.addProduct}>
+              <PackageOpen className="h-4 w-4" />Add Product
+            </Button>
+            <Button variant="outline" onClick={() => open({ view: "finance", target: "new-expense" })} disabled={!permission.addExpense}>
+              <Wallet className="h-4 w-4" />Add Expense
             </Button>
             <Button variant="outline" onClick={refresh} disabled={summaryQuery.isFetching}>
               <RefreshCw className={cn("h-4 w-4", summaryQuery.isFetching && "animate-spin")} />Refresh

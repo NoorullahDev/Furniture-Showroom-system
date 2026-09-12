@@ -124,11 +124,18 @@ pub struct LoginResultDto {
 pub struct LicenseStatusDto {
     pub status: String,
     pub label: String,
+    pub message: String,
     pub is_activated: bool,
+    pub hardware_id: String,
     pub license_id: Option<String>,
     pub customer: Option<String>,
-    pub activated_at: Option<String>,
+    pub issue_date: Option<String>,
+    pub last_renewed: Option<String>,
+    pub granted_days: Option<u32>,
     pub expires_at: Option<String>,
+    pub days_remaining: u32,
+    pub validity_percent: u8,
+    pub masked_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

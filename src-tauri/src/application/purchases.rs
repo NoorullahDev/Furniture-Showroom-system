@@ -3,6 +3,7 @@ use sqlx::Row;
 
 use crate::application::auth::Principal;
 use crate::application::cash::{record_cash_entry, require_cash_balance};
+use crate::application::documents::{next_document_number, replay_guard};
 use crate::application::inventory::{
     apply_on_hand_delta, next_move_seq, post_cost_layer, require_active_location, require_positive,
     withdraw_cost_layers,
@@ -20,33 +21,6 @@ use crate::state::AppState;
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-/// Consume one number from a `document_sequences` row. Central to the plan's
-/// guarantee that a failed posting never burns a document number: the UPDATE
-/// happens inside the same transaction as the failure and rolls back.
-async fn next_document_number(
-    tx: &mut SqliteConnection,
-    document_type: &str,
-) -> Result<String, AppError> {
-    let row: Option<(i64, String, String)> = sqlx::query_as(
-        "SELECT next_value, prefix, suffix FROM document_sequences WHERE document_type = ?",
-    )
-    .bind(document_type)
-    .fetch_optional(&mut *tx)
-    .await?;
-    let Some((value, prefix, suffix)) = row else {
-        return Err(AppError::Internal(format!(
-            "no document sequence configured for '{document_type}'"
-        )));
-    };
-    let number = format!("{prefix}{value:06}{suffix}");
-    sqlx::query("UPDATE document_sequences SET next_value = ? WHERE document_type = ?")
-        .bind(value + 1)
-        .bind(document_type)
-        .execute(&mut *tx)
-        .await?;
-    Ok(number)
-}
 
 /// Append a signed supplier-ledger entry and return the running balance after it.
 #[allow(clippy::too_many_arguments)]
@@ -79,32 +53,6 @@ async fn record_ledger(
     .execute(&mut *tx)
     .await?;
     Ok(after)
-}
-
-/// Replay guard shared by all posting commands: if the idempotency key was used
-/// before for this same document, the write already happened and can be skipped.
-/// Returns `true` when the caller should short-circuit with the existing record.
-async fn replay_guard(
-    tx: &mut SqliteConnection,
-    table: &str,
-    document_id: i64,
-    idempotency_key: &Option<String>,
-) -> Result<bool, AppError> {
-    let Some(key) = idempotency_key.as_deref().filter(|k| !k.trim().is_empty()) else {
-        return Ok(false);
-    };
-    let existing: Option<i64> =
-        sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE idempotency_key = ?"))
-            .bind(key)
-            .fetch_optional(&mut *tx)
-            .await?;
-    match existing {
-        Some(id) if id == document_id => Ok(true),
-        Some(_) => Err(AppError::Conflict(format!(
-            "idempotency key '{key}' was already used for a different {table}"
-        ))),
-        None => Ok(false),
-    }
 }
 
 // ---------------------------------------------------------------------------

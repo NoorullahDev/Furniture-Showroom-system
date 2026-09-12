@@ -36,30 +36,6 @@ pub async fn get(state: &AppState, key: &str) -> Result<Option<String>, AppError
     SettingsRepository::find(&state.pool, key).await
 }
 
-/// Row-level setter used by internal flows that already own a transaction
-/// (e.g. first-run setup).
-#[allow(dead_code)]
-pub async fn set(
-    state: &AppState,
-    key: &str,
-    value_json: &str,
-    updated_by: Option<i64>,
-) -> Result<(), AppError> {
-    let key_owned = key.to_owned();
-    let value_owned = value_json.to_owned();
-    let now = state.clock.now_iso();
-
-    state
-        .write_coordinator
-        .execute(&state.pool, move |tx| {
-            Box::pin(async move {
-                SettingsRepository::upsert(tx, &key_owned, &value_owned, updated_by, &now).await?;
-                Ok::<(), AppError>(())
-            })
-        })
-        .await
-}
-
 /// Authorized settings write used by commands: requires `settings.manage` and
 /// records the change in the audit trail.
 #[allow(clippy::too_many_arguments)]
@@ -171,6 +147,7 @@ pub async fn update_general(
         }
     }
 
+    let showroom_name = shop_name.clone();
     let values = vec![
         ("shop.name", serde_json::json!(shop_name)),
         ("shop.owner_name", serde_json::json!(owner_name)),
@@ -184,6 +161,7 @@ pub async fn update_general(
         values,
         "settings.general_update",
         correlation_id,
+        Some(showroom_name),
     )
     .await
 }
@@ -252,6 +230,7 @@ pub async fn update_print(
         values,
         "settings.print_update",
         correlation_id,
+        None,
     )
     .await
 }
@@ -262,6 +241,7 @@ async fn update_group(
     values: Vec<(&'static str, serde_json::Value)>,
     action: &'static str,
     correlation_id: &str,
+    showroom_name: Option<String>,
 ) -> Result<(), AppError> {
     let now = state.clock.now_iso();
     let actor_id = principal.user_id;
@@ -272,6 +252,42 @@ async fn update_group(
         .write_coordinator
         .execute(&state.pool, move |tx| {
             Box::pin(async move {
+                if let Some(name) = showroom_name {
+                    let active_locations: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM locations WHERE is_active = 1")
+                            .fetch_one(&mut *tx)
+                            .await?;
+                    if active_locations != 1 {
+                        return Err(AppError::Conflict(
+                            "the showroom location consolidation has not completed".into(),
+                        ));
+                    }
+                    let location_id: i64 = sqlx::query_scalar(
+                        "SELECT id FROM locations WHERE is_active = 1 ORDER BY id LIMIT 1",
+                    )
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "UPDATE locations
+                            SET name = '__retired_location_' || id, updated_at = ?
+                          WHERE id <> ? AND name = ?",
+                    )
+                    .bind(&now)
+                    .bind(location_id)
+                    .bind(&name)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "UPDATE locations
+                            SET name = ?, type = 'showroom', updated_at = ?
+                          WHERE id = ?",
+                    )
+                    .bind(&name)
+                    .bind(&now)
+                    .bind(location_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
                 let changed_keys: Vec<&str> = values.iter().map(|(key, _)| *key).collect();
                 for (key, value) in &values {
                     SettingsRepository::upsert(

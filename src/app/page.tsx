@@ -4,7 +4,6 @@ import { Loader2, RefreshCw, AlertTriangle } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { FirstRunWizard } from "@/components/session/first-run-wizard";
-import { LockScreen } from "@/components/session/lock-screen";
 import { LoginScreen } from "@/components/session/login-screen";
 import { useSession } from "@/components/session/session-provider";
 import { Button } from "@/components/ui/button";
@@ -53,7 +52,6 @@ export default function HomePage() {
   if (startupError) return <StartupErrorScreen onRetry={retryStartup} />;
   if (status === "loading") return <Splash />;
   if (status === "first-run") return <FirstRunWizard />;
-  if (status === "locked") return <LockScreen />;
-  if (status === "logged-out") return <LoginScreen />;
+  if (status === "locked" || status === "logged-out") return <LoginScreen />;
   return <AppShell />;
 }

@@ -11,6 +11,8 @@ pub mod fonts;
 pub mod id;
 mod image_pipeline;
 pub mod logging;
+pub mod machine_id;
+pub mod protected_store;
 pub mod password;
 mod paths;
 mod pdf;

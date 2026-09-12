@@ -1,0 +1,2 @@
+[DEBUG] exe="D:\\Projects\\Furniture Showroom system\\src-tauri\\target\\debug\\furniture-shop.exe" project_root="D:\\Projects\\Furniture Showroom system"
+[DEBUG] CWD=Ok("D:\\Projects\\Furniture Showroom system")

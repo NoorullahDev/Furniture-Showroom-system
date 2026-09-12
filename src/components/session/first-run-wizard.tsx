@@ -73,7 +73,6 @@ type FormState = {
   shopEmail: string;
   currency: string;
   timezone: string;
-  firstLocation: string;
   invoicePrefix: string;
   backupLocation: string;
   ownerUsername: string;
@@ -90,7 +89,6 @@ function emptyForm(): FormState {
     shopEmail: "",
     currency: "PKR",
     timezone: "Asia/Karachi",
-    firstLocation: "",
     invoicePrefix: "INV/",
     backupLocation: "",
     ownerUsername: "",
@@ -177,10 +175,6 @@ export function FirstRunWizard() {
       if (form.timezone.trim().length === 0) {
         next.timezone = "Choose a timezone.";
       }
-      const location = form.firstLocation.trim();
-      if (location.length === 0 || location.length > 80) {
-        next.firstLocation = "Name the main location (80 characters or fewer).";
-      }
     }
     if (index === 2) {
       const prefix = form.invoicePrefix.trim();
@@ -234,7 +228,6 @@ export function FirstRunWizard() {
       shopEmail: form.shopEmail.trim(),
       currency: form.currency.trim().toUpperCase(),
       timezone: form.timezone.trim(),
-      firstLocation: form.firstLocation.trim(),
       invoicePrefix: form.invoicePrefix.trim(),
       backupLocation: form.backupLocation.trim() || null,
       ownerUsername: form.ownerUsername.trim().toLowerCase(),
@@ -360,15 +353,6 @@ export function FirstRunWizard() {
                     ))}
                   </SelectContent>
                 </Select>
-              </Field>
-              <Field id="firstLocation" label="Main location" error={errors.firstLocation}>
-                <Input
-                  id="firstLocation"
-                  value={form.firstLocation}
-                  onChange={(e) => set("firstLocation")(e.target.value)}
-                  placeholder="e.g. Main Showroom"
-                  autoFocus
-                />
               </Field>
             </>
           )}

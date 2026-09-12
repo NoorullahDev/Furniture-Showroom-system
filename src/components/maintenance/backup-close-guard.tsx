@@ -14,11 +14,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { backupCloseCancel, backupCloseRetry, backupCloseWithout } from "@/lib/tauri/api";
+import { useSession } from "@/components/session/session-provider";
 
 type CloseState = { mode: "idle" | "running" | "failed"; message?: string };
 
 export function BackupCloseGuard() {
   const [state, setState] = React.useState<CloseState>({ mode: "idle" });
+  const { profile } = useSession();
+  const session = profile?.sessionId ?? "";
 
   React.useEffect(() => {
     const cleanups = Promise.all([
@@ -33,14 +36,14 @@ export function BackupCloseGuard() {
   }, []);
 
   async function cancelClose() {
-    await backupCloseCancel();
+    await backupCloseCancel(session);
     setState({ mode: "idle" });
   }
 
   async function retry() {
     setState({ mode: "running" });
     try {
-      await backupCloseRetry();
+      await backupCloseRetry(session);
     } catch {
       // The backend emits the precise failure and returns to the choice dialog.
     }
@@ -76,7 +79,7 @@ export function BackupCloseGuard() {
             <DialogFooter className="sm:justify-between">
               <Button variant="outline" onClick={cancelClose}>Cancel Close</Button>
               <div className="flex gap-2">
-                <Button variant="danger" onClick={() => void backupCloseWithout()}>Close Without Backup</Button>
+                <Button variant="danger" onClick={() => void backupCloseWithout(session)}>Close Without Backup</Button>
                 <Button onClick={retry}>Retry</Button>
               </div>
             </DialogFooter>

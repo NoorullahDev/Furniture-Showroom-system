@@ -1083,7 +1083,14 @@ pub async fn list_locations(
     _principal: &Principal,
 ) -> Result<Vec<LocationDto>, AppError> {
     let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
-        "SELECT id, name, type, is_active FROM locations WHERE is_active = 1 ORDER BY name",
+        "SELECT l.id,
+                COALESCE(NULLIF(TRIM(json_extract(s.value_json, '$')), ''), l.name),
+                l.type, l.is_active
+           FROM locations l
+           LEFT JOIN settings s ON s.key = 'shop.name'
+          WHERE l.is_active = 1
+          ORDER BY l.id
+          LIMIT 1",
     )
     .fetch_all(&state.pool)
     .await?;
