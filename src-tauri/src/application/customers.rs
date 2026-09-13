@@ -16,11 +16,12 @@ pub(crate) async fn require_customer(
     conn: &mut SqliteConnection,
     customer_id: i64,
 ) -> Result<(), AppError> {
-    let exists: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM customers WHERE id = ? AND is_active = 1")
-            .bind(customer_id)
-            .fetch_optional(conn)
-            .await?;
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM customers WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+    )
+    .bind(customer_id)
+    .fetch_optional(conn)
+    .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!("customer {customer_id}")));
     }
@@ -96,8 +97,13 @@ async fn customer_dto(state: &AppState, customer_id: i64) -> Result<CustomerDto,
     let row = sqlx::query(
         "SELECT c.id, c.code, c.name, c.phone, c.email, c.address,
                 c.credit_limit_minor, c.credit_days, c.is_active, c.created_at,
-                c.opening_balance_minor
-         FROM customers c WHERE c.id = ?",
+                c.opening_balance_minor,
+                (SELECT COUNT(*) FROM sales s WHERE s.customer_id = c.id) +
+                (SELECT COUNT(*) FROM customer_payments p WHERE p.customer_id = c.id) +
+                (SELECT COUNT(*) FROM deliveries d WHERE d.customer_id = c.id) +
+                (SELECT COUNT(*) FROM sales_returns r WHERE r.customer_id = c.id) +
+                (SELECT COUNT(*) FROM credit_notes n WHERE n.customer_id = c.id) AS linked_record_count
+         FROM customers c WHERE c.id = ? AND c.deleted_at IS NULL",
     )
     .bind(customer_id)
     .fetch_optional(&state.pool)
@@ -121,6 +127,7 @@ async fn customer_dto(state: &AppState, customer_id: i64) -> Result<CustomerDto,
         created_at: row.get(9),
         balance_minor: balance,
         advance_minor: advance,
+        linked_record_count: row.get(11),
         opening_balance_minor: row.get::<i64, _>(10),
     })
 }
@@ -347,6 +354,106 @@ pub async fn update(
     customer_dto(state, customer_id).await
 }
 
+pub async fn delete(
+    state: &AppState,
+    principal: &Principal,
+    customer_id: i64,
+    force: bool,
+    correlation_id: &str,
+) -> Result<(), AppError> {
+    principal.require("customer.create")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let customer: Option<(String, String)> =
+                    sqlx::query_as(
+                        "SELECT code, name FROM customers WHERE id = ? AND deleted_at IS NULL",
+                    )
+                        .bind(customer_id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                let Some((code, name)) = customer else {
+                    return Err(AppError::NotFound(format!("customer {customer_id}")));
+                };
+
+                let checks = [
+                    ("sales", "sale"),
+                    ("customer_payments", "payment"),
+                    ("deliveries", "delivery"),
+                    ("sales_returns", "return"),
+                    ("credit_notes", "credit note"),
+                    ("customer_ledger_entries", "ledger entry"),
+                ];
+                let mut linked = Vec::new();
+                for (table, label) in checks {
+                    let count: i64 = sqlx::query_scalar(&format!(
+                        "SELECT COUNT(*) FROM {table} WHERE customer_id = ?"
+                    ))
+                    .bind(customer_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    if count > 0 {
+                        linked.push(format!("{count} {label}{}", if count == 1 { "" } else { "s" }));
+                    }
+                }
+                let balance = customer_balance(&mut *tx, customer_id).await?;
+                if !linked.is_empty() && !force {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Customer {code} ({name}) has an outstanding balance of PKR {:.2} and linked business history: {}. Deleting anyway will remove the customer from active records while preserving that history for audit.",
+                        balance as f64 / 100.0,
+                        linked.join(", ")
+                    )));
+                }
+
+                if linked.is_empty() {
+                    sqlx::query("DELETE FROM customers WHERE id = ?")
+                        .bind(customer_id)
+                        .execute(&mut *tx)
+                        .await?;
+                } else {
+                    // Linked financial documents are immutable history. Tombstoning the
+                    // master removes it from normal use without breaking those references.
+                    sqlx::query(
+                        "UPDATE customers SET is_active = 0,
+                                deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                         WHERE id = ?",
+                    )
+                    .bind(customer_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                state_audit(
+                    &mut *tx,
+                    &audits,
+                    actor_id,
+                    &actor_session,
+                    "customer.delete",
+                    "customer",
+                    customer_id,
+                    &correlation,
+                    Some(serde_json::json!({
+                        "code": code,
+                        "name": name,
+                        "balance_minor": balance,
+                        "linked_history": linked,
+                    })),
+                    None,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+}
+
 pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<CustomerDto>, AppError> {
     principal.require("customer.view")?;
     let rows = sqlx::query(
@@ -355,8 +462,13 @@ pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<Custome
                 c.opening_balance_minor,
                 COALESCE((SELECT balance_after_minor FROM customer_ledger_entries e
                            WHERE e.customer_id = c.id ORDER BY id DESC LIMIT 1),
-                         c.opening_balance_minor) AS balance_minor
-         FROM customers c ORDER BY c.name",
+                         c.opening_balance_minor) AS balance_minor,
+                (SELECT COUNT(*) FROM sales s WHERE s.customer_id = c.id) +
+                (SELECT COUNT(*) FROM customer_payments p WHERE p.customer_id = c.id) +
+                (SELECT COUNT(*) FROM deliveries d WHERE d.customer_id = c.id) +
+                (SELECT COUNT(*) FROM sales_returns sr WHERE sr.customer_id = c.id) +
+                (SELECT COUNT(*) FROM credit_notes n WHERE n.customer_id = c.id) AS linked_record_count
+         FROM customers c WHERE c.deleted_at IS NULL ORDER BY c.name",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -378,6 +490,7 @@ pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<Custome
                 opening_balance_minor: r.get::<i64, _>(10),
                 balance_minor: balance,
                 advance_minor: i64::max(0, -balance),
+                linked_record_count: r.get(12),
             }
         })
         .collect())
@@ -800,6 +913,14 @@ pub async fn void_receipt(
                 .bind(input.payment_id)
                 .fetch_all(&mut *tx)
                 .await?;
+                if !input.force {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Payment {receipt_number} received PKR {:.2} and is linked to {} invoice allocation{}. Delete Anyway will restore every affected invoice due, the customer balance, and the cash account.",
+                        amount_minor as f64 / 100.0,
+                        allocations.len(),
+                        if allocations.len() == 1 { "" } else { "s" }
+                    )));
+                }
                 for (sale_id, alloc) in allocations {
                     sqlx::query(
                         "UPDATE sales

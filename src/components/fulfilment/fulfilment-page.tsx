@@ -10,6 +10,7 @@ import {
   Printer,
   RefreshCw,
   Search,
+  Trash2,
   Truck,
   Undo2,
   Wrench,
@@ -52,6 +53,7 @@ import {
   damageRecord,
   DamageRecordDto,
   deliveryCreate,
+  deliveryDelete,
   deliveryGet,
   deliveryList,
   deliveryNotePdf,
@@ -78,6 +80,7 @@ type PageDialog =
   | { kind: "create-delivery" }
   | { kind: "delivery-detail"; delivery: DeliveryDto }
   | { kind: "transition"; delivery: DeliveryDto }
+  | { kind: "delete-delivery"; delivery: DeliveryDto }
   | { kind: "post-return" }
   | { kind: "void-return"; ret: SaleReturnDto }
   | { kind: "record-damage" }
@@ -273,6 +276,7 @@ function DeliveriesView({
   canUpdate,
   onTransition,
   onDetail,
+  onDelete,
 }: {
   session: string;
   deliveries: DeliveryDto[];
@@ -281,6 +285,7 @@ function DeliveriesView({
   canUpdate: boolean;
   onTransition: (d: DeliveryDto) => void;
   onDetail: (d: DeliveryDto) => void;
+  onDelete: (d: DeliveryDto) => void;
 }) {
   const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
@@ -397,6 +402,11 @@ function DeliveriesView({
                         Update
                       </Button>
                     )}
+                    {canUpdate && (
+                      <Button type="button" variant="ghost" size="sm" className="text-rose-600" onClick={() => onDelete(d)}>
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -412,6 +422,48 @@ function DeliveriesView({
 // ---------------------------------------------------------------------------
 // Returns + credit notes
 // ---------------------------------------------------------------------------
+
+function DeleteDeliveryDialog({
+  session,
+  delivery,
+  onClose,
+  onDone,
+  onError,
+}: {
+  session: string;
+  delivery: DeliveryDto;
+  onClose: () => void;
+  onDone: () => void;
+  onError: (error: Error) => void;
+}) {
+  const mutation = useMutation({
+    mutationFn: () => deliveryDelete(session, {
+      deliveryId: delivery.id,
+      reason: "Deleted from Deliveries",
+      force: true,
+    }),
+    onSuccess: onDone,
+    onError,
+  });
+  return (
+    <Dialog open onOpenChange={(openState) => !openState && !mutation.isPending && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete delivery {delivery.deliveryNumber ?? `#${delivery.id}`}?</DialogTitle>
+          <DialogDescription>
+            Delivery {delivery.deliveryNumber ?? `#${delivery.id}`} is {delivery.status}, has {delivery.items.length} item allocation{delivery.items.length === 1 ? "" : "s"}, and is linked to sale {delivery.saleNumber ?? `#${delivery.saleId}`}. Delete Anyway removes only the delivery and releases its quantities; the sale and invoice will not be deleted.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
+          <Button variant="danger" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ReturnsView({
   session,
@@ -1510,6 +1562,7 @@ export function FulfilmentPage({ activeTab }: { activeTab?: "deliveries" | "retu
             canUpdate={canUpdateDelivery}
             onTransition={(d) => setDialog({ kind: "transition", delivery: d })}
             onDetail={(d) => setDialog({ kind: "delivery-detail", delivery: d })}
+            onDelete={(d) => setDialog({ kind: "delete-delivery", delivery: d })}
           />
         )}
         {view === "returns" && canReturn && (
@@ -1535,6 +1588,15 @@ export function FulfilmentPage({ activeTab }: { activeTab?: "deliveries" | "retu
       )}
       {dialog?.kind === "delivery-detail" && (
         <DeliveryDetailDialog session={session} deliveryId={dialog.delivery.id} onClose={() => setDialog(null)} />
+      )}
+      {dialog?.kind === "delete-delivery" && (
+        <DeleteDeliveryDialog
+          session={session}
+          delivery={dialog.delivery}
+          onClose={() => setDialog(null)}
+          onDone={done("Delivery deleted")}
+          onError={failed}
+        />
       )}
       {dialog?.kind === "post-return" && (
         <PostReturnDialog session={session} sales={sales} accounts={accounts} onClose={() => setDialog(null)} onDone={done("Return posted")} onError={failed} />

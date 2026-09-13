@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::fulfilment::{
-    DamageDecisionInput, DamageRecordInput, DeliveryCreateInput, DeliveryItemInput,
-    DeliveryTransitionInput, ReturnItemInput, ReturnVoidInput, SaleReturnInput,
+    DamageDecisionInput, DamageRecordInput, DeliveryCreateInput, DeliveryDeleteInput,
+    DeliveryItemInput, DeliveryTransitionInput, ReturnItemInput, ReturnVoidInput, SaleReturnInput,
 };
 use furniture_shop_lib::dto::purchases::{
     CashAccountInput, PurchaseCreateInput, PurchaseItemInput, PurchasePostInput, SupplierInput,
@@ -481,6 +481,139 @@ async fn delivery_lifecycle_tracks_status_and_blocks_over_delivery() {
     .await
     .expect("cancel pending delivery");
     assert_eq!(cancel.status, "cancelled");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn delivery_delete_removes_items_frees_quantity_and_preserves_sale() {
+    let dir = temp_dir("delete-delivery");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-delivery").await;
+    let product = stock_product(&state, &owner, "DLV-DELETE", 4, 1_000).await;
+    set_price(&state, product, 5_000).await;
+    let location = main_location(&state).await;
+    let customer = create_customer(&state, &owner, "CUST-DLV-DELETE").await;
+    let cash = funded_cash(&state, &owner, "DLV-DELETE-CASH").await;
+    let sale = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: Some(customer),
+            kind: Some("sale".into()),
+            sale_date: Some("2026-09-05".into()),
+            discount_minor: Some(0),
+            delivery_charge_minor: Some(0),
+            notes: None,
+            items: vec![line(product, 2)],
+        },
+        "corr-sale",
+    )
+    .await
+    .unwrap();
+    confirm_paid(&state, &owner, sale.id, 10_000, cash).await;
+    let sale_item = sold_sale_item(&state, sale.id).await;
+    let delivery = application::fulfilment::create_delivery(
+        &state,
+        &owner,
+        DeliveryCreateInput {
+            sale_id: sale.id,
+            scheduled_at: Some("2026-09-06".into()),
+            address: None,
+            contact_name: None,
+            contact_phone: None,
+            driver_note: None,
+            vehicle_note: None,
+            delivery_charge_minor: None,
+            notes: None,
+            items: vec![DeliveryItemInput {
+                sale_item_id: sale_item,
+                quantity: 2,
+            }],
+        },
+        "corr-delivery",
+    )
+    .await
+    .unwrap();
+
+    let warning = application::fulfilment::delete_delivery(
+        &state,
+        &owner,
+        DeliveryDeleteInput {
+            delivery_id: delivery.id,
+            reason: Some("duplicate delivery".into()),
+            force: false,
+        },
+        "corr-delete",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("linked to sale"))
+    );
+    application::fulfilment::delete_delivery(
+        &state,
+        &owner,
+        DeliveryDeleteInput {
+            delivery_id: delivery.id,
+            reason: Some("duplicate delivery".into()),
+            force: true,
+        },
+        "corr-delete-force",
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM deliveries WHERE id = ?")
+            .bind(delivery.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM delivery_items WHERE delivery_id = ?")
+            .bind(delivery.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sales WHERE id = ? AND status = 'confirmed'"
+        )
+        .bind(sale.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    let replacement = application::fulfilment::create_delivery(
+        &state,
+        &owner,
+        DeliveryCreateInput {
+            sale_id: sale.id,
+            scheduled_at: None,
+            address: None,
+            contact_name: None,
+            contact_phone: None,
+            driver_note: None,
+            vehicle_note: None,
+            delivery_charge_minor: None,
+            notes: None,
+            items: vec![DeliveryItemInput {
+                sale_item_id: sale_item,
+                quantity: 2,
+            }],
+        },
+        "corr-replacement",
+    )
+    .await
+    .unwrap();
+    assert_ne!(replacement.id, delivery.id);
 
     let _ = fs::remove_dir_all(&dir);
 }

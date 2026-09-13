@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Search,
   Tags,
+  Trash2,
   Undo2,
   Wallet,
 } from "lucide-react";
@@ -56,6 +57,7 @@ import {
   expenseCategoryCreate,
   expenseCategoryList,
   expenseCategoryUpdate,
+  expenseDelete,
   expensePage,
   expensePost,
   expenseReverse,
@@ -154,6 +156,7 @@ export function ExpensesPage() {
   );
   const [categoriesOpen, setCategoriesOpen] = React.useState(false);
   const [reverseTarget, setReverseTarget] = React.useState<ExpenseDto | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<ExpenseDto | null>(null);
   const [financeTool, setFinanceTool] = React.useState<"owner" | "profit" | null>(null);
 
   React.useEffect(() => setPage(0), [deferredSearch, categoryId, fromDate, toDate]);
@@ -336,11 +339,18 @@ export function ExpensesPage() {
                       {formatCurrency(expense.amountMinor, currency)}
                     </TableCell>
                     <TableCell className="text-right">
-                      {canReverse && expense.status === "posted" ? (
-                        <Button variant="ghost" size="icon" title="Reverse expense" aria-label={`Reverse ${expense.expenseNumber ?? expense.id}`} onClick={() => setReverseTarget(expense)}>
-                          <Undo2 className="h-4 w-4" />
-                        </Button>
-                      ) : <span className="text-neutral-300">—</span>}
+                      <div className="flex items-center justify-end gap-1">
+                        {canReverse && expense.status === "posted" && (
+                          <Button variant="ghost" size="icon" title="Reverse expense" aria-label={`Reverse ${expense.expenseNumber ?? expense.id}`} onClick={() => setReverseTarget(expense)}>
+                            <Undo2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {canReverse && (
+                          <Button variant="ghost" size="icon" className="text-rose-600" title="Delete expense" aria-label={`Delete ${expense.expenseNumber ?? expense.id}`} onClick={() => setDeleteTarget(expense)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -400,6 +410,16 @@ export function ExpensesPage() {
           currency={currency}
           onClose={() => setReverseTarget(null)}
           onSaved={() => { setReverseTarget(null); invalidate(); toast({ variant: "success", title: "Expense reversed" }); }}
+          onError={handleError}
+        />
+      )}
+      {deleteTarget && canReverse && (
+        <DeleteExpenseDialog
+          session={session}
+          expense={deleteTarget}
+          currency={currency}
+          onClose={() => setDeleteTarget(null)}
+          onSaved={() => { setDeleteTarget(null); invalidate(); toast({ variant: "success", title: "Expense deleted" }); }}
           onError={handleError}
         />
       )}
@@ -553,6 +573,32 @@ function ReverseExpenseDialog({ session, expense, currency, onClose, onSaved, on
   const [reason, setReason] = React.useState("");
   const mutation = useMutation({ mutationFn: () => expenseReverse(session, { expenseId: expense.id, reason: reason.trim() }), onSuccess: onSaved, onError: (error: Error) => onError(error, "Could not reverse expense") });
   return <ExpenseFormDialog title="Reverse expense" description={`Reverse ${formatCurrency(expense.amountMinor, currency)} and restore it to ${expense.cashAccountName}. The original entry remains in history.`} busy={mutation.isPending} valid={!!reason.trim()} onSubmit={() => mutation.mutate()} onClose={onClose} submitLabel="Reverse expense"><div className="grid gap-1.5"><Label htmlFor="reversal-reason">Reason</Label><Input id="reversal-reason" autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this expense being reversed?" /></div></ExpenseFormDialog>;
+}
+
+function DeleteExpenseDialog({ session, expense, currency, onClose, onSaved, onError }: DialogActions & { expense: ExpenseDto; currency: string }) {
+  const mutation = useMutation({
+    mutationFn: () => expenseDelete(session, { expenseId: expense.id, reason: "Deleted from Expenses", force: true }),
+    onSuccess: onSaved,
+    onError: (error: Error) => onError(error, "Could not delete expense"),
+  });
+  return (
+    <Dialog open onOpenChange={(openState) => !openState && !mutation.isPending && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Delete expense {expense.expenseNumber ?? `#${expense.id}`}?</DialogTitle>
+          <DialogDescription>
+            Expense {expense.expenseNumber ?? `#${expense.id}`} is {expense.status} and records {formatCurrency(expense.amountMinor, currency)} for “{expense.description}” against {expense.cashAccountName}. Delete Anyway removes its linked cash entries and rebuilds the account balance.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" disabled={mutation.isPending} onClick={onClose}>Cancel</Button>
+          <Button variant="danger" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+            {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function OwnerTransfers({ session, accounts, currency, onError }: { session: string; accounts: CashAccountDto[]; currency: string; onError: (error: Error, title?: string) => void }) {

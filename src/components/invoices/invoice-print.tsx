@@ -1,57 +1,13 @@
 "use client";
 
-import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Printer, Search, FileText, Eye, RefreshCw,
-  ReceiptText, X, AlertTriangle, Loader2,
-} from "lucide-react";
-import { PageHeader } from "@/components/page-header";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog, DialogContent, DialogDescription,
-  DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem,
-  SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Table, TableBody, TableCell,
-  TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import { useToast } from "@/components/ui/toast";
-import { useSession, isSessionError } from "@/components/session/session-provider";
-import { printerList, saleList, saleGet, settingsGet, shopLogoGet, customerGet } from "@/lib/tauri/api";
 import type { SaleDto } from "@/lib/tauri/api";
-import { formatPkr } from "@/lib/format";
-import { commandErrorMessage } from "@/lib/tauri/client";
-import { InvoiceA4 } from "./invoice-a4";
 import {
-  loadPrintSettings,
-  type FontSize,
   type InvoicePrintSettings,
-  type PageOrientation,
-  type PaperSize,
-  type PrinterDestination,
 } from "./invoice-settings";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function parseSettingString(raw: string | null | undefined): string | null {
-  if (raw == null) return null;
-  try {
-    const p = JSON.parse(raw) as unknown;
-    return typeof p === "string" ? p : raw;
-  } catch {
-    return raw;
-  }
-}
 
 function escHtml(s: string): string {
   return s
@@ -60,34 +16,6 @@ function escHtml(s: string): string {
     .replace(/[>]/g, "&gt;")
     .replace(/["]/g, "&quot;")
     .replace(/[']/g, "&#39;");
-}
-
-function InvoiceStatusBadge({ status }: { status: string }) {
-  if (status === "confirmed") return <Badge variant="success">Confirmed</Badge>;
-  if (status === "cancelled") return <Badge variant="danger">Cancelled</Badge>;
-  return <Badge variant="neutral">{status}</Badge>;
-}
-
-function SummaryCard({
-  label, value, money, accent,
-}: {
-  label: string;
-  value: number;
-  money?: boolean;
-  accent?: "green" | "rose";
-}) {
-  const formatted = money ? formatPkr(value) : String(value);
-  const color = accent === "green"
-    ? "text-emerald-700"
-    : accent === "rose"
-      ? "text-rose-600"
-      : "text-neutral-900";
-  return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <p className="text-xs text-neutral-500">{label}</p>
-      <p className={`mt-1 text-xl font-semibold tabular-nums ${color}`}>{formatted}</p>
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +50,6 @@ export async function printInvoiceA4(
     const marginMm = Math.max(2, settings.marginMm ?? 15);
     // Bottom margin must be large enough to contain the fixed developer footer
     const bottomMarginMm = Math.max(14, marginMm);
-    const margin = `${marginMm}mm ${marginMm}mm ${bottomMarginMm}mm ${marginMm}mm`;
     const fs =
       settings.fontSize === "small"
         ? "10pt"

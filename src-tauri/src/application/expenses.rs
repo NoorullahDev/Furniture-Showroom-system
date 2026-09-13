@@ -745,6 +745,129 @@ pub async fn expense_reverse(
     expense_dto(state, input.expense_id).await
 }
 
+pub async fn expense_delete(
+    state: &AppState,
+    principal: &Principal,
+    input: crate::dto::expenses::ExpenseDeleteInput,
+    correlation_id: &str,
+) -> Result<(), AppError> {
+    principal.require("expense.reverse")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+    let reason = input
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deleted as an incorrect expense")
+        .to_string();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let current: Option<(String, i64, i64, String)> = sqlx::query_as(
+                    "SELECT status, amount_minor, cash_account_id, expense_number
+                     FROM expenses WHERE id = ?",
+                )
+                .bind(input.expense_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let Some((status, amount, account_id, number)) = current else {
+                    return Err(AppError::NotFound(format!(
+                        "expense {} not found",
+                        input.expense_id
+                    )));
+                };
+
+                let cash_entry_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM cash_entries
+                     WHERE reference_type = 'expense' AND reference_id = ?",
+                )
+                .bind(input.expense_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !input.force && cash_entry_count > 0 {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Expense {number} is {status}, is linked to {cash_entry_count} cash-ledger entr{}, and affected cash by PKR {:.2}. Delete Anyway will remove those entries and rebuild the account balance.",
+                        if cash_entry_count == 1 { "y" } else { "ies" },
+                        amount as f64 / 100.0
+                    )));
+                }
+
+                if status == "posted" {
+                    record_cash_entry(
+                        &mut *tx,
+                        account_id,
+                        "expense_reversal",
+                        amount,
+                        "expense",
+                        input.expense_id,
+                        &format!("Reversal of {number} — {reason}"),
+                        actor_id,
+                    )
+                    .await?;
+                }
+
+                // The original expense and its compensating entry net to zero.
+                // Remove both inside this transaction so no generic cash-ledger
+                // references are left pointing at a deleted expense.
+                sqlx::query(
+                    "DELETE FROM cash_entries
+                     WHERE reference_type = 'expense' AND reference_id = ?",
+                )
+                .bind(input.expense_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("DELETE FROM expenses WHERE id = ?")
+                    .bind(input.expense_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                let rebuilt_balance: i64 = sqlx::query_scalar(
+                    "SELECT opening_balance_minor + COALESCE((
+                        SELECT SUM(amount_minor) FROM cash_entries
+                         WHERE cash_account_id = cash_accounts.id
+                     ), 0)
+                     FROM cash_accounts WHERE id = ?",
+                )
+                .bind(account_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                sqlx::query("UPDATE cash_accounts SET balance_minor = ? WHERE id = ?")
+                    .bind(rebuilt_balance)
+                    .bind(account_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                state_audit(
+                    &mut *tx,
+                    &audits,
+                    actor_id,
+                    &actor_session,
+                    "expense.delete",
+                    "expense",
+                    input.expense_id,
+                    &correlation,
+                    Some(serde_json::json!({
+                        "expense_number": number,
+                        "status": status,
+                        "amount_minor": amount,
+                        "cash_account_id": account_id,
+                        "reason": reason,
+                    })),
+                    None,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+}
+
 async fn expense_dto(state: &AppState, id: i64) -> Result<ExpenseDto, AppError> {
     let row = sqlx::query(
         "SELECT e.id, e.expense_number, e.category_id, c.code, c.name,

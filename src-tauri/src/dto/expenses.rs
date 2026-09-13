@@ -120,6 +120,16 @@ pub struct ExpenseReverseInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExpenseDeleteInput {
+    pub expense_id: i64,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExpenseListInput {
     #[serde(default)]
     pub status: Option<String>,

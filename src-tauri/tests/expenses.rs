@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::expenses::{
-    ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseInput, ExpensePageInput,
-    ExpenseReverseInput, OwnerTransactionInput,
+    ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseDeleteInput, ExpenseInput,
+    ExpensePageInput, ExpenseReverseInput, OwnerTransactionInput,
 };
 use furniture_shop_lib::dto::purchases::{
     CashAccountInput, PurchaseCreateInput, PurchaseItemInput, PurchasePostInput, SupplierInput,
@@ -434,6 +434,90 @@ async fn reverse_expense_refunds_cash_and_leaves_profit() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[tokio::test]
+async fn delete_expense_restores_cash_and_removes_financial_references() {
+    let dir = temp_dir("delete-expense");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-expense").await;
+    let account = funded_cash(&state, &owner, "DEL-EXP").await;
+    let before = cash_balance_sql(&state, account).await;
+    let expense = application::expenses::expense_post(
+        &state,
+        &owner,
+        ExpenseInput {
+            category_id: 1,
+            amount_minor: 12_500,
+            expense_date: "2026-09-06".into(),
+            cash_account_id: account,
+            payment_method_id: 1,
+            description: "incorrect expense".into(),
+            payee: None,
+            reference: None,
+            attachment_path: None,
+            idempotency_key: Some("delete-expense".into()),
+        },
+        "corr-post",
+    )
+    .await
+    .unwrap();
+    assert_eq!(cash_balance_sql(&state, account).await, before - 12_500);
+
+    let warning = application::expenses::expense_delete(
+        &state,
+        &owner,
+        ExpenseDeleteInput {
+            expense_id: expense.id,
+            reason: Some("entered against wrong account".into()),
+            force: false,
+        },
+        "corr-delete",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("cash-ledger"))
+    );
+    application::expenses::expense_delete(
+        &state,
+        &owner,
+        ExpenseDeleteInput {
+            expense_id: expense.id,
+            reason: Some("entered against wrong account".into()),
+            force: true,
+        },
+        "corr-delete-force",
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM expenses WHERE id = ?")
+            .bind(expense.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM cash_entries WHERE reference_type = 'expense' AND reference_id = ?",
+        )
+        .bind(expense.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(cash_balance_sql(&state, account).await, before);
+    let profit = application::expenses::profit_summary(&state, &owner, None, None)
+        .await
+        .unwrap();
+    assert_eq!(profit.expenses_minor, 0);
+
+    state.pool.close().await;
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ---------------------------------------------------------------------------
 // Exit criteria 2 & 3: a customer receipt and a supplier payment move cash but
 // are never counted as revenue or cost again; the profit fixture matches the
@@ -469,7 +553,6 @@ async fn profit_matches_manual_calculation_and_cash_is_separate() {
             discount_minor: Some(0),
             delivery_charge_minor: Some(300),
             notes: None,
-            below_cost_reason: None,
             items: vec![SaleItemInput {
                 product_id: Some(product),
                 bundle_id: None,

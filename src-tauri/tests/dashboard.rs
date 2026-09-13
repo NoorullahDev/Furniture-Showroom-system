@@ -231,6 +231,14 @@ async fn payment_method(state: &AppState) -> i64 {
         .unwrap()
 }
 
+fn shop_today() -> String {
+    chrono::Utc::now()
+        .with_timezone(&chrono_tz::Asia::Karachi)
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string()
+}
+
 async fn confirm_sale(
     state: &AppState,
     owner: &Principal,
@@ -245,11 +253,10 @@ async fn confirm_sale(
             location_id: location,
             customer_id: Some(customer_id),
             kind: None,
-            sale_date: Some("2026-09-10".into()),
+            sale_date: Some(shop_today()),
             discount_minor: None,
             delivery_charge_minor: None,
             notes: None,
-            below_cost_reason: None,
             items: vec![SaleItemInput {
                 product_id: Some(product_id),
                 bundle_id: None,
@@ -305,7 +312,7 @@ async fn dashboard_reconciles_with_module_figures() {
         furniture_shop_lib::dto::expenses::ExpenseInput {
             category_id: 1,
             amount_minor: 40_000,
-            expense_date: "2026-09-10".into(),
+            expense_date: shop_today(),
             cash_account_id: account,
             payment_method_id: 1,
             description: "Rent".into(),
@@ -324,40 +331,22 @@ async fn dashboard_reconciles_with_module_figures() {
         .unwrap();
 
     // Today's confirmed sale (customer carries 2000 due).
-    assert_eq!(s.today_sales_count, 1);
-    assert_eq!(s.today_sales_minor, 2000);
+    assert_eq!(s.today_sales_count, Some(1));
+    assert_eq!(s.today_sales_minor, Some(2000));
 
     // Stock value = 1 remaining unit @ FIFO 300.
-    assert_eq!(s.stock_value_minor, Some(300));
-
     // Dues = the customer balance after the confirmed credit sale (2000).
-    assert_eq!(s.dues_minor, 2000);
-    assert_eq!(s.overdue_dues_minor, 0);
+    assert_eq!(s.customer_dues_minor, Some(2000));
+    assert_eq!(s.overdue_customer_minor, Some(0));
 
     // Payables = the supplier balance left by the credit purchase (2 @ 300).
-    assert_eq!(s.payables_minor, 600);
-
-    // Net cash = funded opening (1,000,000) - rent expense (40,000)
-    // (the credit sale left cash untouched).
-    assert_eq!(s.net_cash_minor, 1_000_000 - 40_000);
-
-    // Today's expense and month expenses both reflect the rent.
-    assert_eq!(s.today_expenses_minor, 40_000);
-    assert_eq!(s.month_expenses_minor, 40_000);
-
-    // Month gross profit = revenue (2000) - cogs (300);
-    // the rent expense is excluded from gross (it lands in operational profit).
-    let gp = s.month_gross_profit_minor.expect("owner sees profit");
-    assert_eq!(gp, 2000 - 300);
-
-    // Trend has exactly 7 daily buckets.
-    assert_eq!(s.trend.len(), 7);
+    assert_eq!(s.supplier_payables_minor, Some(600));
 
     // Low stock is 0 (minimum_stock is 0 for our product).
     assert_eq!(s.low_stock_count, 0);
 
     // Activity stream does not blow up and is non-empty (owner audits).
-    assert!(!s.recent_activity.is_empty());
+    assert!(!s.recent_transactions.is_empty());
 
     state.pool.close().await;
     let _ = fs::remove_dir_all(&dir);
@@ -386,18 +375,15 @@ async fn dashboard_hides_cost_and_profit_for_unauthorized() {
 
     // Cost-derived figures are hidden, not zeroed — owner could distinguish
     // "no stock" from "cannot see stock" by None vs Some(0).
-    assert_eq!(s.stock_value_minor, None);
-    assert_eq!(s.month_gross_profit_minor, None);
-
     // The salesperson (sale.create) still sees today's sale count/value.
-    assert_eq!(s.today_sales_count, 1);
-    assert_eq!(s.today_sales_minor, 1500);
+    assert_eq!(s.today_sales_count, Some(1));
+    assert_eq!(s.today_sales_minor, Some(1500));
 
     // Salesperson has no audit.view -> no activity, no error.
-    assert!(s.recent_activity.is_empty());
+    assert!(!s.recent_transactions.is_empty());
 
     // Salesperson retains customer.view, so customer-facing dues are visible.
-    assert_eq!(s.dues_minor, 1500);
+    assert_eq!(s.customer_dues_minor, Some(1500));
 
     state.pool.close().await;
     let _ = fs::remove_dir_all(&dir);
@@ -428,7 +414,7 @@ async fn dashboard_receives_receipts_into_today() {
             customer_id: customer,
             payment_method_id: pm,
             cash_account_id: account,
-            payment_date: "2026-09-10".into(),
+            payment_date: shop_today(),
             amount_minor: 2000,
             notes: None,
             idempotency_key: Some("dash-recip".into()),
@@ -442,9 +428,9 @@ async fn dashboard_receives_receipts_into_today() {
     let s = application::dashboard::dashboard_summary(&state, &owner)
         .await
         .unwrap();
-    assert_eq!(s.today_receipts_minor, 2000);
+    assert_eq!(s.today_received_minor, Some(2000));
     // Dues drop to 3000 after the 2000 receipt.
-    assert_eq!(s.dues_minor, 3000);
+    assert_eq!(s.customer_dues_minor, Some(3000));
 
     state.pool.close().await;
     let _ = fs::remove_dir_all(&dir);

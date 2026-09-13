@@ -131,12 +131,10 @@ pub async fn set_role_permissions(
         .await?;
 
     let (code, name, description, is_system): (String, String, Option<String>, i64) =
-        sqlx::query_as(
-            "SELECT code, name, description, is_system FROM roles WHERE id = ?",
-        )
-        .bind(role_id)
-        .fetch_one(&state.pool)
-        .await?;
+        sqlx::query_as("SELECT code, name, description, is_system FROM roles WHERE id = ?")
+            .bind(role_id)
+            .fetch_one(&state.pool)
+            .await?;
 
     Ok(RoleDto {
         id: role_id,

@@ -47,6 +47,28 @@ pub async fn customer_update(
 }
 
 #[tauri::command]
+pub async fn customer_delete(
+    state: State<'_, AppState>,
+    session: String,
+    customer_id: i64,
+    force: Option<bool>,
+) -> Result<(), AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("customer_delete", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::customers::delete(
+            &state,
+            &principal,
+            customer_id,
+            force.unwrap_or(false),
+            &correlation_id,
+        )
+        .await
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn customer_list(
     state: State<'_, AppState>,
     session: String,
@@ -211,20 +233,6 @@ pub async fn sale_create(
     run_command_with_correlation("sale_create", correlation_id.clone(), async move {
         let principal = authenticated(&state, &session).await?;
         application::sales::create_sale(&state, &principal, input, &correlation_id).await
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn sale_update(
-    state: State<'_, AppState>,
-    session: String,
-    input: crate::dto::sales::SaleUpdateInput,
-) -> Result<SaleDto, AppErrorDto> {
-    let correlation_id = new_correlation_id();
-    run_command_with_correlation("sale_update", correlation_id.clone(), async move {
-        let principal = authenticated(&state, &session).await?;
-        application::sales::sale_update(&state, &principal, input).await
     })
     .await
 }

@@ -1182,7 +1182,7 @@ pub async fn list_movements(
          FROM stock_movements m
          JOIN products p ON p.id = m.product_id
          JOIN locations l ON l.id = m.location_id
-         WHERE 1 = 1",
+         WHERE m.deleted_at IS NULL",
     );
     if product_id.is_some() {
         sql.push_str(" AND m.product_id = ?");
@@ -1301,6 +1301,17 @@ pub async fn reverse_movement(
     input: ReverseMovementInput,
     correlation_id: &str,
 ) -> Result<StockMovementDto, AppError> {
+    type MovementDeleteRow = (
+        i64,
+        i64,
+        i64,
+        String,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    );
     principal.require("inventory.create")?;
 
     let actor_id = principal.user_id;
@@ -1313,15 +1324,26 @@ pub async fn reverse_movement(
         .execute(&state.pool, move |tx| {
             let reason = input.reason.clone().unwrap_or_default();
             Box::pin(async move {
-                let orig: Option<(i64, i64, i64, String, Option<i64>)> = sqlx::query_as(
-                    "SELECT id, product_id, location_id, movement_type, reversal_of_id
-                     FROM stock_movements WHERE id = ?",
+                let orig: Option<MovementDeleteRow> = sqlx::query_as(
+                    "SELECT id, product_id, location_id, movement_type, reversal_of_id,
+                            quantity_delta, unit_cost_minor, reference_type, reference_id
+                     FROM stock_movements WHERE id = ? AND deleted_at IS NULL",
                 )
                 .bind(input.movement_id)
                 .fetch_optional(&mut *tx)
                 .await?;
 
-                let Some((orig_id, product_id, location_id, _orig_type, existing_reversal)) = orig
+                let Some((
+                    orig_id,
+                    product_id,
+                    location_id,
+                    orig_type,
+                    existing_reversal,
+                    orig_delta,
+                    unit_cost,
+                    reference_type,
+                    reference_id,
+                )) = orig
                 else {
                     return Err(AppError::NotFound(format!(
                         "stock movement {}",
@@ -1349,34 +1371,167 @@ pub async fn reverse_movement(
                     )));
                 }
 
-                let orig_delta: i64 =
-                    sqlx::query_scalar("SELECT quantity_delta FROM stock_movements WHERE id = ?")
-                        .bind(orig_id)
-                        .fetch_one(&mut *tx)
-                        .await?;
+                if !input.force {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Inventory movement {} changes stock by {orig_delta} and is linked to {}. Delete Anyway will post the safe inverse effect and retain an audit trail.",
+                        orig_id,
+                        match (&reference_type, reference_id) {
+                            (Some(kind), Some(id)) => format!("{kind} #{id}"),
+                            _ => "the inventory ledger".to_string(),
+                        }
+                    )));
+                }
 
-                let seq = next_move_seq(&mut *tx, location_id).await?;
-                let move_number = format!("REV-{seq:06}");
-                let reversal_delta = -orig_delta;
-
-                let reversal_id = sqlx::query(
-                    "INSERT INTO stock_movements (
-                        product_id, location_id, movement_type, quantity_delta,
-                        move_number, reason, created_by, reversal_of_id
-                     ) VALUES (?, ?, 'cancellation_reversal', ?, ?, ?, ?, ?)",
+                let balance: (i64, i64) = sqlx::query_as(
+                    "SELECT COALESCE(on_hand, 0), COALESCE(damaged, 0)
+                     FROM stock_balances WHERE product_id = ? AND location_id = ?",
                 )
                 .bind(product_id)
                 .bind(location_id)
-                .bind(reversal_delta)
-                .bind(&move_number)
-                .bind(&reason)
-                .bind(actor_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or((0, 0));
+
+                let reversal_delta = match orig_type.as_str() {
+                    "reservation" => {
+                        let reserved: i64 = sqlx::query_scalar(
+                            "SELECT COALESCE(reserved, 0) FROM stock_balances
+                             WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(product_id)
+                        .bind(location_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .unwrap_or(0);
+                        let qty = i64::min(reserved, orig_delta.abs());
+                        sqlx::query(
+                            "UPDATE stock_balances SET reserved = MAX(reserved - ?, 0)
+                             WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(qty)
+                        .bind(product_id)
+                        .bind(location_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        -qty
+                    }
+                    "release" => {
+                        let qty = orig_delta.abs();
+                        sqlx::query(
+                            "UPDATE stock_balances SET reserved = reserved + ?
+                             WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(qty)
+                        .bind(product_id)
+                        .bind(location_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        qty
+                    }
+                    "damage" => {
+                        let qty = i64::min(balance.1, orig_delta.abs());
+                        sqlx::query(
+                            "UPDATE stock_balances
+                                SET damaged = MAX(damaged - ?, 0), on_hand = on_hand + ?
+                              WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(qty)
+                        .bind(qty)
+                        .bind(product_id)
+                        .bind(location_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        qty
+                    }
+                    "repair_recovery" => {
+                        let qty = i64::min(balance.0.max(0), orig_delta.abs());
+                        sqlx::query(
+                            "UPDATE stock_balances
+                                SET on_hand = on_hand - ?, damaged = damaged + ?
+                              WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(qty)
+                        .bind(qty)
+                        .bind(product_id)
+                        .bind(location_id)
+                        .execute(&mut *tx)
+                        .await?;
+                        -qty
+                    }
+                    _ if orig_delta > 0 => {
+                        let layer_qty: i64 = sqlx::query_scalar(
+                            "SELECT COALESCE(SUM(quantity), 0) FROM inventory_cost_layers
+                             WHERE movement_id = ?",
+                        )
+                        .bind(orig_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        let attributable = if layer_qty > 0 { layer_qty } else { orig_delta };
+                        let qty = i64::min(balance.0.max(0), attributable);
+                        apply_on_hand_delta(&mut *tx, product_id, location_id, -qty).await?;
+                        sqlx::query("UPDATE inventory_cost_layers SET quantity = 0 WHERE movement_id = ?")
+                            .bind(orig_id)
+                            .execute(&mut *tx)
+                            .await?;
+                        -qty
+                    }
+                    _ => {
+                        let qty = orig_delta.abs();
+                        apply_on_hand_delta(&mut *tx, product_id, location_id, qty).await?;
+                        qty
+                    }
+                };
+
+                let (result_id, move_number) = if reversal_delta != 0 {
+                    let seq = next_move_seq(&mut *tx, location_id).await?;
+                    let move_number = format!("REV-{seq:06}");
+                    let reversal_id = sqlx::query(
+                        "INSERT INTO stock_movements (
+                            product_id, location_id, movement_type, quantity_delta,
+                            move_number, unit_cost_minor, reference_type, reference_id,
+                            reason, created_by, reversal_of_id
+                         ) VALUES (?, ?, 'cancellation_reversal', ?, ?, ?,
+                                   'inventory_delete', ?, ?, ?, ?)",
+                    )
+                    .bind(product_id)
+                    .bind(location_id)
+                    .bind(reversal_delta)
+                    .bind(&move_number)
+                    .bind(unit_cost)
+                    .bind(orig_id)
+                    .bind(&reason)
+                    .bind(actor_id)
+                    .bind(orig_id)
+                    .execute(&mut *tx)
+                    .await?
+                    .last_insert_rowid();
+                    if reversal_delta > 0
+                        && !matches!(orig_type.as_str(), "damage" | "release")
+                    {
+                        if let Some(cost) = unit_cost.filter(|cost| *cost >= 0) {
+                            post_cost_layer(
+                                &mut *tx,
+                                product_id,
+                                reversal_delta,
+                                cost,
+                                reversal_id,
+                            )
+                            .await?;
+                        }
+                    }
+                    (reversal_id, Some(move_number))
+                } else {
+                    (orig_id, None)
+                };
+
+                sqlx::query(
+                    "UPDATE stock_movements
+                        SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                      WHERE id = ?",
+                )
                 .bind(orig_id)
                 .execute(&mut *tx)
-                .await?
-                .last_insert_rowid();
-
-                apply_on_hand_delta(&mut *tx, product_id, location_id, reversal_delta).await?;
+                .await?;
 
                 audits
                     .record(
@@ -1386,11 +1541,11 @@ pub async fn reverse_movement(
                             session_id: Some(actor_session),
                             action: "inventory.reverse".into(),
                             entity_type: Some("stock_movement".into()),
-                            entity_id: Some(reversal_id.to_string()),
+                            entity_id: Some(orig_id.to_string()),
                             after_json: Some(
                                 serde_json::json!({
                                     "original_movement_id": orig_id,
-                                    "reversal_movement_id": reversal_id,
+                                    "reversal_movement_id": if result_id == orig_id { None } else { Some(result_id) },
                                     "reversal_delta": reversal_delta,
                                     "move_number": move_number,
                                 })
@@ -1401,7 +1556,7 @@ pub async fn reverse_movement(
                         },
                     )
                     .await?;
-                Ok(reversal_id)
+                Ok(result_id)
             })
         })
         .await?;

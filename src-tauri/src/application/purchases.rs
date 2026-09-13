@@ -10,11 +10,13 @@ use crate::application::inventory::{
 };
 use crate::application::suppliers::{require_supplier, state_audit, supplier_balance};
 use crate::dto::purchases::{
-    PayableAgingRowDto, PaymentAllocationDto, PurchaseCreateInput, PurchaseDto, PurchaseItemDto,
-    PurchasePostInput, SupplierPaymentDto, SupplierPaymentInput, SupplierPaymentVoidInput,
-    SupplierReturnCreateInput, SupplierReturnDto, SupplierReturnItemDto, SupplierReturnPostInput,
+    PayableAgingRowDto, PaymentAllocationDto, PurchaseCreateInput, PurchaseDeleteInput,
+    PurchaseDto, PurchaseItemDto, PurchasePostInput, SupplierPaymentDto, SupplierPaymentInput,
+    SupplierPaymentVoidInput, SupplierReturnCreateInput, SupplierReturnDto, SupplierReturnItemDto,
+    SupplierReturnPostInput,
 };
 use crate::error::AppError;
+use crate::infrastructure::audit::AuditService;
 use crate::infrastructure::clock::Clock;
 use crate::state::AppState;
 
@@ -75,7 +77,8 @@ async fn purchase_dto(state: &AppState, purchase_id: i64) -> Result<PurchaseDto,
         "SELECT p.id, p.purchase_number, p.supplier_id, p.supplier_name,
                 p.location_id, p.invoice_number, p.invoice_date, p.purchase_date,
                 p.status, p.total_minor, p.paid_minor, p.due_minor, p.notes,
-                p.created_at, p.posted_at
+                p.created_at, p.posted_at,
+                (SELECT COUNT(*) FROM supplier_returns r WHERE r.purchase_id = p.id)
          FROM purchases p WHERE p.id = ?",
     )
     .bind(purchase_id)
@@ -104,6 +107,7 @@ async fn purchase_dto(state: &AppState, purchase_id: i64) -> Result<PurchaseDto,
         total_minor: row.get(9),
         paid_minor: row.get(10),
         due_minor: row.get(11),
+        linked_return_count: row.get(15),
         notes: row.get(12),
         items: item_rows.iter().map(map_purchase_item).collect(),
         created_at: row.get(13),
@@ -483,6 +487,360 @@ pub async fn post_purchase(
     purchase_dto(state, result).await
 }
 
+pub async fn delete_purchase(
+    state: &AppState,
+    principal: &Principal,
+    input: PurchaseDeleteInput,
+    correlation_id: &str,
+) -> Result<(), AppError> {
+    type PurchaseDeleteRow = (String, i64, i64, i64, i64, i64, Option<String>, String);
+    principal.require("purchase.create")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+    let reason = input
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deleted as an incorrect purchase")
+        .to_string();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let purchase: Option<PurchaseDeleteRow> =
+                    sqlx::query_as(
+                        "SELECT status, supplier_id, location_id, total_minor,
+                                paid_minor, due_minor,
+                                purchase_number, invoice_number
+                         FROM purchases WHERE id = ?",
+                    )
+                    .bind(input.purchase_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                let Some((
+                    status,
+                    supplier_id,
+                    location_id,
+                    total,
+                    paid,
+                    due,
+                    purchase_number,
+                    invoice_number,
+                )) = purchase
+                else {
+                    return Err(AppError::NotFound(format!("purchase {}", input.purchase_id)));
+                };
+                let display_number = purchase_number.unwrap_or(invoice_number);
+
+                let linked_returns: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM supplier_returns WHERE purchase_id = ?",
+                )
+                .bind(input.purchase_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !input.force && (status == "posted" || linked_returns > 0) {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Purchase {display_number} is linked to posted stock, PKR {:.2} paid, PKR {:.2} due, and {linked_returns} supplier return{}. Deleting anyway will reverse the remaining stock and supplier-account effects; shared payments are voided and linked returns remain in audit history.",
+                        paid as f64 / 100.0,
+                        due as f64 / 100.0,
+                        if linked_returns == 1 { "" } else { "s" }
+                    )));
+                }
+
+                if status == "posted" {
+                    let movements: Vec<(i64, i64, i64, Option<i64>)> = sqlx::query_as(
+                        "SELECT id, product_id, quantity_delta, unit_cost_minor
+                         FROM stock_movements
+                         WHERE reference_type = 'purchase' AND reference_id = ?
+                           AND movement_type = 'purchase_receipt'
+                         ORDER BY id",
+                    )
+                    .bind(input.purchase_id)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    if movements.is_empty() {
+                        return Err(AppError::Conflict(format!(
+                            "cannot delete purchase {display_number}: its stock receipt records are missing"
+                        )));
+                    }
+
+                    for (movement_id, product_id, quantity, _) in &movements {
+                        let reversal_exists: Option<i64> = sqlx::query_scalar(
+                            "SELECT id FROM stock_movements WHERE reversal_of_id = ? LIMIT 1",
+                        )
+                        .bind(movement_id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                        if reversal_exists.is_some() && !input.force {
+                            return Err(AppError::Conflict(format!(
+                                "cannot delete purchase {display_number}: stock movement {movement_id} was already reversed"
+                            )));
+                        }
+
+                        let layer_quantity: i64 = sqlx::query_scalar(
+                            "SELECT COALESCE(SUM(quantity), 0) FROM inventory_cost_layers
+                             WHERE movement_id = ?",
+                        )
+                        .bind(movement_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        if layer_quantity != *quantity && !input.force {
+                            return Err(AppError::ConfirmationRequired(format!(
+                                "Purchase {display_number} has stock that was already sold, returned, transferred, or otherwise consumed. Delete Anyway will remove only the remaining attributable stock and preserve consumed cost history."
+                            )));
+                        }
+
+                        let on_hand: i64 = sqlx::query_scalar(
+                            "SELECT COALESCE(on_hand, 0) FROM stock_balances
+                             WHERE product_id = ? AND location_id = ?",
+                        )
+                        .bind(product_id)
+                        .bind(location_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                        .unwrap_or(0);
+                        if on_hand < layer_quantity && !input.force {
+                            return Err(AppError::ConfirmationRequired(format!(
+                                "Purchase {display_number} has {layer_quantity} remaining unit(s) of product {product_id}, including stock moved or classified outside the receipt balance. Delete Anyway will remove the remaining units from their current stock buckets without creating negative stock."
+                            )));
+                        }
+                    }
+
+                    let payments: Vec<(i64, String, i64)> = sqlx::query_as(
+                        "SELECT DISTINCT p.id, p.status,
+                                (SELECT COUNT(*) FROM supplier_payment_allocations all_a
+                                  WHERE all_a.payment_id = p.id) AS allocation_count
+                         FROM supplier_payments p
+                         JOIN supplier_payment_allocations a ON a.payment_id = p.id
+                         WHERE a.purchase_id = ?",
+                    )
+                    .bind(input.purchase_id)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    for (payment_id, payment_status, allocation_count) in &payments {
+                        if payment_status == "posted" && *allocation_count > 1 && !input.force {
+                            return Err(AppError::ConfirmationRequired(format!(
+                                "Purchase {display_number} uses payment {payment_id}, which is also allocated to other purchases. Delete Anyway will void that payment and restore every affected purchase due."
+                            )));
+                        }
+                    }
+
+                    let posted_payment_total: i64 = sqlx::query_scalar(
+                        "SELECT COALESCE(SUM(p.amount_minor), 0)
+                         FROM supplier_payments p
+                         WHERE p.status = 'posted' AND p.id IN (
+                           SELECT payment_id FROM supplier_payment_allocations WHERE purchase_id = ?
+                         )",
+                    )
+                    .bind(input.purchase_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    let current_balance = supplier_balance(&mut *tx, supplier_id).await?;
+                    if current_balance + posted_payment_total - total < 0 && !input.force {
+                        return Err(AppError::ConfirmationRequired(format!(
+                            "Purchase {display_number} has supplier returns or adjustments that depend on its payable balance. Delete Anyway will preserve those records and recalculate the remaining supplier balance."
+                        )));
+                    }
+
+                    for (payment_id, payment_status, _) in &payments {
+                        if payment_status == "posted" {
+                            void_payment_in_tx(
+                                &mut *tx,
+                                &audits,
+                                actor_id,
+                                &actor_session,
+                                *payment_id,
+                                &format!("purchase {display_number} deleted: {reason}"),
+                                &correlation,
+                            )
+                            .await?;
+                        }
+                    }
+
+                    for (movement_id, product_id, _quantity, unit_cost) in &movements {
+                        let reversal_exists: Option<i64> = sqlx::query_scalar(
+                            "SELECT id FROM stock_movements WHERE reversal_of_id = ? LIMIT 1",
+                        )
+                        .bind(movement_id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                        if reversal_exists.is_some() {
+                            continue;
+                        }
+                        let remaining_quantity: i64 = sqlx::query_scalar(
+                            "SELECT COALESCE(SUM(quantity), 0) FROM inventory_cost_layers
+                             WHERE movement_id = ?",
+                        )
+                        .bind(movement_id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                        if remaining_quantity == 0 {
+                            continue;
+                        }
+                        let balances: Vec<(i64, i64, i64)> = sqlx::query_as(
+                            "SELECT location_id, MAX(on_hand, 0), MAX(damaged, 0)
+                             FROM stock_balances WHERE product_id = ?
+                             ORDER BY CASE WHEN location_id = ? THEN 0 ELSE 1 END, location_id",
+                        )
+                        .bind(product_id)
+                        .bind(location_id)
+                        .fetch_all(&mut *tx)
+                        .await?;
+                        let mut to_remove = remaining_quantity;
+                        let mut first_reversal = true;
+                        for (stock_location_id, on_hand, _) in &balances {
+                            let take = i64::min(*on_hand, to_remove);
+                            if take <= 0 {
+                                continue;
+                            }
+                            let seq = next_move_seq(&mut *tx, *stock_location_id).await?;
+                            let move_number = format!("PDEL-{seq:06}");
+                            sqlx::query(
+                                "INSERT INTO stock_movements
+                                   (product_id, location_id, movement_type, quantity_delta,
+                                    move_number, unit_cost_minor, reference_type, reference_id,
+                                    reason, created_by, reversal_of_id)
+                                 VALUES (?, ?, 'cancellation_reversal', ?, ?, ?,
+                                         'purchase_delete', ?, ?, ?, ?)",
+                            )
+                            .bind(product_id)
+                            .bind(stock_location_id)
+                            .bind(-take)
+                            .bind(&move_number)
+                            .bind(unit_cost)
+                            .bind(input.purchase_id)
+                            .bind(&reason)
+                            .bind(actor_id)
+                            .bind(if first_reversal { Some(*movement_id) } else { None })
+                            .execute(&mut *tx)
+                            .await?;
+                            apply_on_hand_delta(&mut *tx, *product_id, *stock_location_id, -take)
+                                .await?;
+                            first_reversal = false;
+                            to_remove -= take;
+                            if to_remove == 0 {
+                                break;
+                            }
+                        }
+                        if to_remove > 0 {
+                            for (stock_location_id, _, damaged) in &balances {
+                                let take = i64::min(*damaged, to_remove);
+                                if take <= 0 {
+                                    continue;
+                                }
+                                let seq = next_move_seq(&mut *tx, *stock_location_id).await?;
+                                let move_number = format!("PDEL-{seq:06}");
+                                sqlx::query(
+                                    "INSERT INTO stock_movements
+                                       (product_id, location_id, movement_type, quantity_delta,
+                                        move_number, unit_cost_minor, reference_type, reference_id,
+                                        reason, created_by, reversal_of_id)
+                                     VALUES (?, ?, 'cancellation_reversal', ?, ?, ?,
+                                             'purchase_delete', ?, ?, ?, ?)",
+                                )
+                                .bind(product_id)
+                                .bind(stock_location_id)
+                                .bind(-take)
+                                .bind(&move_number)
+                                .bind(unit_cost)
+                                .bind(input.purchase_id)
+                                .bind(&reason)
+                                .bind(actor_id)
+                                .bind(if first_reversal { Some(*movement_id) } else { None })
+                                .execute(&mut *tx)
+                                .await?;
+                                sqlx::query(
+                                    "UPDATE stock_balances SET damaged = MAX(damaged - ?, 0)
+                                     WHERE product_id = ? AND location_id = ?",
+                                )
+                                .bind(take)
+                                .bind(product_id)
+                                .bind(stock_location_id)
+                                .execute(&mut *tx)
+                                .await?;
+                                first_reversal = false;
+                                to_remove -= take;
+                                if to_remove == 0 {
+                                    break;
+                                }
+                            }
+                        }
+                        sqlx::query("UPDATE inventory_cost_layers SET quantity = 0 WHERE movement_id = ?")
+                            .bind(movement_id)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+
+                    let linked_return_due: i64 = sqlx::query_scalar(
+                        "SELECT COALESCE(SUM(due_reduction_minor), 0)
+                         FROM supplier_returns WHERE purchase_id = ? AND status = 'posted'",
+                    )
+                    .bind(input.purchase_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    let payable_to_reverse = total.saturating_sub(linked_return_due);
+                    if payable_to_reverse != 0 {
+                        record_ledger(
+                            &mut *tx,
+                            supplier_id,
+                            "void",
+                            "purchase",
+                            input.purchase_id,
+                            -payable_to_reverse,
+                            &format!("deleted purchase {display_number}: {reason}"),
+                            actor_id,
+                        )
+                        .await?;
+                    }
+                }
+
+                sqlx::query("DELETE FROM supplier_payment_allocations WHERE purchase_id = ?")
+                    .bind(input.purchase_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("UPDATE supplier_returns SET purchase_id = NULL WHERE purchase_id = ?")
+                    .bind(input.purchase_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("DELETE FROM purchase_items WHERE purchase_id = ?")
+                    .bind(input.purchase_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("DELETE FROM purchases WHERE id = ?")
+                    .bind(input.purchase_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                state_audit(
+                    &mut *tx,
+                    &audits,
+                    actor_id,
+                    &actor_session,
+                    "purchase.delete",
+                    "purchase",
+                    input.purchase_id,
+                    &correlation,
+                    Some(serde_json::json!({
+                        "purchase_number": display_number,
+                        "supplier_id": supplier_id,
+                        "status": status,
+                        "total_minor": total,
+                        "reason": reason,
+                    })),
+                    None,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+}
+
 pub async fn list_purchases(
     state: &AppState,
     principal: &Principal,
@@ -815,6 +1173,108 @@ pub async fn create_payment(
     payment_dto(state, result).await
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn void_payment_in_tx(
+    tx: &mut SqliteConnection,
+    audits: &AuditService,
+    actor_id: i64,
+    actor_session: &str,
+    payment_id: i64,
+    reason: &str,
+    correlation: &str,
+) -> Result<(), AppError> {
+    let payment: Option<(i64, i64, i64, String, String)> = sqlx::query_as(
+        "SELECT supplier_id, cash_account_id, amount_minor, status, payment_number
+         FROM supplier_payments WHERE id = ?",
+    )
+    .bind(payment_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((supplier_id, cash_account_id, amount_minor, status, payment_number)) = payment else {
+        return Err(AppError::NotFound(format!("supplier payment {payment_id}")));
+    };
+    if status != "posted" {
+        return Err(AppError::Conflict(format!(
+            "payment {payment_id} is already voided"
+        )));
+    }
+
+    let allocations: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT purchase_id, amount_minor FROM supplier_payment_allocations
+         WHERE payment_id = ?",
+    )
+    .bind(payment_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (purchase_id, alloc) in allocations {
+        sqlx::query(
+            "UPDATE purchases
+                SET paid_minor = MAX(paid_minor - ?, 0), due_minor = due_minor + ?,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+              WHERE id = ?",
+        )
+        .bind(alloc)
+        .bind(alloc)
+        .bind(purchase_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    record_cash_entry(
+        tx,
+        cash_account_id,
+        "payment_void",
+        amount_minor,
+        "supplier_payment",
+        payment_id,
+        &format!("void {payment_number}: {reason}"),
+        actor_id,
+    )
+    .await?;
+
+    record_ledger(
+        tx,
+        supplier_id,
+        "void",
+        "supplier_payment",
+        payment_id,
+        amount_minor,
+        &format!("void {payment_number}: {reason}"),
+        actor_id,
+    )
+    .await?;
+
+    sqlx::query(
+        "UPDATE supplier_payments
+            SET status = 'voided', voided_by = ?,
+                voided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE id = ?",
+    )
+    .bind(actor_id)
+    .bind(payment_id)
+    .execute(&mut *tx)
+    .await?;
+
+    state_audit(
+        tx,
+        audits,
+        actor_id,
+        actor_session,
+        "supplier.payment_void",
+        "supplier_payment",
+        payment_id,
+        correlation,
+        None,
+        Some(serde_json::json!({
+            "payment_number": payment_number,
+            "amount_minor": amount_minor,
+            "reason": reason,
+        })),
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn void_payment(
     state: &AppState,
     principal: &Principal,
@@ -828,103 +1288,42 @@ pub async fn void_payment(
     let correlation = correlation_id.to_string();
     let audits = state.audits.clone();
 
+    if !input.force {
+        let row: Option<(String, i64, i64)> = sqlx::query_as(
+            "SELECT payment_number, amount_minor,
+                    (SELECT COUNT(*) FROM supplier_payment_allocations a
+                      WHERE a.payment_id = supplier_payments.id)
+             FROM supplier_payments WHERE id = ? AND status = 'posted'",
+        )
+        .bind(input.payment_id)
+        .fetch_optional(&state.pool)
+        .await?;
+        let Some((number, amount, allocations)) = row else {
+            return Err(AppError::NotFound(format!(
+                "posted supplier payment {}",
+                input.payment_id
+            )));
+        };
+        return Err(AppError::ConfirmationRequired(format!(
+            "Payment {number} paid PKR {:.2} and is linked to {allocations} purchase allocation{}. Delete Anyway will restore every affected purchase due, the supplier balance, and the cash account.",
+            amount as f64 / 100.0,
+            if allocations == 1 { "" } else { "s" }
+        )));
+    }
+
     state
         .write_coordinator
         .execute(&state.pool, move |tx| {
             let reason = input.reason.clone().unwrap_or_default();
             Box::pin(async move {
-                let payment: Option<(i64, i64, i64, String, String)> = sqlx::query_as(
-                    "SELECT supplier_id, cash_account_id, amount_minor, status, payment_number
-                     FROM supplier_payments WHERE id = ?",
-                )
-                .bind(input.payment_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-                let Some((supplier_id, cash_account_id, amount_minor, status, payment_number)) =
-                    payment
-                else {
-                    return Err(AppError::NotFound(format!(
-                        "supplier payment {}",
-                        input.payment_id
-                    )));
-                };
-                if status != "posted" {
-                    return Err(AppError::Conflict(format!(
-                        "payment {} is already voided",
-                        input.payment_id
-                    )));
-                }
-
-                let allocations: Vec<(i64, i64)> = sqlx::query_as(
-                    "SELECT purchase_id, amount_minor FROM supplier_payment_allocations
-                     WHERE payment_id = ?",
-                )
-                .bind(input.payment_id)
-                .fetch_all(&mut *tx)
-                .await?;
-                for (purchase_id, alloc) in allocations {
-                    sqlx::query(
-                        "UPDATE purchases
-                            SET paid_minor = MAX(paid_minor - ?, 0), due_minor = due_minor + ?,
-                                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                          WHERE id = ?",
-                    )
-                    .bind(alloc)
-                    .bind(alloc)
-                    .bind(purchase_id)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-
-                record_cash_entry(
-                    &mut *tx,
-                    cash_account_id,
-                    "payment_void",
-                    amount_minor,
-                    "supplier_payment",
-                    input.payment_id,
-                    &format!("void {payment_number}"),
-                    actor_id,
-                )
-                .await?;
-
-                record_ledger(
-                    &mut *tx,
-                    supplier_id,
-                    "void",
-                    "supplier_payment",
-                    input.payment_id,
-                    amount_minor,
-                    &format!("void {payment_number}"),
-                    actor_id,
-                )
-                .await?;
-
-                sqlx::query(
-                    "UPDATE supplier_payments
-                        SET status = 'voided', voided_by = ?, voided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                      WHERE id = ?",
-                )
-                .bind(actor_id)
-                .bind(input.payment_id)
-                .execute(&mut *tx)
-                .await?;
-
-                state_audit(
+                void_payment_in_tx(
                     &mut *tx,
                     &audits,
                     actor_id,
                     &actor_session,
-                    "supplier.payment_void",
-                    "supplier_payment",
                     input.payment_id,
+                    &reason,
                     &correlation,
-                    None,
-                    Some(serde_json::json!({
-                        "payment_number": payment_number,
-                        "amount_minor": amount_minor,
-                        "reason": reason,
-                    })),
                 )
                 .await?;
                 Ok(input.payment_id)

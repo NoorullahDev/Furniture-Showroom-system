@@ -20,6 +20,7 @@ const eslintConfig = [
       "postcss.config.js",
       "tailwind.config.js",
       "eslint.config.mjs",
+      "patch*.js",
     ],
   },
   {

@@ -217,7 +217,6 @@ function CustomerForm({ onDone, onBack }: { onDone: () => void; onBack: () => vo
   const queryClient = useQueryClient();
   const session = profile?.sessionId ?? "";
 
-  const [code, setCode] = React.useState("");
   const [name, setName] = React.useState("");
   const [phone, setPhone] = React.useState("");
   const [email, setEmail] = React.useState("");
@@ -235,7 +234,7 @@ function CustomerForm({ onDone, onBack }: { onDone: () => void; onBack: () => vo
     setBusy(true);
     try {
       await customerCreate(session, {
-        code: code.trim(),
+        code: "",
         name: name.trim(),
         phone: phone.trim() || null,
         email: email.trim() || null,

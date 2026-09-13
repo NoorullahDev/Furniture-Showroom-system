@@ -10,11 +10,11 @@ import {
 } from "lucide-react";
 
 import { useSession } from "@/components/session/session-provider";
-import { authLogin, shopLogoGet } from "@/lib/tauri/api";
+import { authLogin, authUnlock, shopLogoGet } from "@/lib/tauri/api";
 import type { CommandError } from "@/lib/tauri/client";
 
 export function LoginScreen() {
-  const { applyLogin } = useSession();
+  const { applyLogin, profile, status } = useSession();
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
@@ -38,6 +38,12 @@ export function LoginScreen() {
   }, []);
 
   React.useEffect(() => {
+    if (status === "locked" && profile?.username) {
+      setUsername(profile.username);
+    }
+  }, [profile?.username, status]);
+
+  React.useEffect(() => {
     if (waitSecs <= 0) return;
     const timer = window.setTimeout(() => setWaitSecs((seconds) => seconds - 1), 1000);
     return () => window.clearTimeout(timer);
@@ -52,7 +58,8 @@ export function LoginScreen() {
     if (busy || waitSecs > 0) return;
 
     const cleanUsername = username.trim();
-    if (!cleanUsername) {
+    const unlocking = status === "locked" && profile !== null;
+    if (!unlocking && !cleanUsername) {
       setError("Enter your username.");
       usernameRef.current?.focus();
       return;
@@ -66,8 +73,13 @@ export function LoginScreen() {
     setBusy(true);
     setError(null);
     try {
-      const result = await authLogin(cleanUsername, password);
-      applyLogin(result);
+      if (unlocking) {
+        const unlockedProfile = await authUnlock(profile.sessionId, password);
+        applyLogin({ sessionId: profile.sessionId, profile: unlockedProfile });
+      } else {
+        const result = await authLogin(cleanUsername, password);
+        applyLogin(result);
+      }
     } catch (caught) {
       const commandError = caught as CommandError;
       if (commandError.code === "RATE_LIMITED" && commandError.retryAfterSecs) {
@@ -95,6 +107,8 @@ export function LoginScreen() {
       >
         <header className="text-center">
           {logo ? (
+            // The logo is a local data URL supplied by Tauri; Next Image cannot optimize it.
+            // eslint-disable-next-line @next/next/no-img-element
             <img src={logo} alt="Showroom Logo" className="mx-auto h-16 w-auto object-contain" />
           ) : (
             <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-[#192f58] text-white shadow-sm">

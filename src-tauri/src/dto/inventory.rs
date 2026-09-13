@@ -118,6 +118,8 @@ pub struct ReverseMovementInput {
     pub movement_id: i64,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

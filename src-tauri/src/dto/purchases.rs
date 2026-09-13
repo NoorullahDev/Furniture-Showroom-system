@@ -11,6 +11,7 @@ pub struct SupplierDto {
     pub address: Option<String>,
     pub opening_balance_minor: i64,
     pub balance_minor: i64,
+    pub linked_record_count: i64,
     pub is_active: bool,
     pub created_at: String,
 }
@@ -82,6 +83,16 @@ pub struct PurchasePostInput {
     pub payment_method_id: Option<i64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurchaseDeleteInput {
+    pub purchase_id: i64,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PurchaseItemDto {
@@ -108,6 +119,7 @@ pub struct PurchaseDto {
     pub total_minor: i64,
     pub paid_minor: i64,
     pub due_minor: i64,
+    pub linked_return_count: i64,
     pub notes: Option<String>,
     pub items: Vec<PurchaseItemDto>,
     pub created_at: String,
@@ -175,6 +187,8 @@ pub struct SupplierPaymentVoidInput {
     pub payment_id: i64,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

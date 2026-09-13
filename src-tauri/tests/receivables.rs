@@ -5,8 +5,8 @@ use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::receivables::{CustomerReceiptPreviewInput, CustomerStatementInput};
 use furniture_shop_lib::dto::sales::{
-    CustomerInput, CustomerReceiptAllocationInput, CustomerReceiptInput, SaleConfirmInput,
-    SaleCreateInput, SaleItemInput,
+    CustomerInput, CustomerPaymentVoidInput, CustomerReceiptAllocationInput, CustomerReceiptInput,
+    SaleConfirmInput, SaleCreateInput, SaleItemInput,
 };
 use furniture_shop_lib::error::AppError;
 use furniture_shop_lib::infrastructure as infra;
@@ -278,7 +278,6 @@ async fn make_open_sale(
             discount_minor: Some(0),
             delivery_charge_minor: Some(0),
             notes: None,
-            below_cost_reason: None,
             items: vec![line(product_id, quantity)],
         },
         "corr-create",
@@ -743,6 +742,7 @@ async fn voiding_receipt_restores_due_advance_and_cash_position() {
         furniture_shop_lib::dto::sales::CustomerPaymentVoidInput {
             payment_id: receipt.id,
             reason: Some("wrong amount".into()),
+            force: true,
         },
         "corr-void",
     )
@@ -751,6 +751,155 @@ async fn voiding_receipt_restores_due_advance_and_cash_position() {
 
     assert_eq!(customer_balance(&state, customer).await, 0);
     assert_eq!(cash_balance(&state, cash).await, before_cash);
+}
+
+#[tokio::test]
+async fn deleting_latest_due_payment_restores_partial_invoice_totals() {
+    let dir = temp_dir("delete-due-payment");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-due-payment").await;
+    let product = stock_product(&state, &owner, "RC-DEL-PAY", 2, 1_000).await;
+    set_price(&state, product, 52_000).await;
+    let customer = create_customer(&state, &owner, "CUST-DEL-PAY", None, None).await;
+    let cash = funded_cash(&state, &owner, "DEL-PAY-CASH").await;
+    let sale = make_open_sale(&state, &owner, Some(customer), product, 1, "2026-09-01").await;
+
+    application::customers::create_receipt(
+        &state,
+        &owner,
+        CustomerReceiptInput {
+            customer_id: customer,
+            payment_method_id: 1,
+            cash_account_id: cash,
+            payment_date: "2026-09-02".into(),
+            amount_minor: 50_000,
+            notes: None,
+            idempotency_key: Some("initial-50k".into()),
+            allocations: Some(vec![CustomerReceiptAllocationInput {
+                sale_id: sale.id,
+                amount_minor: 50_000,
+            }]),
+        },
+        "corr-initial",
+    )
+    .await
+    .unwrap();
+    let later = application::customers::create_receipt(
+        &state,
+        &owner,
+        CustomerReceiptInput {
+            customer_id: customer,
+            payment_method_id: 1,
+            cash_account_id: cash,
+            payment_date: "2026-09-03".into(),
+            amount_minor: 2_000,
+            notes: None,
+            idempotency_key: Some("later-2k".into()),
+            allocations: Some(vec![CustomerReceiptAllocationInput {
+                sale_id: sale.id,
+                amount_minor: 2_000,
+            }]),
+        },
+        "corr-later",
+    )
+    .await
+    .unwrap();
+    let paid_before: (i64, i64) =
+        sqlx::query_as("SELECT paid_minor, due_minor FROM sales WHERE id = ?")
+            .bind(sale.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(paid_before, (52_000, 0));
+
+    let warning = application::customers::void_receipt(
+        &state,
+        &owner,
+        CustomerPaymentVoidInput {
+            payment_id: later.id,
+            reason: Some("deleted incorrect due payment".into()),
+            force: false,
+        },
+        "corr-delete",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("PKR 20.00") && message.contains("1 invoice allocation"))
+    );
+
+    let deleted = application::customers::void_receipt(
+        &state,
+        &owner,
+        CustomerPaymentVoidInput {
+            payment_id: later.id,
+            reason: Some("deleted incorrect due payment".into()),
+            force: true,
+        },
+        "corr-delete-force",
+    )
+    .await
+    .unwrap();
+    assert_eq!(deleted.status, "voided");
+
+    let paid_after: (i64, i64) =
+        sqlx::query_as("SELECT paid_minor, due_minor FROM sales WHERE id = ?")
+            .bind(sale.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    assert_eq!(paid_after, (50_000, 2_000));
+    assert_eq!(customer_balance(&state, customer).await, 2_000);
+    assert_eq!(cash_balance(&state, cash).await, 1_050_000);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn customer_delete_warns_then_tombstones_linked_history() {
+    let dir = temp_dir("delete-customer");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-customer").await;
+    let unused = create_customer(&state, &owner, "CUST-UNUSED", None, None).await;
+    application::customers::delete(&state, &owner, unused, false, "corr-unused")
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM customers WHERE id = ?")
+            .bind(unused)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        0
+    );
+
+    let product = stock_product(&state, &owner, "RC-CUST-LINK", 2, 1_000).await;
+    let linked = create_customer(&state, &owner, "CUST-LINKED", None, None).await;
+    make_open_sale(&state, &owner, Some(linked), product, 1, "2026-09-01").await;
+    let error = application::customers::delete(&state, &owner, linked, false, "corr-linked")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::ConfirmationRequired(message) if message.contains("1 sale")));
+    application::customers::delete(&state, &owner, linked, true, "corr-linked-force")
+        .await
+        .unwrap();
+    assert!(application::customers::list(&state, &owner)
+        .await
+        .unwrap()
+        .iter()
+        .all(|customer| customer.id != linked));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM customers WHERE id = ? AND deleted_at IS NOT NULL"
+        )
+        .bind(linked)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        1
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
@@ -884,6 +1033,7 @@ async fn receipt_pdf_generates_for_posted_receipt_and_rejects_voided() {
         furniture_shop_lib::dto::sales::CustomerPaymentVoidInput {
             payment_id: receipt.id,
             reason: Some("reprint-after-void".into()),
+            force: true,
         },
         "corr-void-pdf",
     )

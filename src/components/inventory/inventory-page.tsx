@@ -11,7 +11,7 @@ import {
   Plus,
   Search,
   Scale,
-  Undo2,
+  Trash2,
   Wrench,
 } from "lucide-react";
 
@@ -584,21 +584,24 @@ function LedgerTable({
   onViewHistory: (productId: number) => void;
 }) {
   const queryClient = useQueryClient();
-  const [reversing, setReversing] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] = React.useState<StockMovementDto | null>(null);
   const { toast } = useToast();
 
   const reverseMutation = useMutation({
-    mutationFn: (movementId: number) =>
-      stockReverse(session, { movementId, reason: "manual reversal" }),
+    mutationFn: (movement: StockMovementDto) =>
+      stockReverse(session, {
+        movementId: movement.id,
+        reason: "Deleted from Inventory",
+        force: true,
+      }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["inventory"] });
-      setReversing(false);
+      setDeleteTarget(null);
       onReverse();
-      toast({ variant: "success", title: "Movement reversed" });
+      toast({ variant: "success", title: "Inventory movement deleted" });
     },
     onError: (e: Error) => {
-      setReversing(false);
-      toast({ variant: "error", title: "Reversal failed", description: e.message });
+      toast({ variant: "error", title: "Delete failed", description: commandErrorMessage(e) });
     },
   });
 
@@ -671,14 +674,11 @@ function LedgerTable({
                         <Button
                           variant="ghost"
                           size="icon"
-                          title="Reverse this movement"
-                          disabled={reversing}
-                          onClick={() => {
-                            setReversing(true);
-                            reverseMutation.mutate(m.id);
-                          }}
+                          title="Delete this inventory movement"
+                          disabled={reverseMutation.isPending}
+                          onClick={() => setDeleteTarget(m)}
                         >
-                          <Undo2 className="h-3.5 w-3.5 text-neutral-500" />
+                          <Trash2 className="h-3.5 w-3.5 text-rose-600" />
                         </Button>
                       )}
                     </TableCell>
@@ -689,6 +689,25 @@ function LedgerTable({
           </TableBody>
         </Table>
       </div>
+      {deleteTarget && (
+        <Dialog open onOpenChange={(open) => !open && !reverseMutation.isPending && setDeleteTarget(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete inventory movement {deleteTarget.moveNumber ?? `#${deleteTarget.id}`}?</DialogTitle>
+              <DialogDescription>
+                This movement changes {deleteTarget.productName ?? "the product"} stock by {deleteTarget.quantityDelta} at {deleteTarget.locationName ?? "this location"}
+                {deleteTarget.referenceType ? ` and is linked to ${deleteTarget.referenceType} #${deleteTarget.referenceId ?? "—"}` : ""}. Delete Anyway will apply the safe inverse stock or reservation effect and retain the audit trail.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" disabled={reverseMutation.isPending} onClick={() => setDeleteTarget(null)}>Cancel</Button>
+              <Button variant="danger" disabled={reverseMutation.isPending} onClick={() => reverseMutation.mutate(deleteTarget)}>
+                {reverseMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

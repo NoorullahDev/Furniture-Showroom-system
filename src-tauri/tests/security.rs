@@ -298,6 +298,8 @@ async fn path_traversal_restore_marker_rejected() {
         &infra::restore::RestoreMarker {
             backup_name: "../escape.db".into(),
             safety_backup: None,
+            staged_path: None,
+            legacy_database_only: true,
         },
     )
     .unwrap();

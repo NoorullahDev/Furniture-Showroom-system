@@ -16,6 +16,7 @@ import {
   Printer,
   Search,
   TriangleAlert,
+  Trash2,
   Upload,
   UserPlus,
   Wallet,
@@ -64,6 +65,7 @@ import {
   bundleUpdate,
   cashAccountList,
   customerCreate,
+  customerDelete,
   customerGet,
   customerLedger,
   customerList,
@@ -463,6 +465,7 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
           customer={activeCustomer}
           onClose={() => setDialog(null)}
           onDone={done(activeCustomer ? "Customer updated" : "Customer created")}
+          onDeleted={done("Customer deleted")}
           onError={failed}
         />
       )}
@@ -509,6 +512,7 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
         <EditSaleDialog
           session={session}
           sale={activeSale}
+          accounts={accounts}
           onClose={() => setDialog(null)}
           onDone={done("Sale updated")}
           onError={failed}
@@ -534,7 +538,6 @@ function PosPanel({
   canPrint,
   canSell,
   editSaleId,
-  onBack,
   onNewCustomer,
   onDone,
   onFailed,
@@ -550,7 +553,6 @@ function PosPanel({
   canPrint: boolean;
   canSell: boolean;
   editSaleId?: number | null;
-  onBack?: () => void;
   onNewCustomer: () => void;
   onDone: () => void;
   onFailed: (e: Error) => void;
@@ -593,6 +595,7 @@ function PosPanel({
         quantity: i.quantity,
       }));
       setCart(cartItems);
+      createdIdRef.current = sale.id;
       
       setPaidMinor(sale.paidMinor ?? 0);
       setAdvanceMinor(sale.advanceUsedMinor ?? 0);
@@ -1622,12 +1625,14 @@ function SaleDetailDialog({
 function EditSaleDialog({
   session,
   sale: initialSale,
+  accounts,
   onClose,
   onDone,
   onError,
 }: {
   session: string;
   sale: SaleDto;
+  accounts: CashAccountDto[];
   onClose: () => void;
   onDone: () => void;
   onError: (e: Error) => void;
@@ -1647,6 +1652,7 @@ function EditSaleDialog({
   const [deliveryChargeMinor, setDeliveryChargeMinor] = React.useState(fullSale.deliveryChargeMinor);
   const [paidMinor, setPaidMinor] = React.useState(fullSale.paidMinor);
   const [paymentMethodId, setPaymentMethodId] = React.useState<number | null>(null);
+  const [cashAccountId, setCashAccountId] = React.useState<number | null>(accounts[0]?.id ?? null);
   const [notes, setNotes] = React.useState(fullSale.notes ?? "");
   const [items, setItems] = React.useState<Array<{ productId?: number | null; bundleId?: number | null; quantity: number; unitPriceMinor: number; name: string; articleNumber: string }>>(() =>
     fullSale.items.map((it) => ({
@@ -1709,11 +1715,13 @@ function EditSaleDialog({
       deliveryChargeMinor,
       paidMinor,
       paymentMethodId,
+      cashAccountId,
       notes: notes.trim() || null,
       items: items.map((it) => ({
         productId: it.productId,
         bundleId: it.bundleId,
         quantity: it.quantity,
+        unitPriceMinor: it.unitPriceMinor,
       })),
     }),
     onSuccess: () => {
@@ -1772,7 +1780,7 @@ function EditSaleDialog({
           <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
         ) : (
           <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div className="grid gap-1.5">
                 <Label>Customer</Label>
                 <Select value={customerId ? String(customerId) : "walkin"} onValueChange={(v) => setCustomerId(v === "walkin" ? null : Number(v))}>
@@ -1857,6 +1865,17 @@ function EditSaleDialog({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="grid gap-1.5">
+                <Label>Cash account</Label>
+                <Select value={cashAccountId ? String(cashAccountId) : ""} onValueChange={(v) => setCashAccountId(v ? Number(v) : null)}>
+                  <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((account) => (
+                      <SelectItem key={account.id} value={String(account.id)}>{account.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 grid grid-cols-4 gap-4 text-sm">
@@ -1885,7 +1904,13 @@ function EditSaleDialog({
             Delete sale
           </Button>
           <Button variant="ghost" onClick={onClose} disabled={editMutation.isPending}>Cancel</Button>
-          <Button onClick={() => editMutation.mutate()} disabled={editMutation.isPending || saleQuery.isLoading}>
+          <Button
+            onClick={() => editMutation.mutate()}
+            disabled={
+              editMutation.isPending || saleQuery.isLoading ||
+              (paidMinor > 0 && (paymentMethodId === null || cashAccountId === null))
+            }
+          >
             {editMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Save changes
           </Button>
@@ -2297,6 +2322,7 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
           session={session}
           customer={activeCustomer}
           onClose={() => { setDialog(null); setActiveCustomer(null); }}
+          onError={onError}
         />
       )}
       {dialog === "view" && activeCustomer && (
@@ -2493,17 +2519,39 @@ function DuePaymentHistoryDialog({
   session,
   customer,
   onClose,
+  onError,
 }: {
   session: string;
   customer: CustomerDto;
   onClose: () => void;
+  onError: (e: Error) => void;
 }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { hasPermission } = useSession();
+  const canDelete = hasPermission("payment.receive");
+  const [deleteTarget, setDeleteTarget] = React.useState<CustomerPaymentDto | null>(null);
   const receiptsQuery = useQuery({
     queryKey: ["selling", "receipts", customer.id],
     queryFn: () => customerReceiptList(session, customer.id),
     enabled: !!session,
   });
   const receipts = (receiptsQuery.data ?? []) as CustomerPaymentDto[];
+  const deleteMutation = useMutation({
+    mutationFn: (payment: CustomerPaymentDto) =>
+      customerReceiptVoid(session, {
+        paymentId: payment.id,
+        reason: "Deleted from Customer Payment History",
+        force: true,
+      }),
+    onSuccess: () => {
+      setDeleteTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["selling"] });
+      toast({ variant: "success", title: "Customer payment deleted" });
+      onClose();
+    },
+    onError,
+  });
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -2528,6 +2576,7 @@ function DuePaymentHistoryDialog({
                   <TableHead>Method</TableHead>
                   <TableHead>Invoice</TableHead>
                   <TableHead>Status</TableHead>
+                  {canDelete && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2547,6 +2596,15 @@ function DuePaymentHistoryDialog({
                         {r.status}
                       </Badge>
                     </TableCell>
+                    {canDelete && (
+                      <TableCell className="text-right">
+                        {r.status === "posted" && (
+                          <Button variant="ghost" size="sm" className="text-rose-600" onClick={() => setDeleteTarget(r)}>
+                            <Trash2 className="h-3.5 w-3.5" /> Delete
+                          </Button>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -2556,6 +2614,24 @@ function DuePaymentHistoryDialog({
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
+        {deleteTarget && (
+          <Dialog open onOpenChange={(openState) => !openState && !deleteMutation.isPending && setDeleteTarget(null)}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Delete payment {deleteTarget.receiptNumber ?? `#${deleteTarget.id}`}?</DialogTitle>
+                <DialogDescription>
+                  Payment {deleteTarget.receiptNumber ?? `#${deleteTarget.id}`} received {formatPkr(deleteTarget.amountMinor)} from {customer.name} and has {deleteTarget.allocations.length} invoice allocation{deleteTarget.allocations.length === 1 ? "" : "s"}. Delete Anyway restores invoice paid and due amounts, customer balance, and cash. The receipt remains voided for audit history.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setDeleteTarget(null)}>Cancel</Button>
+                <Button variant="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleteTarget)}>
+                  {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -2657,12 +2733,14 @@ function CustomerDialog({
   customer,
   onClose,
   onDone,
+  onDeleted,
   onError,
 }: {
   session: string;
   customer: CustomerDto | null;
   onClose: () => void;
   onDone: () => void;
+  onDeleted: () => void;
   onError: (e: Error) => void;
 }) {
   const [name, setName] = React.useState(customer?.name ?? "");
@@ -2670,6 +2748,7 @@ function CustomerDialog({
   const [email, setEmail] = React.useState(customer?.email ?? "");
   const [address, setAddress] = React.useState(customer?.address ?? "");
   const [isActive, setIsActive] = React.useState(customer?.isActive ?? true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -2691,8 +2770,14 @@ function CustomerDialog({
     onSuccess: onDone,
     onError,
   });
+  const deleteMutation = useMutation({
+    mutationFn: () => customerDelete(session, customer!.id, true),
+    onSuccess: onDeleted,
+    onError,
+  });
 
   return (
+    <>
     <FormDialog
       title={customer ? `Edit customer ${customer.name}` : "New customer"}
       description="Customer balances and advances are used in credit sales and receipts."
@@ -2701,6 +2786,11 @@ function CustomerDialog({
       submitLabel={customer ? "Save customer" : "Add customer"}
       onClose={onClose}
       submitDisabled={name.trim().length === 0}
+      dangerAction={customer ? (
+        <Button type="button" variant="ghost" className="mr-auto text-rose-600" disabled={mutation.isPending} onClick={() => setShowDeleteConfirm(true)}>
+          <Trash2 className="h-4 w-4" /> Delete customer
+        </Button>
+      ) : undefined}
     >
       <div className="grid gap-1.5">
         <Label>Name</Label>
@@ -2732,13 +2822,32 @@ function CustomerDialog({
         </label>
       )}
     </FormDialog>
+    {customer && showDeleteConfirm && (
+      <Dialog open onOpenChange={(openState) => !openState && !deleteMutation.isPending && setShowDeleteConfirm(false)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete customer {customer.code}?</DialogTitle>
+            <DialogDescription>
+              {customer.name} has an outstanding balance of {formatPkr(customer.balanceMinor)} and {customer.linkedRecordCount} linked sale, payment, delivery, return, or credit-note record{customer.linkedRecordCount === 1 ? "" : "s"}. Delete Anyway removes the customer from active records while preserving linked business history.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" disabled={deleteMutation.isPending} onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
+            <Button variant="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
+              {deleteMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )}
+    </>
   );
 }
 
 type LedgerMode =
   | { tab: "view" }
   | { tab: "receipt" }
-  | { tab: "void"; payment: CustomerPaymentDto };
+  | { tab: "delete"; payment: CustomerPaymentDto };
 
 function LedgerDialog({
   session,
@@ -2807,13 +2916,13 @@ function LedgerDialog({
     );
   }
 
-  if (mode.tab === "void") {
+  if (mode.tab === "delete") {
     return (
-      <VoidReceiptDialog
+      <DeleteReceiptDialog
         session={session}
         payment={mode.payment}
         onClose={() => setMode({ tab: "view" })}
-        onDone={() => afterLedgerChange("Receipt voided")}
+        onDone={() => afterLedgerChange("Customer payment deleted")}
         onError={onError}
       />
     );
@@ -2936,9 +3045,9 @@ function LedgerDialog({
                                 variant="outline"
                                 size="sm"
                                 className="text-rose-600"
-                                onClick={() => setMode({ tab: "void", payment: p })}
+                                onClick={() => setMode({ tab: "delete", payment: p })}
                               >
-                                Void
+                                <Trash2 className="h-3.5 w-3.5" /> Delete
                               </Button>
                             </div>
                           )}
@@ -3231,7 +3340,7 @@ function RecordReceiptDialog({
   );
 }
 
-function VoidReceiptDialog({
+function DeleteReceiptDialog({
   session,
   payment,
   onClose,
@@ -3247,17 +3356,17 @@ function VoidReceiptDialog({
   const [reason, setReason] = React.useState("");
   const mutation = useMutation({
     mutationFn: () =>
-      customerReceiptVoid(session, { paymentId: payment.id, reason: reason.trim() || null }),
+      customerReceiptVoid(session, { paymentId: payment.id, reason: reason.trim() || null, force: true }),
     onSuccess: onDone,
     onError,
   });
   return (
     <FormDialog
-      title={`Void receipt ${payment.receiptNumber ?? `#${payment.id}`}`}
-      description="The receipt will be reversed and the customer account and cash corrected."
+      title={`Delete payment ${payment.receiptNumber ?? `#${payment.id}`}?`}
+      description={`Payment ${payment.receiptNumber ?? `#${payment.id}`} received ${formatPkr(payment.amountMinor)} and has ${payment.allocations.length} invoice allocation${payment.allocations.length === 1 ? "" : "s"}. Delete Anyway restores invoice paid and due amounts, the customer balance, and cash; the receipt remains voided for audit history.`}
       onSubmit={() => mutation.mutate()}
       busy={mutation.isPending}
-      submitLabel="Void receipt"
+      submitLabel="Delete Anyway"
       onClose={onClose}
     >
       <div className="grid gap-1.5">
@@ -3601,7 +3710,7 @@ function BundleLineEditor({
       } as ProductListItemDto;
     }
     return null;
-  }, []);
+  }, [value.initialArticle, value.initialProductName, value.productId]);
 
   const picker = useProductPicker(session, initialProduct);
 
@@ -3750,6 +3859,7 @@ function FormDialog({
   submitLabel = "Save",
   onClose,
   submitDisabled,
+  dangerAction,
 }: {
   title: string;
   description: string;
@@ -3759,6 +3869,7 @@ function FormDialog({
   submitLabel?: string;
   onClose: () => void;
   submitDisabled?: boolean;
+  dangerAction?: React.ReactNode;
 }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -3776,6 +3887,7 @@ function FormDialog({
         >
           {children}
           <DialogFooter>
+            {dangerAction}
             <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
               Cancel
             </Button>

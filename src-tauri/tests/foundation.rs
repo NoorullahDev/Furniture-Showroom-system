@@ -66,7 +66,20 @@ async fn settings_service_round_trips_through_write_coordinator() {
     let dir = temp_dir("settings");
     let state = open_state(&dir).await;
 
-    application::settings::set(&state, "shop.name", "\"Proof Shop\"", None)
+    state
+        .write_coordinator
+        .execute(&state.pool, |tx| {
+            Box::pin(async move {
+                furniture_shop_lib::repositories::SettingsRepository::upsert(
+                    tx,
+                    "shop.name",
+                    "\"Proof Shop\"",
+                    None,
+                    &chrono::Utc::now().to_rfc3339(),
+                )
+                .await
+            })
+        })
         .await
         .unwrap();
     let value = application::settings::get(&state, "shop.name")
@@ -75,7 +88,20 @@ async fn settings_service_round_trips_through_write_coordinator() {
     assert_eq!(value.as_deref(), Some("\"Proof Shop\""));
 
     // Upsert updates in place.
-    application::settings::set(&state, "shop.name", "\"Renamed Shop\"", Some(1))
+    state
+        .write_coordinator
+        .execute(&state.pool, |tx| {
+            Box::pin(async move {
+                furniture_shop_lib::repositories::SettingsRepository::upsert(
+                    tx,
+                    "shop.name",
+                    "\"Renamed Shop\"",
+                    Some(1),
+                    &chrono::Utc::now().to_rfc3339(),
+                )
+                .await
+            })
+        })
         .await
         .unwrap();
     let value = application::settings::get(&state, "shop.name")

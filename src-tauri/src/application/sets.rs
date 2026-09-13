@@ -95,9 +95,11 @@ pub async fn create(
         if path.contains("/") || path.contains("\\") {
             let source = std::path::PathBuf::from(path);
             let dir = state.paths.images_dir.clone();
-            let imported = tokio::task::spawn_blocking(move || crate::infrastructure::import_image(&source, &dir))
-                .await
-                .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
+            let imported = tokio::task::spawn_blocking(move || {
+                crate::infrastructure::import_image(&source, &dir)
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
             Some(imported.stored_name)
         } else {
             Some(path.clone())
@@ -194,9 +196,11 @@ pub async fn update(
         if path.contains("/") || path.contains("\\") {
             let source = std::path::PathBuf::from(path);
             let dir = state.paths.images_dir.clone();
-            let imported = tokio::task::spawn_blocking(move || crate::infrastructure::import_image(&source, &dir))
-                .await
-                .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
+            let imported = tokio::task::spawn_blocking(move || {
+                crate::infrastructure::import_image(&source, &dir)
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("background task failed: {e}")))??;
             Some(imported.stored_name)
         } else {
             Some(path.clone())

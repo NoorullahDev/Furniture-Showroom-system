@@ -4,9 +4,9 @@ use crate::application;
 use crate::commands::authenticated;
 use crate::commands::wrapper::{run_command, run_command_with_correlation};
 use crate::dto::purchases::{
-    PayableAgingRowDto, PurchaseCreateInput, PurchaseDto, PurchasePostInput, SupplierPaymentDto,
-    SupplierPaymentInput, SupplierPaymentVoidInput, SupplierReturnCreateInput, SupplierReturnDto,
-    SupplierReturnPostInput,
+    PayableAgingRowDto, PurchaseCreateInput, PurchaseDeleteInput, PurchaseDto, PurchasePostInput,
+    SupplierPaymentDto, SupplierPaymentInput, SupplierPaymentVoidInput, SupplierReturnCreateInput,
+    SupplierReturnDto, SupplierReturnPostInput,
 };
 use crate::dto::AppErrorDto;
 use crate::error::new_correlation_id;
@@ -36,6 +36,20 @@ pub async fn purchase_post(
     run_command_with_correlation("purchase_post", correlation_id.clone(), async move {
         let principal = authenticated(&state, &session).await?;
         application::purchases::post_purchase(&state, &principal, input, &correlation_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn purchase_delete(
+    state: State<'_, AppState>,
+    session: String,
+    input: PurchaseDeleteInput,
+) -> Result<(), AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("purchase_delete", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::purchases::delete_purchase(&state, &principal, input, &correlation_id).await
     })
     .await
 }

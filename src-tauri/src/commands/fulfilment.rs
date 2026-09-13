@@ -5,7 +5,7 @@ use crate::commands::authenticated;
 use crate::commands::wrapper::{run_command, run_command_with_correlation};
 use crate::dto::fulfilment::{
     CreditNoteDto, CreditNoteListInput, DamageDecisionInput, DamageListInput, DamageRecordDto,
-    DamageRecordInput, DeliveryCreateInput, DeliveryDto, DeliveryListInput,
+    DamageRecordInput, DeliveryCreateInput, DeliveryDeleteInput, DeliveryDto, DeliveryListInput,
     DeliveryRescheduleInput, DeliveryTransitionInput, ReturnListInput, ReturnVoidInput,
     SaleReturnDto, SaleReturnInput,
 };
@@ -53,6 +53,20 @@ pub async fn delivery_reschedule(
         let principal = authenticated(&state, &session).await?;
         application::fulfilment::reschedule_delivery(&state, &principal, input, &correlation_id)
             .await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn delivery_delete(
+    state: State<'_, AppState>,
+    session: String,
+    input: DeliveryDeleteInput,
+) -> Result<(), AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("delivery_delete", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::fulfilment::delete_delivery(&state, &principal, input, &correlation_id).await
     })
     .await
 }

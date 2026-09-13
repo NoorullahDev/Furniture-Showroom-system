@@ -14,6 +14,7 @@ pub struct CustomerDto {
     pub opening_balance_minor: i64,
     pub balance_minor: i64,
     pub advance_minor: i64,
+    pub linked_record_count: i64,
     pub is_active: bool,
     pub created_at: String,
 }
@@ -177,8 +178,6 @@ pub struct SaleCreateInput {
 pub struct SaleConfirmInput {
     pub sale_id: i64,
     #[serde(default)]
-    pub override_sale_number: Option<String>,
-    #[serde(default)]
     pub idempotency_key: Option<String>,
     #[serde(default)]
     pub paid_minor: Option<i64>,
@@ -192,28 +191,6 @@ pub struct SaleConfirmInput {
     /// customer, and its amount must equal `advance_used_minor`.
     #[serde(default)]
     pub credit_note_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SaleUpdateInput {
-    pub sale_id: i64,
-    pub location_id: i64,
-    #[serde(default)]
-    pub customer_id: Option<i64>,
-    #[serde(default)]
-    pub discount_minor: Option<i64>,
-    #[serde(default)]
-    pub delivery_charge_minor: Option<i64>,
-    #[serde(default)]
-    pub notes: Option<String>,
-    pub items: Vec<SaleItemInput>,
-    #[serde(default)]
-    pub paid_minor: Option<i64>,
-    #[serde(default)]
-    pub cash_account_id: Option<i64>,
-    #[serde(default)]
-    pub payment_method_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -313,6 +290,19 @@ pub struct CustomerPaymentVoidInput {
     pub payment_id: i64,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleEditItemInput {
+    #[serde(default)]
+    pub product_id: Option<i64>,
+    #[serde(default)]
+    pub bundle_id: Option<i64>,
+    pub quantity: i64,
+    pub unit_price_minor: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -330,8 +320,10 @@ pub struct SaleEditInput {
     #[serde(default)]
     pub payment_method_id: Option<i64>,
     #[serde(default)]
+    pub cash_account_id: Option<i64>,
+    #[serde(default)]
     pub notes: Option<String>,
-    pub items: Vec<SaleItemInput>,
+    pub items: Vec<SaleEditItemInput>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

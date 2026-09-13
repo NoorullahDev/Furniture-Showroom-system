@@ -41,11 +41,10 @@ pub async fn seed_demo_data(state: &AppState) -> Result<SeedResult, AppError> {
             .await?
             .unwrap_or(showroom_id);
 
-    let cash_acct: i64 = sqlx::query_scalar(
-        "SELECT id FROM cash_accounts WHERE code = 'main_cash'",
-    )
-    .fetch_one(&state.pool)
-    .await?;
+    let cash_acct: i64 =
+        sqlx::query_scalar("SELECT id FROM cash_accounts WHERE code = 'main_cash'")
+            .fetch_one(&state.pool)
+            .await?;
 
     let unit_pcs: i64 = sqlx::query_scalar("SELECT id FROM units WHERE code = 'pcs'")
         .fetch_one(&state.pool)
@@ -1159,8 +1158,13 @@ async fn insert_category(
     let id = sqlx::query(
         "INSERT INTO categories (name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?)",
     )
-    .bind(name).bind(sort).bind(now).bind(now)
-    .execute(&mut *tx).await?.last_insert_rowid();
+    .bind(name)
+    .bind(sort)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_rowid();
     Ok(id)
 }
 
@@ -1203,17 +1207,27 @@ async fn insert_purchase_dated(
     now: &str,
 ) -> Result<i64, AppError> {
     let supplier_name: String = sqlx::query_scalar("SELECT name FROM suppliers WHERE code = ?")
-        .bind(supplier_code).fetch_one(&mut *tx).await?;
+        .bind(supplier_code)
+        .fetch_one(&mut *tx)
+        .await?;
     let id = sqlx::query(
         "INSERT INTO purchases
              (supplier_id, supplier_name, location_id, invoice_number, invoice_date,
               purchase_date, status, created_by, created_at, updated_at)
          VALUES ((SELECT id FROM suppliers WHERE code = ?), ?, ?, ?, ?, ?, 'draft', ?, ?, ?)",
     )
-    .bind(supplier_code).bind(&supplier_name).bind(location_id)
-    .bind(invoice_number).bind(date).bind(date)
-    .bind(admin_id).bind(now).bind(now)
-    .execute(&mut *tx).await?.last_insert_rowid();
+    .bind(supplier_code)
+    .bind(&supplier_name)
+    .bind(location_id)
+    .bind(invoice_number)
+    .bind(date)
+    .bind(date)
+    .bind(admin_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_rowid();
     Ok(id)
 }
 
@@ -1226,16 +1240,24 @@ async fn insert_purchase_item(
 ) -> Result<(), AppError> {
     let (prod_id, prod_name): (i64, String) =
         sqlx::query_as("SELECT id, name FROM products WHERE article_number = ?")
-            .bind(article).fetch_one(&mut *tx).await?;
+            .bind(article)
+            .fetch_one(&mut *tx)
+            .await?;
     sqlx::query(
         "INSERT INTO purchase_items
              (purchase_id, product_id, article_number, product_name, quantity,
               unit_cost_minor, line_total_minor)
          VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(purchase_id).bind(prod_id).bind(article).bind(&prod_name)
-    .bind(qty).bind(cost_minor).bind(qty * cost_minor)
-    .execute(&mut *tx).await?;
+    .bind(purchase_id)
+    .bind(prod_id)
+    .bind(article)
+    .bind(&prod_name)
+    .bind(qty)
+    .bind(cost_minor)
+    .bind(qty * cost_minor)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 
@@ -1249,16 +1271,25 @@ async fn insert_sale_dated(
 ) -> Result<i64, AppError> {
     let customer_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM customers WHERE code = ?")
-            .bind(customer_code).fetch_one(&mut *tx).await?;
+            .bind(customer_code)
+            .fetch_one(&mut *tx)
+            .await?;
     let id = sqlx::query(
         "INSERT INTO sales
              (customer_id, customer_name, location_id, sale_date, status, created_by,
               created_at, updated_at)
          VALUES ((SELECT id FROM customers WHERE code = ?), ?, ?, ?, 'draft', ?, ?, ?)",
     )
-    .bind(customer_code).bind(&customer_name).bind(location_id).bind(sale_date)
-    .bind(admin_id).bind(now).bind(now)
-    .execute(&mut *tx).await?.last_insert_rowid();
+    .bind(customer_code)
+    .bind(&customer_name)
+    .bind(location_id)
+    .bind(sale_date)
+    .bind(admin_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?
+    .last_insert_rowid();
     Ok(id)
 }
 
@@ -1273,15 +1304,26 @@ async fn insert_sale_item(
 ) -> Result<(), AppError> {
     let (prod_id, prod_name): (i64, String) =
         sqlx::query_as("SELECT id, name FROM products WHERE article_number = ?")
-            .bind(article).fetch_one(&mut *tx).await?;
+            .bind(article)
+            .fetch_one(&mut *tx)
+            .await?;
     sqlx::query(
         "INSERT INTO sale_items
              (sale_id, sort_order, product_id, article_number, product_name, quantity,
               unit_price_minor, line_total_minor, unit_cost_minor, line_cost_minor)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(sale_id).bind(sort_order).bind(prod_id).bind(article).bind(&prod_name)
-    .bind(qty).bind(price_minor).bind(qty * price_minor).bind(cost_minor).bind(qty * cost_minor)
-    .execute(&mut *tx).await?;
+    .bind(sale_id)
+    .bind(sort_order)
+    .bind(prod_id)
+    .bind(article)
+    .bind(&prod_name)
+    .bind(qty)
+    .bind(price_minor)
+    .bind(qty * price_minor)
+    .bind(cost_minor)
+    .bind(qty * cost_minor)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }

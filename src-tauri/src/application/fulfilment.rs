@@ -13,9 +13,9 @@ use crate::application::inventory::{
 use crate::application::suppliers::state_audit;
 use crate::dto::fulfilment::{
     CreditNoteDto, CreditNoteListInput, DamageDecisionInput, DamageListInput, DamageRecordDto,
-    DamageRecordInput, DeliveryCreateInput, DeliveryDto, DeliveryItemDto, DeliveryListInput,
-    DeliveryRescheduleInput, DeliveryTransitionInput, ReturnListInput, ReturnVoidInput,
-    SaleReturnDto, SaleReturnInput, SaleReturnItemDto,
+    DamageRecordInput, DeliveryCreateInput, DeliveryDeleteInput, DeliveryDto, DeliveryItemDto,
+    DeliveryListInput, DeliveryRescheduleInput, DeliveryTransitionInput, ReturnListInput,
+    ReturnVoidInput, SaleReturnDto, SaleReturnInput, SaleReturnItemDto,
 };
 use crate::dto::PdfResultDto;
 use crate::error::AppError;
@@ -649,6 +649,87 @@ pub async fn reschedule_delivery(
         correlation_id,
     )
     .await
+}
+
+pub async fn delete_delivery(
+    state: &AppState,
+    principal: &Principal,
+    input: DeliveryDeleteInput,
+    correlation_id: &str,
+) -> Result<(), AppError> {
+    principal.require("delivery.update")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+    let reason = input
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("deleted as an incorrect delivery")
+        .to_string();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let row = sqlx::query(
+                    "SELECT delivery_number, sale_id, status FROM deliveries WHERE id = ?",
+                )
+                .bind(input.delivery_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("delivery {}", input.delivery_id)))?;
+                let number = row.get::<Option<String>, _>(0);
+                let sale_id = row.get::<i64, _>(1);
+                let status = row.get::<String, _>(2);
+                let item_count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM delivery_items WHERE delivery_id = ?",
+                )
+                .bind(input.delivery_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                if !input.force {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Delivery {} is {status}, contains {item_count} item line{}, and is linked to sale #{sale_id}. Delete Anyway will remove only the delivery and release its quantities for another delivery; the sale and invoice remain unchanged.",
+                        number.as_deref().unwrap_or("unnumbered"),
+                        if item_count == 1 { "" } else { "s" }
+                    )));
+                }
+
+                sqlx::query("DELETE FROM delivery_items WHERE delivery_id = ?")
+                    .bind(input.delivery_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query("DELETE FROM deliveries WHERE id = ?")
+                    .bind(input.delivery_id)
+                    .execute(&mut *tx)
+                    .await?;
+
+                state_audit(
+                    &mut *tx,
+                    &audits,
+                    actor_id,
+                    &actor_session,
+                    "delivery.delete",
+                    "delivery",
+                    input.delivery_id,
+                    &correlation,
+                    Some(serde_json::json!({
+                        "delivery_number": number,
+                        "sale_id": sale_id,
+                        "status": status,
+                        "reason": reason,
+                    })),
+                    None,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
 }
 
 pub async fn list_deliveries(

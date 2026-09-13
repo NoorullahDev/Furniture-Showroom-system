@@ -126,6 +126,16 @@ pub struct DeliveryRescheduleInput {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryDeleteInput {
+    pub delivery_id: i64,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Sales Returns
 // ---------------------------------------------------------------------------

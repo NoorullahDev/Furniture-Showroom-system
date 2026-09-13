@@ -42,6 +42,28 @@ pub async fn supplier_update(
 }
 
 #[tauri::command]
+pub async fn supplier_delete(
+    state: State<'_, AppState>,
+    session: String,
+    supplier_id: i64,
+    force: Option<bool>,
+) -> Result<(), AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("supplier_delete", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        application::suppliers::delete(
+            &state,
+            &principal,
+            supplier_id,
+            force.unwrap_or(false),
+            &correlation_id,
+        )
+        .await
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn supplier_list(
     state: State<'_, AppState>,
     session: String,

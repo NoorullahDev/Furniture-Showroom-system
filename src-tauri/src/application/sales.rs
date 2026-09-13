@@ -12,8 +12,8 @@ use crate::application::inventory::{
 use crate::application::sets::{bundle_cost_estimate, require_bundle};
 use crate::application::suppliers::state_audit;
 use crate::dto::sales::{
-    SaleCancelInput, SaleComponentDto, SaleConfirmInput, SaleCreateInput, SaleDeleteInput,
-    SaleDto, SaleEditInput, SaleItemDto,
+    SaleCancelInput, SaleComponentDto, SaleConfirmInput, SaleCreateInput, SaleDeleteInput, SaleDto,
+    SaleEditInput, SaleItemDto,
 };
 use crate::dto::PdfResultDto;
 use crate::error::AppError;
@@ -470,6 +470,10 @@ pub async fn confirm_sale(
     let actor_session = principal.session_id.clone();
     let correlation = correlation_id.to_string();
     let audits = state.audits.clone();
+    let has_override = principal
+        .permissions
+        .iter()
+        .any(|p| p == "sale.discount.override");
     let has_credit = principal.permissions.iter().any(|p| p == "sale.credit");
 
     state
@@ -589,6 +593,11 @@ pub async fn confirm_sale(
                 }
 
                 let discount = row.get::<i64, _>(7);
+                if discount > 0 && !has_override {
+                    return Err(AppError::Unauthorized(
+                        "discount requires sale.discount.override permission".into(),
+                    ));
+                }
 
                 let mut subtotal = 0i64;
                 #[allow(clippy::type_complexity)]
@@ -679,6 +688,13 @@ pub async fn confirm_sale(
                         let unit_cost = avg.unwrap_or(0);
                         line_cost = unit_cost * qty;
 
+                        if unit_cost > 0 && *unit_price < unit_cost && !has_override {
+                            return Err(AppError::Unauthorized(
+                                "below-cost lines require sale.discount.override permission"
+                                    .into(),
+                            ));
+                        }
+
                         sqlx::query(
                             "UPDATE sale_items SET unit_cost_minor = ?, line_cost_minor = ?
                               WHERE id = ?",
@@ -727,6 +743,12 @@ pub async fn confirm_sale(
                         } else {
                             0
                         };
+                        if unit_cost_avg > 0 && *unit_price < unit_cost_avg && !has_override {
+                            return Err(AppError::Unauthorized(
+                                "below-cost bundle lines require sale.discount.override"
+                                    .into(),
+                            ));
+                        }
 
                         sqlx::query(
                             "UPDATE sale_items SET unit_cost_minor = ?, line_cost_minor = ?
@@ -756,11 +778,7 @@ pub async fn confirm_sale(
                     ));
                 }
 
-                let sale_number = if let Some(ref num) = input.override_sale_number {
-                    num.clone()
-                } else {
-                    next_document_number(&mut *tx, "sale").await?
-                };
+                let sale_number = next_document_number(&mut *tx, "sale").await?;
 
                 let sale_date = row.get::<String, _>(5);
                 let due_date = match customer_id {
@@ -937,7 +955,7 @@ pub async fn confirm_sale(
 pub async fn cancel_sale(
     state: &AppState,
     principal: &Principal,
-    input: crate::dto::sales::SaleCancelInput,
+    input: SaleCancelInput,
     correlation_id: &str,
 ) -> Result<SaleDto, AppError> {
     principal.require("sale.cancel")?;
@@ -1038,12 +1056,15 @@ pub async fn cancel_sale(
 
                 let customer_id: Option<i64> = row.try_get(1).ok().filter(|c| *c > 0);
 
-                let payments: Vec<(i64, i64, i64)> = sqlx::query_as(
+                let payments: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
                     "SELECT p.id, p.cash_account_id,
                             COALESCE((SELECT a.amount_minor
                                       FROM customer_payment_allocations a
                                       WHERE a.payment_id = p.id AND a.sale_id = ?),
-                                     p.amount_minor) AS refund_amount
+                                     p.amount_minor) AS refund_amount,
+                            (SELECT COUNT(*) FROM customer_payment_allocations a
+                              WHERE a.payment_id = p.id) AS allocation_count,
+                            p.advance_alloc_minor
                      FROM customer_payments p
                      WHERE p.status = 'posted'
                        AND (p.sale_id = ? OR EXISTS (
@@ -1057,7 +1078,12 @@ pub async fn cancel_sale(
                 .fetch_all(&mut *tx)
                 .await?;
 
-                for (pay_id, account_id, amount) in &payments {
+                for (pay_id, account_id, amount, allocation_count, payment_advance) in &payments {
+                    if *allocation_count > 1 || *payment_advance > 0 {
+                        return Err(AppError::Conflict(
+                            "a payment shared with other invoices or customer advance must be handled through returns/refunds".into(),
+                        ));
+                    }
                     crate::application::cash::require_cash_balance(
                         &mut *tx,
                         *account_id,
@@ -1089,6 +1115,20 @@ pub async fn cancel_sale(
                     .bind(pay_id)
                     .execute(&mut *tx)
                     .await?;
+
+                    if let Some(cid) = customer_id {
+                        record_ledger(
+                            &mut *tx,
+                            cid,
+                            "payment_refund",
+                            "customer_payment",
+                            *pay_id,
+                            *amount,
+                            &format!("refund payment on {sale_number}"),
+                            actor_id,
+                        )
+                        .await?;
+                    }
                 }
 
                 // Walk-in sales (no customer) have no customer_payments row, so
@@ -1193,165 +1233,6 @@ pub async fn cancel_sale(
     sale_dto(state, input.sale_id).await
 }
 
-pub async fn sale_update(
-    state: &AppState,
-    principal: &Principal,
-    input: crate::dto::sales::SaleUpdateInput,
-) -> Result<SaleDto, AppError> {
-    let actor_id = principal.require_any(&["sale.create"])?;
-    let actor_session = principal.session_id.clone();
-    
-    // 1. Fetch current status
-    let row = sqlx::query(
-        "SELECT status, sale_number FROM sales WHERE id = ?"
-    )
-    .bind(input.sale_id)
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("sale {}", input.sale_id)))?;
-    
-    let status: String = row.get(0);
-    let old_sale_number: Option<String> = row.get(1);
-    
-    if status == "cancelled" {
-        return Err(AppError::Conflict("Cannot edit a cancelled sale".into()));
-    }
-    
-    let applied_cn: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM credit_notes WHERE sale_id = ?")
-        .bind(input.sale_id)
-        .fetch_one(&state.pool)
-        .await?;
-    if applied_cn > 0 {
-        return Err(AppError::Conflict("Cannot edit a sale that has credit notes applied".into()));
-    }
-
-    // 2. If confirmed, reverse effects by calling sale_cancel internally
-    if status == "confirmed" {
-        cancel_sale(state, principal, SaleCancelInput {
-            sale_id: input.sale_id,
-            reason: Some("Sale updated".into()),
-        }, "").await?;
-        
-        // Reset status to draft to allow confirm again
-        sqlx::query(
-            "UPDATE sales SET status = 'draft', cancelled_by = NULL, cancelled_at = NULL WHERE id = ?"
-        )
-        .bind(input.sale_id)
-        .execute(&state.pool)
-        .await?;
-    }
-    
-    // 3. Clear old items
-    sqlx::query("DELETE FROM sale_item_components WHERE sale_id = ?")
-        .bind(input.sale_id).execute(&state.pool).await?;
-    sqlx::query("DELETE FROM sale_items WHERE sale_id = ?")
-        .bind(input.sale_id).execute(&state.pool).await?;
-        
-    // 4. Update sales core info
-    let (customer_name, _): (Option<String>, Option<i64>) = if let Some(cid) = input.customer_id {
-        let cr = sqlx::query("SELECT name, credit_limit_minor FROM customers WHERE id = ?")
-            .bind(cid).fetch_optional(&state.pool).await?
-            .ok_or_else(|| AppError::Validation(format!("customer {cid} not found")))?;
-        (Some(cr.get(0)), Some(cr.get(1)))
-    } else {
-        (None, None)
-    };
-    
-    sqlx::query(
-        "UPDATE sales SET customer_id = ?, customer_name = ?, location_id = ?, 
-            discount_minor = ?, delivery_charge_minor = ?, notes = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-         WHERE id = ?"
-    )
-    .bind(input.customer_id)
-    .bind(customer_name)
-    .bind(input.location_id)
-    .bind(input.discount_minor.unwrap_or(0))
-    .bind(input.delivery_charge_minor.unwrap_or(0))
-    .bind(&input.notes)
-    .bind(input.sale_id)
-    .execute(&state.pool)
-    .await?;
-
-    // 5. Insert new items
-    let mut tx = state.pool.begin().await?;
-    let mut sort_order = 0;
-    let mut subtotal = 0;
-    
-    for item in &input.items {
-        let (article_number, product_name, unit_price): (String, String, i64) = if let Some(pid) = item.product_id {
-            sqlx::query("SELECT article_number, name, default_price_minor FROM products WHERE id = ?")
-                .bind(pid).fetch_optional(&mut *tx).await?
-                .map(|r| (r.get(0), r.get(1), r.get(2)))
-                .ok_or_else(|| AppError::Validation(format!("product {pid} not found")))?
-        } else {
-            let bid = item.bundle_id.unwrap();
-            sqlx::query("SELECT code, name, default_price_minor FROM bundles WHERE id = ?")
-                .bind(bid).fetch_optional(&mut *tx).await?
-                .map(|r| (r.get(0), r.get(1), r.get(2)))
-                .ok_or_else(|| AppError::Validation(format!("bundle {bid} not found")))?
-        };
-        
-        let line_total = unit_price * item.quantity;
-        subtotal += line_total;
-        
-        let sale_item_id = sqlx::query(
-            "INSERT INTO sale_items (sale_id, product_id, bundle_id, article_number, product_name, quantity, unit_price_minor, line_total_minor, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        )
-        .bind(input.sale_id)
-        .bind(item.product_id)
-        .bind(item.bundle_id)
-        .bind(&article_number)
-        .bind(&product_name)
-        .bind(item.quantity)
-        .bind(unit_price)
-        .bind(line_total)
-        .bind(sort_order)
-        .execute(&mut *tx).await?.last_insert_rowid();
-        
-        if let Some(bid) = item.bundle_id {
-            let components: Vec<(i64, String, String, i64)> = sqlx::query(
-                "SELECT p.id, p.article_number, p.name, bi.quantity
-                 FROM bundle_items bi JOIN products p ON bi.product_id = p.id
-                 WHERE bi.bundle_id = ?"
-            ).bind(bid).fetch_all(&mut *tx).await?
-            .into_iter().map(|r| (r.get(0), r.get(1), r.get(2), r.get(3))).collect();
-            
-            for (cid, cart, cname, cqty) in components {
-                sqlx::query(
-                    "INSERT INTO sale_item_components (sale_id, sale_item_id, product_id, article_number, product_name, quantity)
-                     VALUES (?, ?, ?, ?, ?, ?)"
-                )
-                .bind(input.sale_id).bind(sale_item_id).bind(cid)
-                .bind(cart).bind(cname).bind(cqty * item.quantity)
-                .execute(&mut *tx).await?;
-            }
-        }
-        sort_order += 1;
-    }
-    
-    let total = subtotal - input.discount_minor.unwrap_or(0) + input.delivery_charge_minor.unwrap_or(0);
-    sqlx::query("UPDATE sales SET subtotal_minor = ?, total_minor = ? WHERE id = ?")
-        .bind(subtotal).bind(total).bind(input.sale_id).execute(&mut *tx).await?;
-        
-    tx.commit().await?;
-    
-    // 6. If originally confirmed, re-confirm
-    if status == "confirmed" {
-        confirm_sale(state, principal, SaleConfirmInput {
-            sale_id: input.sale_id,
-            override_sale_number: old_sale_number,
-            idempotency_key: None,
-            paid_minor: input.paid_minor,
-            cash_account_id: input.cash_account_id,
-            payment_method_id: input.payment_method_id,
-            advance_used_minor: Some(0),
-            credit_note_id: None,
-        }, "").await?;
-    }
-    
-    sale_dto(state, input.sale_id).await
-}
 pub async fn list_sales(state: &AppState, principal: &Principal) -> Result<Vec<SaleDto>, AppError> {
     principal.require_any(&["sale.create", "invoice.print"])?;
     let rows: Vec<i64> = sqlx::query_scalar("SELECT id FROM sales ORDER BY id DESC LIMIT 500")
@@ -1507,10 +1388,7 @@ pub async fn delete_sale(
     state
         .write_coordinator
         .execute(&state.pool, move |tx| {
-            let reason = input
-                .reason
-                .clone()
-                .unwrap_or_else(|| "deletion".into());
+            let reason = input.reason.clone().unwrap_or_else(|| "deletion".into());
             Box::pin(async move {
                 let row = sqlx::query(
                     "SELECT id, customer_id, location_id, sale_date, status, total_minor,
@@ -1593,12 +1471,15 @@ pub async fn delete_sale(
 
                 let customer_id: Option<i64> = row.try_get(1).ok().filter(|c| *c > 0);
 
-                let payments: Vec<(i64, i64, i64)> = sqlx::query_as(
+                let payments: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
                     "SELECT p.id, p.cash_account_id,
                             COALESCE((SELECT a.amount_minor
                                       FROM customer_payment_allocations a
                                       WHERE a.payment_id = p.id AND a.sale_id = ?),
-                                     p.amount_minor) AS refund_amount
+                                     p.amount_minor) AS refund_amount,
+                            (SELECT COUNT(*) FROM customer_payment_allocations a
+                              WHERE a.payment_id = p.id) AS allocation_count,
+                            p.advance_alloc_minor
                      FROM customer_payments p
                      WHERE p.status = 'posted'
                        AND (p.sale_id = ? OR EXISTS (
@@ -1612,14 +1493,14 @@ pub async fn delete_sale(
                 .fetch_all(&mut *tx)
                 .await?;
 
-                for (pay_id, account_id, amount) in &payments {
-                    require_cash_balance(
-                        &mut *tx,
-                        *account_id,
-                        -amount,
-                        "sale deletion refund",
-                    )
-                    .await?;
+                for (pay_id, account_id, amount, allocation_count, payment_advance) in &payments {
+                    if *allocation_count > 1 || *payment_advance > 0 {
+                        return Err(AppError::Conflict(
+                            "a payment shared with other invoices or customer advance must be handled through returns/refunds".into(),
+                        ));
+                    }
+                    require_cash_balance(&mut *tx, *account_id, -amount, "sale deletion refund")
+                        .await?;
 
                     record_cash_entry(
                         &mut *tx,
@@ -1644,6 +1525,20 @@ pub async fn delete_sale(
                     .bind(pay_id)
                     .execute(&mut *tx)
                     .await?;
+
+                    if let Some(cid) = customer_id {
+                        record_ledger(
+                            &mut *tx,
+                            cid,
+                            "payment_refund",
+                            "customer_payment",
+                            *pay_id,
+                            *amount,
+                            &format!("refund payment on {sale_number}"),
+                            actor_id,
+                        )
+                        .await?;
+                    }
                 }
 
                 if payments.is_empty() && customer_id.is_none() {
@@ -1709,12 +1604,10 @@ pub async fn delete_sale(
                     }
                 }
 
-                sqlx::query(
-                    "DELETE FROM customer_payment_allocations WHERE sale_id = ?",
-                )
-                .bind(input.sale_id)
-                .execute(&mut *tx)
-                .await?;
+                sqlx::query("DELETE FROM customer_payment_allocations WHERE sale_id = ?")
+                    .bind(input.sale_id)
+                    .execute(&mut *tx)
+                    .await?;
 
                 sqlx::query(
                     "DELETE FROM customer_payments WHERE sale_id = ? AND status = 'voided'",
@@ -1825,7 +1718,8 @@ pub async fn draft_delete(
                     &correlation,
                     Some(serde_json::json!({"sale_number": sale_number, "reason": reason})),
                     None,
-                ).await;
+                )
+                .await?;
 
                 Ok(())
             })
@@ -1860,6 +1754,9 @@ pub async fn edit_sale(
                 "each item must have exactly one of product_id or bundle_id".into(),
             ));
         }
+        if item.unit_price_minor < 0 {
+            return Err(AppError::Validation("unit price cannot be negative".into()));
+        }
     }
 
     let discount = input.discount_minor.unwrap_or(0);
@@ -1876,6 +1773,15 @@ pub async fn edit_sale(
     if paid < 0 {
         return Err(AppError::Validation("paid cannot be negative".into()));
     }
+    let has_override = principal
+        .permissions
+        .iter()
+        .any(|permission| permission == "sale.discount.override");
+    if discount > 0 && !has_override {
+        return Err(AppError::Unauthorized(
+            "discount requires sale.discount.override permission".into(),
+        ));
+    }
 
     let actor_id = principal.user_id;
     let actor_session = principal.session_id.clone();
@@ -1890,7 +1796,8 @@ pub async fn edit_sale(
             Box::pin(async move {
                 let row = sqlx::query(
                     "SELECT id, customer_id, location_id, sale_date, status, total_minor,
-                        paid_minor, advance_used_minor, sale_number, payment_cash_account_id
+                        paid_minor, advance_used_minor, sale_number, payment_cash_account_id,
+                        discount_minor, delivery_charge_minor, notes
                  FROM sales WHERE id = ?",
                 )
                 .bind(input.sale_id)
@@ -1919,8 +1826,66 @@ pub async fn edit_sale(
                 if let Some(cid) = input.customer_id {
                     require_customer(&mut *tx, cid).await?;
                 }
+                if paid > 0 {
+                    let account_exists: Option<i64> = sqlx::query_scalar(
+                        "SELECT 1 FROM cash_accounts WHERE id = ? AND is_active = 1",
+                    )
+                    .bind(input.cash_account_id.unwrap_or(0))
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if account_exists.is_none() {
+                        return Err(AppError::NotFound("cash account".into()));
+                    }
+                    let method_exists: Option<i64> = sqlx::query_scalar(
+                        "SELECT 1 FROM payment_methods WHERE id = ? AND is_active = 1",
+                    )
+                    .bind(input.payment_method_id.unwrap_or(0))
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    if method_exists.is_none() {
+                        return Err(AppError::NotFound("payment method".into()));
+                    }
+                }
 
                 // ── Reverse existing effects ──────────────────────────────
+
+                let current_items: Vec<(Option<i64>, Option<i64>, i64, i64)> = sqlx::query_as(
+                    "SELECT product_id, bundle_id, quantity, unit_price_minor
+                       FROM sale_items WHERE sale_id = ? ORDER BY sort_order, id",
+                )
+                .bind(input.sale_id)
+                .fetch_all(&mut *tx)
+                .await?;
+                let items_unchanged = current_items.len() == input.items.len()
+                    && current_items.iter().zip(&input.items).all(
+                        |((product_id, bundle_id, quantity, unit_price), requested)| {
+                            *product_id == requested.product_id
+                                && *bundle_id == requested.bundle_id
+                                && *quantity == requested.quantity
+                                && *unit_price == requested.unit_price_minor
+                        },
+                    );
+                let current_payment_method: Option<i64> = sqlx::query_scalar(
+                    "SELECT payment_method_id FROM customer_payments
+                      WHERE sale_id = ? AND status = 'posted' ORDER BY id DESC LIMIT 1",
+                )
+                .bind(input.sale_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+                let payment_context_unchanged = paid == 0
+                    || (payment_cash_account_id == input.cash_account_id
+                        && (existing_customer_id.is_none()
+                            || current_payment_method == input.payment_method_id));
+                if existing_customer_id == input.customer_id
+                    && row.get::<i64, _>(10) == discount
+                    && row.get::<i64, _>(11) == delivery
+                    && row.get::<Option<String>, _>(12) == input.notes
+                    && paid_minor == paid
+                    && items_unchanged
+                    && payment_context_unchanged
+                {
+                    return Ok(());
+                }
 
                 let items: Vec<(Option<i64>, Option<i64>, i64, i64)> = sqlx::query(
                     "SELECT product_id, bundle_id, quantity, unit_cost_minor
@@ -1976,12 +1941,15 @@ pub async fn edit_sale(
                     }
                 }
 
-                let payments: Vec<(i64, i64, i64)> = sqlx::query_as(
+                let payments: Vec<(i64, i64, i64, i64, i64)> = sqlx::query_as(
                     "SELECT p.id, p.cash_account_id,
                             COALESCE((SELECT a.amount_minor
                                       FROM customer_payment_allocations a
                                       WHERE a.payment_id = p.id AND a.sale_id = ?),
-                                     p.amount_minor) AS refund_amount
+                                     p.amount_minor) AS refund_amount,
+                            (SELECT COUNT(*) FROM customer_payment_allocations a
+                              WHERE a.payment_id = p.id) AS allocation_count,
+                            p.advance_alloc_minor
                      FROM customer_payments p
                      WHERE p.status = 'posted'
                        AND (p.sale_id = ? OR EXISTS (
@@ -1995,7 +1963,12 @@ pub async fn edit_sale(
                 .fetch_all(&mut *tx)
                 .await?;
 
-                for (pay_id, account_id, amount) in &payments {
+                for (pay_id, account_id, amount, allocation_count, payment_advance) in &payments {
+                    if *allocation_count > 1 || *payment_advance > 0 {
+                        return Err(AppError::Conflict(
+                            "a payment shared with other invoices or customer advance must be handled through returns/refunds".into(),
+                        ));
+                    }
                     require_cash_balance(
                         &mut *tx,
                         *account_id,
@@ -2027,6 +2000,20 @@ pub async fn edit_sale(
                     .bind(pay_id)
                     .execute(&mut *tx)
                     .await?;
+
+                    if let Some(cid) = existing_customer_id {
+                        record_ledger(
+                            &mut *tx,
+                            cid,
+                            "payment_refund",
+                            "customer_payment",
+                            *pay_id,
+                            *amount,
+                            &format!("refund payment on {sale_number}"),
+                            actor_id,
+                        )
+                        .await?;
+                    }
                 }
 
                 if payments.is_empty() && existing_customer_id.is_none() {
@@ -2154,7 +2141,7 @@ pub async fn edit_sale(
                         .await?;
                         let article: String = row.get(0);
                         let name: String = row.get(1);
-                        let price: i64 = row.get::<Option<i64>, _>(2).unwrap_or(0);
+                        let price = item.unit_price_minor;
                         let total_line = price * item.quantity;
                         subtotal += total_line;
                         sqlx::query(
@@ -2183,7 +2170,7 @@ pub async fn edit_sale(
                         .await?;
                         let name: String = row.get(0);
                         let code: String = row.get(1);
-                        let price: i64 = row.get(2);
+                        let price = item.unit_price_minor;
                         let total_line = price * item.quantity;
                         subtotal += total_line;
                         let cost_estimate = bundle_cost_estimate(&mut *tx, bundle_id).await?;
@@ -2325,6 +2312,13 @@ pub async fn edit_sale(
                         let unit_cost = avg.unwrap_or(0);
                         line_cost = unit_cost * qty;
 
+                        if unit_cost > 0 && *unit_price < unit_cost && !has_override {
+                            return Err(AppError::Unauthorized(
+                                "below-cost lines require sale.discount.override permission"
+                                    .into(),
+                            ));
+                        }
+
                         sqlx::query(
                             "UPDATE sale_items SET unit_cost_minor = ?, line_cost_minor = ?
                               WHERE id = ?",
@@ -2373,6 +2367,12 @@ pub async fn edit_sale(
                         } else {
                             0
                         };
+                        if unit_cost_avg > 0 && *unit_price < unit_cost_avg && !has_override {
+                            return Err(AppError::Unauthorized(
+                                "below-cost bundle lines require sale.discount.override"
+                                    .into(),
+                            ));
+                        }
 
                         sqlx::query(
                             "UPDATE sale_items SET unit_cost_minor = ?, line_cost_minor = ?
@@ -2386,7 +2386,6 @@ pub async fn edit_sale(
                     }
 
                     total_cost += line_cost;
-                    subtotal += unit_price * qty;
                 }
 
                 let total = subtotal - discount + delivery;
@@ -2434,7 +2433,7 @@ pub async fn edit_sale(
                         .bind(cid)
                         .bind(input.sale_id)
                         .bind(input.payment_method_id.unwrap_or(0))
-                        .bind(payment_cash_account_id.unwrap_or(0))
+                        .bind(input.cash_account_id.unwrap_or(0))
                         .bind(now.clone())
                         .bind(paid)
                         .bind(actor_id)
@@ -2468,7 +2467,7 @@ pub async fn edit_sale(
                 }
 
                 if paid > 0 {
-                    if let Some(account_id) = payment_cash_account_id {
+                    if let Some(account_id) = input.cash_account_id {
                         record_cash_entry(
                             &mut *tx,
                             account_id,

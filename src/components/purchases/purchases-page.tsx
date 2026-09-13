@@ -9,7 +9,7 @@ import {
   Loader2,
   Plus,
   Search,
-  Undo2,
+  Trash2,
   UserPlus,
   Wallet,
 } from "lucide-react";
@@ -54,9 +54,11 @@ import {
   paymentMethodList,
   productList,
   purchaseCreate,
+  purchaseDelete,
   purchasePost,
   purchaseList,
   supplierCreate,
+  supplierDelete,
   supplierLedger,
   supplierList,
   supplierPaymentCreate,
@@ -109,6 +111,7 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
   const canRecordPurchase = hasPermission("purchase.create");
   const canCreateSupplier = hasPermission("supplier.create");
   const canPay = hasPermission("supplier.pay");
+  const canVoidPayment = hasPermission("payment.void");
   const canReturn = hasPermission("supplier.return");
   const canView = hasPermission("payable.view");
 
@@ -130,6 +133,8 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
   >(null);
   const [activePurchase, setActivePurchase] = React.useState<PurchaseDto | null>(null);
   const [activeReturn, setActiveReturn] = React.useState<SupplierReturnDto | null>(null);
+  const [deletePurchaseTarget, setDeletePurchaseTarget] = React.useState<PurchaseDto | null>(null);
+  const [deleteSupplierTarget, setDeleteSupplierTarget] = React.useState<SupplierDto | null>(null);
   const [ledgerSupplierId, setLedgerSupplierId] = React.useState<number | null>(null);
   const [cashAccountFilter, setCashAccountFilter] = React.useState<number | null>(null);
 
@@ -214,6 +219,30 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
     }
     toast({ variant: "error", title: "Operation failed", description: commandErrorMessage(e) });
   };
+
+  const purchaseDeleteMutation = useMutation({
+    mutationFn: (purchase: PurchaseDto) =>
+      purchaseDelete(session, {
+        purchaseId: purchase.id,
+        reason: "Deleted from Purchases",
+        force: true,
+      }),
+    onSuccess: () => {
+      setDeletePurchaseTarget(null);
+      invalidate();
+      toast({ variant: "success", title: "Purchase deleted" });
+    },
+    onError: failed,
+  });
+  const supplierDeleteMutation = useMutation({
+    mutationFn: (supplier: SupplierDto) => supplierDelete(session, supplier.id, true),
+    onSuccess: () => {
+      setDeleteSupplierTarget(null);
+      invalidate();
+      toast({ variant: "success", title: "Supplier deleted" });
+    },
+    onError: failed,
+  });
 
   let title = "Purchases";
   let subtitle = "Suppliers, purchases, payables and supplier cash movements.";
@@ -342,6 +371,7 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
               setActivePurchase(p);
               setDialog("post-purchase");
             }}
+            onDelete={setDeletePurchaseTarget}
           />
         )}
         {view === "suppliers" && (
@@ -353,15 +383,27 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
               setLedgerSupplierId(id);
               setDialog("ledger");
             }}
+            canDelete={canCreateSupplier}
+            onDelete={setDeleteSupplierTarget}
           />
         )}
-        {view === "payables" && <AgingTable rows={aging} loading={payablesQuery.isLoading} />}
+        {view === "payables" && (
+          <AgingTable
+            rows={aging}
+            loading={payablesQuery.isLoading}
+            canDelete={canRecordPurchase}
+            onDelete={(row) => {
+              const purchase = purchases.find((candidate) => candidate.id === row.purchaseId);
+              if (purchase) setDeletePurchaseTarget(purchase);
+            }}
+          />
+        )}
         {view === "payments" && (
           <PaymentsTable
             rows={payments}
             loading={paymentsQuery.isLoading}
             session={session}
-            canVoid={canPay}
+            canVoid={canVoidPayment}
             onVoided={() => invalidate()}
           />
         )}
@@ -484,6 +526,24 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
           onError={failed}
         />
       )}
+      {deletePurchaseTarget && (
+        <ConfirmDeleteDialog
+          title={`Delete purchase ${deletePurchaseTarget.purchaseNumber ?? deletePurchaseTarget.invoiceNumber}?`}
+          description={`Purchase ${deletePurchaseTarget.purchaseNumber ?? deletePurchaseTarget.invoiceNumber} for ${formatPkr(deletePurchaseTarget.totalMinor)} has ${deletePurchaseTarget.items.length} item line${deletePurchaseTarget.items.length === 1 ? "" : "s"}, ${formatPkr(deletePurchaseTarget.paidMinor)} paid, ${formatPkr(deletePurchaseTarget.dueMinor)} due, and ${deletePurchaseTarget.linkedReturnCount} linked supplier return${deletePurchaseTarget.linkedReturnCount === 1 ? "" : "s"}. Delete Anyway will reverse remaining attributable stock, void linked payments, recalculate the supplier balance, and preserve dependent audit history.`}
+          busy={purchaseDeleteMutation.isPending}
+          onClose={() => setDeletePurchaseTarget(null)}
+          onConfirm={() => purchaseDeleteMutation.mutate(deletePurchaseTarget)}
+        />
+      )}
+      {deleteSupplierTarget && (
+        <ConfirmDeleteDialog
+          title={`Delete supplier ${deleteSupplierTarget.code}?`}
+          description={`${deleteSupplierTarget.name} has a current supplier balance of ${formatPkr(deleteSupplierTarget.balanceMinor)} and ${deleteSupplierTarget.linkedRecordCount} linked purchase, payment, or return record${deleteSupplierTarget.linkedRecordCount === 1 ? "" : "s"}. Delete Anyway removes the supplier from active records while preserving linked business history.`}
+          busy={supplierDeleteMutation.isPending}
+          onClose={() => setDeleteSupplierTarget(null)}
+          onConfirm={() => supplierDeleteMutation.mutate(deleteSupplierTarget)}
+        />
+      )}
     </div>
   );
 }
@@ -536,6 +596,37 @@ function EmptyRow({ message }: { message: string }) {
   );
 }
 
+function ConfirmDeleteDialog({
+  title,
+  description,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(openState) => !openState && !busy && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="danger" onClick={onConfirm} disabled={busy}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />} Delete Anyway
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   if (status === "posted") return <Badge variant="success">Posted</Badge>;
   if (status === "voided") return <Badge variant="danger">Voided</Badge>;
@@ -548,12 +639,14 @@ function PurchasesTable({
   canPost,
   onView,
   onPost,
+  onDelete,
 }: {
   rows: PurchaseDto[];
   loading: boolean;
   canPost: boolean;
   onView: (p: PurchaseDto) => void;
   onPost: (p: PurchaseDto) => void;
+  onDelete: (p: PurchaseDto) => void;
 }) {
   const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
@@ -620,11 +713,18 @@ function PurchasesTable({
                   <StatusBadge status={p.status} />
                 </TableCell>
                 <TableCell className="text-right">
-                  {canPost && p.status === "draft" && (
-                    <Button variant="outline" size="sm" onClick={() => onPost(p)}>
-                      Post
-                    </Button>
-                  )}
+                  <div className="flex items-center justify-end gap-1">
+                    {canPost && p.status === "draft" && (
+                      <Button variant="outline" size="sm" onClick={() => onPost(p)}>
+                        Post
+                      </Button>
+                    )}
+                    {canPost && (
+                      <Button variant="ghost" size="sm" className="text-rose-600" onClick={() => onDelete(p)}>
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -641,11 +741,15 @@ function SuppliersTable({
   loading,
   canViewLedger,
   onLedger,
+  canDelete,
+  onDelete,
 }: {
   rows: SupplierDto[];
   loading: boolean;
   canViewLedger: boolean;
   onLedger: (id: number) => void;
+  canDelete: boolean;
+  onDelete: (supplier: SupplierDto) => void;
 }) {
   const [q, setQ] = React.useState("");
 
@@ -685,7 +789,7 @@ function SuppliersTable({
                   <TableHead>Contact</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead>Active</TableHead>
-                  {canViewLedger && <TableHead className="w-20" />}
+                  {(canViewLedger || canDelete) && <TableHead className="w-20" />}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -712,12 +816,16 @@ function SuppliersTable({
                     {s.isActive ? "Active" : "Inactive"}
                   </Badge>
                 </TableCell>
-                {canViewLedger && (
+                {(canViewLedger || canDelete) && (
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" onClick={() => onLedger(s.id)}>
-                      <FileText className="h-3.5 w-3.5" />
-                      Ledger
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      {canViewLedger && <Button variant="ghost" size="sm" onClick={() => onLedger(s.id)}>
+                        <FileText className="h-3.5 w-3.5" /> Ledger
+                      </Button>}
+                      {canDelete && <Button variant="ghost" size="sm" className="text-rose-600" onClick={() => onDelete(s)}>
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </Button>}
+                    </div>
                   </TableCell>
                 )}
               </TableRow>
@@ -731,7 +839,17 @@ function SuppliersTable({
   );
 }
 
-function AgingTable({ rows, loading }: { rows: PayableAgingRowDto[]; loading: boolean }) {
+function AgingTable({
+  rows,
+  loading,
+  canDelete,
+  onDelete,
+}: {
+  rows: PayableAgingRowDto[];
+  loading: boolean;
+  canDelete: boolean;
+  onDelete: (row: PayableAgingRowDto) => void;
+}) {
   if (loading) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow message="No outstanding payables." />;
   return (
@@ -746,6 +864,7 @@ function AgingTable({ rows, loading }: { rows: PayableAgingRowDto[]; loading: bo
               <TableHead className="text-right">Age</TableHead>
               <TableHead>Bucket</TableHead>
               <TableHead className="text-right">Due</TableHead>
+              {canDelete && <TableHead className="text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -769,6 +888,13 @@ function AgingTable({ rows, loading }: { rows: PayableAgingRowDto[]; loading: bo
                 <TableCell className="text-right font-semibold tabular-nums text-rose-600">
                   {formatPkr(r.dueMinor)}
                 </TableCell>
+                {canDelete && (
+                  <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" className="text-rose-600" onClick={() => onDelete(r)}>
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </Button>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -793,29 +919,31 @@ function PaymentsTable({
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [deleteTarget, setDeleteTarget] = React.useState<SupplierPaymentDto | null>(null);
   const voidMutation = useMutation({
-    mutationFn: (paymentId: number) =>
-      supplierPaymentVoid(session, { paymentId, reason: "manually voided" }),
+    mutationFn: (payment: SupplierPaymentDto) =>
+      supplierPaymentVoid(session, {
+        paymentId: payment.id,
+        reason: "Deleted from Supplier Payment History",
+        force: true,
+      }),
     onSuccess: () => {
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["purchasing"] });
       onVoided();
-      toast({ variant: "success", title: "Payment voided" });
+      toast({ variant: "success", title: "Supplier payment deleted" });
     },
     onError: (e: Error) => {
-      toast({ variant: "error", title: "Void failed", description: commandErrorMessage(e) });
+      toast({ variant: "error", title: "Delete failed", description: commandErrorMessage(e) });
     },
   });
 
   if (loading) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow message="No supplier payments yet." />;
 
-  const voidPayment = (paymentId: number) => {
-    if (!window.confirm("Void this payment? Cash, payables and supplier balance will be reversed.")) return;
-    voidMutation.mutate(paymentId);
-  };
-
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+    <>
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -847,11 +975,12 @@ function PaymentsTable({
                     {p.status === "posted" && (
                       <Button
                         variant="ghost"
-                        size="icon"
-                        title="Void this payment"
-                        onClick={() => voidPayment(p.id)}
+                        size="sm"
+                        className="text-rose-600"
+                        title="Delete this payment"
+                        onClick={() => setDeleteTarget(p)}
                       >
-                        <Undo2 className="h-3.5 w-3.5 text-neutral-500" />
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
                       </Button>
                     )}
                   </TableCell>
@@ -861,7 +990,17 @@ function PaymentsTable({
           </TableBody>
         </Table>
       </div>
-    </div>
+      </div>
+      {deleteTarget && (
+        <ConfirmDeleteDialog
+          title={`Delete supplier payment ${deleteTarget.paymentNumber ?? `#${deleteTarget.id}`}?`}
+          description={`Payment ${deleteTarget.paymentNumber ?? `#${deleteTarget.id}`} paid ${formatPkr(deleteTarget.amountMinor)} to ${deleteTarget.supplierName} and has ${deleteTarget.allocations.length} purchase allocation${deleteTarget.allocations.length === 1 ? "" : "s"}. Delete Anyway restores the related purchase dues, supplier balance, and cash account; the payment remains marked voided for audit history.`}
+          busy={voidMutation.isPending}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => voidMutation.mutate(deleteTarget)}
+        />
+      )}
+    </>
   );
 }
 

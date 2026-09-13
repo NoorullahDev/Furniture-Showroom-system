@@ -35,6 +35,8 @@ pub enum AppError {
     RateLimited(i64),
     #[error("operation not allowed: {0}")]
     Conflict(String),
+    #[error("confirmation required: {0}")]
+    ConfirmationRequired(String),
     #[error("license required: {0}")]
     License(String),
     #[error("internal error: {0}")]
@@ -58,6 +60,7 @@ impl AppError {
             AppError::SessionLocked(_) => "SESSION_LOCKED",
             AppError::RateLimited(_) => "RATE_LIMITED",
             AppError::Conflict(_) => "CONFLICT",
+            AppError::ConfirmationRequired(_) => "CONFIRMATION_REQUIRED",
             AppError::License(_) => "LICENSE_REQUIRED",
             AppError::Internal(_) => "INTERNAL",
         }

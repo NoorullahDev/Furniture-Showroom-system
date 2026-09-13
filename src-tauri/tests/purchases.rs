@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::purchases::{
-    CashAccountInput, PurchaseCreateInput, PurchaseItemInput, PurchasePostInput, SupplierInput,
-    SupplierPaymentInput, SupplierPaymentVoidInput, SupplierReturnCreateInput,
-    SupplierReturnItemInput, SupplierReturnPostInput,
+    CashAccountInput, PurchaseCreateInput, PurchaseDeleteInput, PurchaseItemInput,
+    PurchasePostInput, SupplierInput, SupplierPaymentInput, SupplierPaymentVoidInput,
+    SupplierReturnCreateInput, SupplierReturnItemInput, SupplierReturnPostInput,
 };
 use furniture_shop_lib::error::AppError;
 use furniture_shop_lib::infrastructure as infra;
@@ -535,14 +535,30 @@ async fn payment_void_reverses_allocations_cash_and_payable() {
     assert_eq!(supplier_balance(&state, supplier).await, 3_000);
     assert_eq!(cash_balance(&state, cash).await, 1_000_000 - 3_000);
 
+    let warning = application::purchases::void_payment(
+        &state,
+        &owner,
+        SupplierPaymentVoidInput {
+            payment_id: payment.id,
+            reason: Some("entered twice".into()),
+            force: false,
+        },
+        "corr-4",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("purchase allocation"))
+    );
     let voided = application::purchases::void_payment(
         &state,
         &owner,
         SupplierPaymentVoidInput {
             payment_id: payment.id,
             reason: Some("entered twice".into()),
+            force: true,
         },
-        "corr-4",
+        "corr-4-force",
     )
     .await
     .unwrap();
@@ -575,12 +591,181 @@ async fn payment_void_reverses_allocations_cash_and_payable() {
         SupplierPaymentVoidInput {
             payment_id: payment.id,
             reason: None,
+            force: true,
         },
         "corr-5",
     )
     .await
     .unwrap_err();
     assert!(matches!(err, AppError::Conflict(_)));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn purchase_delete_reverses_stock_cash_payable_and_removes_children() {
+    let dir = temp_dir("delete-purchase");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-purchase").await;
+    let product = create_product(&state, "DEL-PUR-01").await;
+    let supplier = create_supplier(&state, &owner, "SUP-DEL-PUR").await;
+    let location = main_location(&state).await;
+    let cash = funded_cash(&state, &owner, "DEL-PUR").await;
+
+    let mut draft = draft_purchase("DEL-PUR-01", supplier, location, 4, 2_000);
+    draft.items[0].product_id = product;
+    let purchase = application::purchases::create_purchase(&state, &owner, draft, "corr-1")
+        .await
+        .unwrap();
+    application::purchases::post_purchase(
+        &state,
+        &owner,
+        PurchasePostInput {
+            purchase_id: purchase.id,
+            idempotency_key: None,
+            paid_minor: Some(3_000),
+            cash_account_id: Some(cash),
+            payment_method_id: Some(1),
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, location).await, 4);
+    assert_eq!(supplier_balance(&state, supplier).await, 5_000);
+    assert_eq!(cash_balance(&state, cash).await, 997_000);
+
+    let warning = application::purchases::delete_purchase(
+        &state,
+        &owner,
+        PurchaseDeleteInput {
+            purchase_id: purchase.id,
+            reason: Some("wrong invoice".into()),
+            force: false,
+        },
+        "corr-3",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("posted stock"))
+    );
+    application::purchases::delete_purchase(
+        &state,
+        &owner,
+        PurchaseDeleteInput {
+            purchase_id: purchase.id,
+            reason: Some("wrong invoice".into()),
+            force: true,
+        },
+        "corr-4",
+    )
+    .await
+    .unwrap();
+
+    let purchase_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM purchases WHERE id = ?")
+        .bind(purchase.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    let item_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM purchase_items WHERE purchase_id = ?")
+            .bind(purchase.id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let allocation_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM supplier_payment_allocations WHERE purchase_id = ?",
+    )
+    .bind(purchase.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let payment_status: String =
+        sqlx::query_scalar("SELECT status FROM supplier_payments ORDER BY id DESC LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let movement_total: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(quantity_delta), 0) FROM stock_movements
+         WHERE (reference_type = 'purchase' OR reference_type = 'purchase_delete')
+           AND reference_id = ?",
+    )
+    .bind(purchase.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let layer_quantity: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(l.quantity), 0) FROM inventory_cost_layers l
+         JOIN stock_movements m ON m.id = l.movement_id
+         WHERE m.reference_type = 'purchase' AND m.reference_id = ?",
+    )
+    .bind(purchase.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(purchase_count, 0);
+    assert_eq!(item_count, 0);
+    assert_eq!(allocation_count, 0);
+    assert_eq!(payment_status, "voided");
+    assert_eq!(movement_total, 0);
+    assert_eq!(layer_quantity, 0);
+    assert_eq!(on_hand(&state, product, location).await, 0);
+    assert_eq!(supplier_balance(&state, supplier).await, 0);
+    assert_eq!(cash_balance(&state, cash).await, 1_000_000);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn supplier_delete_warns_then_tombstones_business_history() {
+    let dir = temp_dir("delete-supplier");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-supplier").await;
+    let unused = create_supplier(&state, &owner, "SUP-UNUSED").await;
+    application::suppliers::delete(&state, &owner, unused, false, "corr-unused")
+        .await
+        .unwrap();
+    let unused_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM suppliers WHERE id = ?")
+        .bind(unused)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap();
+    assert_eq!(unused_count, 0);
+
+    let linked = create_supplier(&state, &owner, "SUP-LINKED").await;
+    let product = create_product(&state, "SUP-LINK-01").await;
+    let location = main_location(&state).await;
+    let mut draft = draft_purchase("SUP-LINK-01", linked, location, 1, 1_000);
+    draft.items[0].product_id = product;
+    application::purchases::create_purchase(&state, &owner, draft, "corr-purchase")
+        .await
+        .unwrap();
+    let error = application::suppliers::delete(&state, &owner, linked, false, "corr-linked")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, AppError::ConfirmationRequired(message) if message.contains("1 purchase"))
+    );
+    application::suppliers::delete(&state, &owner, linked, true, "corr-linked-force")
+        .await
+        .unwrap();
+    assert!(application::suppliers::list(&state, &owner)
+        .await
+        .unwrap()
+        .iter()
+        .all(|supplier| supplier.id != linked));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM suppliers WHERE id = ? AND deleted_at IS NOT NULL"
+        )
+        .bind(linked)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        1
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -694,6 +879,48 @@ async fn return_reduces_stock_and_payable_and_cannot_exceed_net_received() {
         "rejected return changes nothing"
     );
     assert_eq!(supplier_balance(&state, supplier).await, 5_400);
+
+    let warning = application::purchases::delete_purchase(
+        &state,
+        &owner,
+        PurchaseDeleteInput {
+            purchase_id: purchase.id,
+            reason: Some("supplier invoice entered in error".into()),
+            force: false,
+        },
+        "corr-delete-warning",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("supplier return"))
+    );
+    application::purchases::delete_purchase(
+        &state,
+        &owner,
+        PurchaseDeleteInput {
+            purchase_id: purchase.id,
+            reason: Some("supplier invoice entered in error".into()),
+            force: true,
+        },
+        "corr-delete-force",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, location).await, 0);
+    assert_eq!(supplier_balance(&state, supplier).await, 0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM supplier_returns WHERE purchase_id IS NULL AND id IN (?, ?)"
+        )
+        .bind(ret.id)
+        .bind(ret2.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        2,
+        "linked returns are preserved but detached from the deleted purchase"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

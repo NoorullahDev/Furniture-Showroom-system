@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use furniture_shop_lib::application;
 use furniture_shop_lib::application::auth::Principal;
 use furniture_shop_lib::dto::inventory::{
-    AdjustStockInput, CountLineInput, PostCountInput, PostStockInput, ReverseMovementInput,
-    StartCountInput, TransferStockInput,
+    AdjustStockInput, CountLineInput, DamageStockInput, PostCountInput, PostStockInput,
+    ReverseMovementInput, StartCountInput, TransferStockInput,
 };
 use furniture_shop_lib::error::AppError;
 use furniture_shop_lib::infrastructure as infra;
@@ -118,6 +118,20 @@ async fn location_by_name(state: &AppState, name: &str) -> i64 {
         .unwrap()
 }
 
+async fn activate_test_stockroom(state: &AppState) -> i64 {
+    let id: i64 =
+        sqlx::query_scalar("SELECT id FROM locations WHERE is_active = 0 ORDER BY id LIMIT 1")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE locations SET name = 'Test Stockroom', is_active = 1 WHERE id = ?")
+        .bind(id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    id
+}
+
 #[tokio::test]
 async fn opening_stock_posts_balance_and_ledger() {
     let dir = temp_dir("opening");
@@ -167,7 +181,7 @@ async fn transfer_moves_balance_between_locations() {
     let owner = make_owner(&state, "transfer").await;
     let product = create_product(&state, "TRF-01").await;
     let from = location_by_name(&state, "Main Showroom").await;
-    let to = location_by_name(&state, "Store/Stockroom").await;
+    let to = activate_test_stockroom(&state).await;
 
     application::inventory::post_opening(
         &state,
@@ -233,7 +247,7 @@ async fn negative_stock_is_blocked_under_strict_policy() {
     let owner = make_owner(&state, "neg").await;
     let product = create_product(&state, "NEG-01").await;
     let from = location_by_name(&state, "Main Showroom").await;
-    let to = location_by_name(&state, "Store/Stockroom").await;
+    let to = activate_test_stockroom(&state).await;
 
     application::inventory::post_opening(
         &state,
@@ -304,14 +318,15 @@ async fn allow_negative_setting_enables_negative_balance() {
     let owner = make_owner(&state, "lenient").await;
     let product = create_product(&state, "NEG-02").await;
     let from = location_by_name(&state, "Main Showroom").await;
-    let to = location_by_name(&state, "Store/Stockroom").await;
 
-    application::settings::set(
-        &state,
-        "inventory.allow_negative",
-        "\"true\"",
-        Some(owner.user_id),
+    sqlx::query(
+        "INSERT INTO settings (key, value_json, updated_by)
+         VALUES ('inventory.allow_negative', '\"true\"', ?)
+         ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json,
+             updated_by = excluded.updated_by",
     )
+    .bind(owner.user_id)
+    .execute(&state.pool)
     .await
     .unwrap();
 
@@ -343,8 +358,6 @@ async fn allow_negative_setting_enables_negative_balance() {
     .unwrap();
     assert_eq!(ledger, -5);
 
-    // _ = to (unused in this test but kept to mirror the transfer test shape).
-    let _ = to;
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -641,14 +654,30 @@ async fn reversal_restores_net_position() {
     .unwrap();
     assert_eq!(on_hand(&state, product, loc).await, 10);
 
+    let warning = application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: mv.id,
+            reason: Some("mistake".into()),
+            force: false,
+        },
+        "corr-2",
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(warning, AppError::ConfirmationRequired(message) if message.contains("changes stock by 10"))
+    );
     let rev = application::inventory::reverse_movement(
         &state,
         &owner,
         ReverseMovementInput {
             movement_id: mv.id,
             reason: Some("mistake".into()),
+            force: true,
         },
-        "corr-2",
+        "corr-2-force",
     )
     .await
     .unwrap();
@@ -663,12 +692,13 @@ async fn reversal_restores_net_position() {
         ReverseMovementInput {
             movement_id: mv.id,
             reason: None,
+            force: true,
         },
         "corr-3",
     )
     .await
     .unwrap_err();
-    assert!(matches!(err, AppError::Validation(_)));
+    assert!(matches!(err, AppError::NotFound(_)));
 
     let ledger: i64 = sqlx::query_scalar(
         "SELECT SUM(quantity_delta) FROM stock_movements WHERE product_id = ? AND location_id = ?",
@@ -690,7 +720,7 @@ async fn reversal_of_transfer_balances_both_locations() {
     let owner = make_owner(&state, "reversal-tr").await;
     let product = create_product(&state, "REV-TR01").await;
     let from = location_by_name(&state, "Main Showroom").await;
-    let to = location_by_name(&state, "Store/Stockroom").await;
+    let to = activate_test_stockroom(&state).await;
 
     application::inventory::post_opening(
         &state,
@@ -730,6 +760,7 @@ async fn reversal_of_transfer_balances_both_locations() {
         ReverseMovementInput {
             movement_id: trfs[0].id,
             reason: Some("cancel out leg".into()),
+            force: true,
         },
         "corr-3",
     )
@@ -745,6 +776,7 @@ async fn reversal_of_transfer_balances_both_locations() {
         ReverseMovementInput {
             movement_id: trfs[1].id,
             reason: None,
+            force: true,
         },
         "corr-4",
     )
@@ -752,6 +784,79 @@ async fn reversal_of_transfer_balances_both_locations() {
     .unwrap();
     assert_eq!(on_hand(&state, product, from).await, 10);
     assert_eq!(on_hand(&state, product, to).await, 0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn deleting_damage_movement_restores_the_correct_stock_buckets() {
+    let dir = temp_dir("delete-damage-movement");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "delete-damage").await;
+    let product = create_product(&state, "DEL-DMG-01").await;
+    let location = location_by_name(&state, "Main Showroom").await;
+
+    application::inventory::post_opening(
+        &state,
+        &owner,
+        PostStockInput {
+            product_id: product,
+            location_id: location,
+            quantity: 10,
+            unit_cost_minor: Some(500),
+            reason: None,
+        },
+        "corr-opening",
+    )
+    .await
+    .unwrap();
+    let damage = application::inventory::post_damage(
+        &state,
+        &owner,
+        DamageStockInput {
+            product_id: product,
+            location_id: location,
+            quantity: 3,
+            reason: Some("incorrect classification".into()),
+        },
+        "corr-damage",
+    )
+    .await
+    .unwrap();
+    assert_eq!(on_hand(&state, product, location).await, 7);
+
+    application::inventory::reverse_movement(
+        &state,
+        &owner,
+        ReverseMovementInput {
+            movement_id: damage.id,
+            reason: Some("Deleted from Inventory".into()),
+            force: true,
+        },
+        "corr-delete",
+    )
+    .await
+    .unwrap();
+
+    let buckets: (i64, i64) = sqlx::query_as(
+        "SELECT on_hand, damaged FROM stock_balances WHERE product_id = ? AND location_id = ?",
+    )
+    .bind(product)
+    .bind(location)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(buckets, (10, 0));
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM stock_movements WHERE id = ? AND deleted_at IS NOT NULL"
+        )
+        .bind(damage.id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap(),
+        1
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

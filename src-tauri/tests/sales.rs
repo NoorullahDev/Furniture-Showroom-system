@@ -8,7 +8,7 @@ use furniture_shop_lib::dto::purchases::{
 };
 use furniture_shop_lib::dto::sales::{
     BundleInput, BundleItemInput, CustomerInput, CustomerReceiptInput, SaleCancelInput,
-    SaleConfirmInput, SaleCreateInput, SaleItemInput,
+    SaleConfirmInput, SaleCreateInput, SaleEditInput, SaleEditItemInput, SaleItemInput,
 };
 use furniture_shop_lib::error::AppError;
 use furniture_shop_lib::infrastructure as infra;
@@ -566,8 +566,8 @@ async fn credit_sale_receipt_allocation_cancellation_keeps_ledger_consistent() {
     assert_eq!(after_receipt.due_minor, 10_000);
     assert_eq!(after_receipt.paid_minor, 20_000);
 
-    // Cancelling the invoice turns the 20,000 received into a customer advance
-    // (money owed back), which the ledger reflects.
+    // Cancelling refunds the collected cash and reverses both the sale debit
+    // and payment credit, leaving no due or phantom customer advance.
     let cancelled = application::sales::cancel_sale(
         &state,
         &owner,
@@ -581,9 +581,109 @@ async fn credit_sale_receipt_allocation_cancellation_keeps_ledger_consistent() {
     .unwrap();
     assert_eq!(cancelled.status, "cancelled");
     assert_eq!(cancelled.due_minor, 0);
-    // 30,000 sale - 20,000 received = 20,000 credit (advance).
-    assert_eq!(customer_balance(&state, customer).await, -20_000);
+    assert_eq!(customer_balance(&state, customer).await, 0);
     assert_eq!(cash_balance(&state, cash).await, 1_000_000);
+}
+
+#[tokio::test]
+async fn editing_sale_preserves_price_stock_cash_and_customer_balance() {
+    let dir = temp_dir("edit-reconcile");
+    let state = open_state(&dir).await;
+    let owner = make_owner(&state, "edit-reconcile").await;
+    let product = stock_product(&state, &owner, "SALE-EDIT", 10, 1_000).await;
+    set_price(&state, product, 10_000).await;
+    let location = main_location(&state).await;
+    let customer = create_customer(&state, &owner, "CUST-EDIT").await;
+    let cash = funded_cash(&state, &owner, "EDITCASH").await;
+
+    let draft = application::sales::create_sale(
+        &state,
+        &owner,
+        SaleCreateInput {
+            location_id: location,
+            customer_id: Some(customer),
+            kind: Some("sale".into()),
+            sale_date: Some("2026-09-05".into()),
+            discount_minor: Some(0),
+            delivery_charge_minor: Some(0),
+            notes: None,
+            items: vec![line(product, 1)],
+        },
+        "corr-edit-create",
+    )
+    .await
+    .unwrap();
+    application::sales::confirm_sale(
+        &state,
+        &owner,
+        SaleConfirmInput {
+            sale_id: draft.id,
+            idempotency_key: Some("edit-confirm".into()),
+            paid_minor: Some(10_000),
+            cash_account_id: Some(cash),
+            payment_method_id: Some(1),
+            advance_used_minor: Some(0),
+            credit_note_id: None,
+        },
+        "corr-edit-confirm",
+    )
+    .await
+    .unwrap();
+
+    let edit_input = SaleEditInput {
+        sale_id: draft.id,
+        customer_id: Some(customer),
+        discount_minor: Some(0),
+        delivery_charge_minor: Some(0),
+        paid_minor: Some(5_000),
+        payment_method_id: Some(1),
+        cash_account_id: Some(cash),
+        notes: Some("edited once".into()),
+        items: vec![SaleEditItemInput {
+            product_id: Some(product),
+            bundle_id: None,
+            quantity: 2,
+            unit_price_minor: 12_000,
+        }],
+    };
+    let edited =
+        application::sales::edit_sale(&state, &owner, edit_input.clone(), "corr-edit-save")
+            .await
+            .unwrap();
+
+    assert_eq!(edited.subtotal_minor, 24_000);
+    assert_eq!(edited.total_minor, 24_000);
+    assert_eq!(edited.paid_minor, 5_000);
+    assert_eq!(edited.due_minor, 19_000);
+    assert_eq!(edited.items[0].unit_price_minor, 12_000);
+    assert_eq!(on_hand(&state, product, location).await, 8);
+    assert_eq!(cash_balance(&state, cash).await, 1_005_000);
+    assert_eq!(customer_balance(&state, customer).await, 19_000);
+
+    let movements_before_repeat: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM stock_movements WHERE reference_type = 'sale' AND reference_id = ?",
+    )
+    .bind(draft.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    application::sales::edit_sale(&state, &owner, edit_input, "corr-edit-repeat")
+        .await
+        .unwrap();
+    let movements_after_repeat: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM stock_movements WHERE reference_type = 'sale' AND reference_id = ?",
+    )
+    .bind(draft.id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    assert_eq!(movements_after_repeat, movements_before_repeat);
+    assert_eq!(on_hand(&state, product, location).await, 8);
+    assert_eq!(cash_balance(&state, cash).await, 1_005_000);
+    assert_eq!(customer_balance(&state, customer).await, 19_000);
+
+    state.pool.close().await;
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]

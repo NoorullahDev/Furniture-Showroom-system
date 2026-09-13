@@ -129,6 +129,9 @@ export const authCurrent = (session: string) =>
 
 export const authLock = (session: string) => runCommand<void>("auth_lock", { session });
 
+export const authUnlock = (session: string, password: string) =>
+  runCommand<SessionProfile>("auth_unlock", { session, password });
+
 export const authChangePassword = (
   session: string,
   currentPassword: string,
@@ -701,6 +704,7 @@ export const stockRelease = (session: string, input: ReleaseStockInput) =>
 export type ReverseMovementInput = {
   movementId: number;
   reason?: string | null;
+  force?: boolean;
 };
 
 export type LowStockItemDto = {
@@ -812,6 +816,7 @@ export type SupplierDto = {
   address?: string | null;
   openingBalanceMinor: number;
   balanceMinor: number;
+  linkedRecordCount: number;
   isActive: boolean;
   createdAt: string;
 };
@@ -898,6 +903,12 @@ export type PurchasePostInput = {
   paymentMethodId?: number | null;
 };
 
+export type PurchaseDeleteInput = {
+  purchaseId: number;
+  reason?: string | null;
+  force?: boolean;
+};
+
 export type PurchaseItemDto = {
   productId: number;
   articleNumber: string;
@@ -920,6 +931,7 @@ export type PurchaseDto = {
   totalMinor: number;
   paidMinor: number;
   dueMinor: number;
+  linkedReturnCount: number;
   notes?: string | null;
   items: PurchaseItemDto[];
   createdAt: string;
@@ -974,6 +986,7 @@ export type SupplierPaymentDto = {
 export type SupplierPaymentVoidInput = {
   paymentId: number;
   reason?: string | null;
+  force?: boolean;
 };
 
 export type SupplierReturnItemInput = {
@@ -1033,6 +1046,9 @@ export const supplierCreate = (session: string, input: SupplierInput) =>
 export const supplierUpdate = (session: string, supplierId: number, input: SupplierInput) =>
   runCommand<SupplierDto>("supplier_update", { session, supplierId, input });
 
+export const supplierDelete = (session: string, supplierId: number, force = false) =>
+  runCommand<void>("supplier_delete", { session, supplierId, force });
+
 export const supplierGet = (session: string, supplierId: number) =>
   runCommand<SupplierDto>("supplier_get", { session, supplierId });
 
@@ -1060,6 +1076,9 @@ export const purchaseCreate = (session: string, input: PurchaseCreateInput) =>
 
 export const purchasePost = (session: string, input: PurchasePostInput) =>
   runCommand<PurchaseDto>("purchase_post", { session, input });
+
+export const purchaseDelete = (session: string, input: PurchaseDeleteInput) =>
+  runCommand<void>("purchase_delete", { session, input });
 
 export const purchaseList = (session: string) =>
   runCommand<PurchaseDto[]>("purchase_list", { session });
@@ -1104,6 +1123,7 @@ export type CustomerDto = {
   openingBalanceMinor: number;
   balanceMinor: number;
   advanceMinor: number;
+  linkedRecordCount: number;
   isActive: boolean;
   createdAt: string;
 };
@@ -1268,8 +1288,9 @@ export type SaleEditInput = {
   deliveryChargeMinor?: number;
   paidMinor?: number;
   paymentMethodId?: number | null;
+  cashAccountId?: number | null;
   notes?: string | null;
-  items: SaleItemInput[];
+  items: Array<SaleItemInput & { unitPriceMinor: number }>;
 };
 
 export type SaleDeleteInput = {
@@ -1322,6 +1343,7 @@ export type CustomerPaymentDto = {
 export type CustomerPaymentVoidInput = {
   paymentId: number;
   reason?: string | null;
+  force?: boolean;
 };
 
 export const customerList = (session: string) =>
@@ -1338,6 +1360,9 @@ export const customerUpdate = (
   customerId: number,
   input: CustomerInput,
 ) => runCommand<CustomerDto>("customer_update", { session, customerId, input });
+
+export const customerDelete = (session: string, customerId: number, force = false) =>
+  runCommand<void>("customer_delete", { session, customerId, force });
 
 export const customerLedger = (session: string, customerId: number) =>
   runCommand<CustomerLedgerEntryDto[]>("customer_ledger", { session, customerId });
@@ -1569,6 +1594,12 @@ export type DeliveryRescheduleInput = {
   reason?: string | null;
 };
 
+export type DeliveryDeleteInput = {
+  deliveryId: number;
+  reason?: string | null;
+  force?: boolean;
+};
+
 export type ReturnItemInput = {
   saleItemId: number;
   quantity: number;
@@ -1714,6 +1745,9 @@ export const deliveryCreate = (session: string, input: DeliveryCreateInput) =>
 export const deliveryTransition = (session: string, input: DeliveryTransitionInput) =>
   runCommand<DeliveryDto>("delivery_transition", { session, input });
 
+export const deliveryDelete = (session: string, input: DeliveryDeleteInput) =>
+  runCommand<void>("delivery_delete", { session, input });
+
 export const deliveryReschedule = (session: string, input: DeliveryRescheduleInput) =>
   runCommand<DeliveryDto>("delivery_reschedule", { session, input });
 
@@ -1827,6 +1861,12 @@ export type ExpenseReverseInput = {
   reason: string;
 };
 
+export type ExpenseDeleteInput = {
+  expenseId: number;
+  reason?: string | null;
+  force?: boolean;
+};
+
 export type ExpenseListInput = {
   status?: string | null;
   categoryId?: number | null;
@@ -1909,6 +1949,9 @@ export const expensePost = (session: string, input: ExpenseInput) =>
 
 export const expenseReverse = (session: string, input: ExpenseReverseInput) =>
   runCommand<ExpenseDto>("expense_reverse", { session, input });
+
+export const expenseDelete = (session: string, input: ExpenseDeleteInput) =>
+  runCommand<void>("expense_delete", { session, input });
 
 export const ownerTransactionPost = (session: string, input: OwnerTransactionInput) =>
   runCommand<OwnerTransactionDto>("owner_transaction_post", { session, input });
@@ -2183,7 +2226,3 @@ export type SeedResult = {
 
 export const seedDemoData = (session: string) =>
   runCommand<SeedResult>("seed_demo_data", { session });
-
-export type SaleUpdateInput = { saleId: number; customerId: number | null; discountMinor: number | null; deliveryChargeMinor: number | null; paidMinor: number | null; cashAccountId: number | null; paymentMethodId: number | null; advanceUsedMinor: number | null; notes: string | null; items: Array<{ productId: number | null; bundleId: number | null; quantity: number }> };
-export function saleUpdate(session: string, input: SaleUpdateInput) { return runCommand<SaleDto>('sale_update', { session, input }); }
-

@@ -3,9 +3,9 @@ use tauri::State;
 use crate::commands::wrapper::{run_command, run_command_with_correlation};
 use crate::commands::{authed, authenticated};
 use crate::dto::expenses::{
-    ExpenseCategoryDto, ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseDto, ExpenseInput,
-    ExpenseListInput, ExpensePageDto, ExpensePageInput, ExpenseReverseInput, OwnerTransactionDto,
-    OwnerTransactionInput, ProfitSummaryDto,
+    ExpenseCategoryDto, ExpenseCategoryInput, ExpenseCategoryUpdateInput, ExpenseDeleteInput,
+    ExpenseDto, ExpenseInput, ExpenseListInput, ExpensePageDto, ExpensePageInput,
+    ExpenseReverseInput, OwnerTransactionDto, OwnerTransactionInput, ProfitSummaryDto,
 };
 use crate::dto::AppErrorDto;
 use crate::error::new_correlation_id;
@@ -121,6 +121,21 @@ pub async fn expense_reverse(
     run_command_with_correlation("expense_reverse", correlation_id.clone(), async move {
         let principal = authenticated(&state, &session).await?;
         crate::application::expenses::expense_reverse(&state, &principal, input, &correlation_id)
+            .await
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn expense_delete(
+    state: State<'_, AppState>,
+    session: String,
+    input: ExpenseDeleteInput,
+) -> Result<(), AppErrorDto> {
+    let correlation_id = new_correlation_id();
+    run_command_with_correlation("expense_delete", correlation_id.clone(), async move {
+        let principal = authenticated(&state, &session).await?;
+        crate::application::expenses::expense_delete(&state, &principal, input, &correlation_id)
             .await
     })
     .await

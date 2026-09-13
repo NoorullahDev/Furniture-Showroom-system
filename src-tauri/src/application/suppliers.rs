@@ -12,11 +12,12 @@ pub(crate) async fn require_supplier(
     conn: &mut SqliteConnection,
     supplier_id: i64,
 ) -> Result<(), AppError> {
-    let exists: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM suppliers WHERE id = ? AND is_active = 1")
-            .bind(supplier_id)
-            .fetch_optional(conn)
-            .await?;
+    let exists: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM suppliers WHERE id = ? AND is_active = 1 AND deleted_at IS NULL",
+    )
+    .bind(supplier_id)
+    .fetch_optional(conn)
+    .await?;
     if exists.is_none() {
         return Err(AppError::NotFound(format!("supplier {supplier_id}")));
     }
@@ -57,6 +58,7 @@ fn map_supplier(row: &sqlx::sqlite::SqliteRow, balance_minor: i64) -> SupplierDt
         address: row.try_get(5).ok(),
         opening_balance_minor: row.get(6),
         balance_minor,
+        linked_record_count: row.get(9),
         is_active: row.get::<i64, _>(7) != 0,
         created_at: row.get(8),
     }
@@ -255,11 +257,110 @@ pub async fn update(
     get(state, principal, supplier_id).await
 }
 
+pub async fn delete(
+    state: &AppState,
+    principal: &Principal,
+    supplier_id: i64,
+    force: bool,
+    correlation_id: &str,
+) -> Result<(), AppError> {
+    principal.require("supplier.create")?;
+
+    let actor_id = principal.user_id;
+    let actor_session = principal.session_id.clone();
+    let correlation = correlation_id.to_string();
+    let audits = state.audits.clone();
+
+    state
+        .write_coordinator
+        .execute(&state.pool, move |tx| {
+            Box::pin(async move {
+                let supplier: Option<(String, String)> =
+                    sqlx::query_as(
+                        "SELECT code, name FROM suppliers WHERE id = ? AND deleted_at IS NULL",
+                    )
+                        .bind(supplier_id)
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                let Some((code, name)) = supplier else {
+                    return Err(AppError::NotFound(format!("supplier {supplier_id}")));
+                };
+
+                let checks = [
+                    ("purchases", "purchase"),
+                    ("supplier_payments", "payment"),
+                    ("supplier_returns", "return"),
+                    ("supplier_ledger_entries", "ledger entry"),
+                ];
+                let mut linked = Vec::new();
+                for (table, label) in checks {
+                    let count: i64 = sqlx::query_scalar(&format!(
+                        "SELECT COUNT(*) FROM {table} WHERE supplier_id = ?"
+                    ))
+                    .bind(supplier_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    if count > 0 {
+                        linked.push(format!("{count} {label}{}", if count == 1 { "" } else { "s" }));
+                    }
+                }
+                let balance = supplier_balance(&mut *tx, supplier_id).await?;
+                if !linked.is_empty() && !force {
+                    return Err(AppError::ConfirmationRequired(format!(
+                        "Supplier {code} ({name}) has an outstanding balance of PKR {:.2} and linked business history: {}. Deleting anyway will remove the supplier from active records while preserving that history for audit.",
+                        balance as f64 / 100.0,
+                        linked.join(", ")
+                    )));
+                }
+
+                if linked.is_empty() {
+                    sqlx::query("DELETE FROM suppliers WHERE id = ?")
+                        .bind(supplier_id)
+                        .execute(&mut *tx)
+                        .await?;
+                } else {
+                    sqlx::query(
+                        "UPDATE suppliers SET is_active = 0,
+                                deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                         WHERE id = ?",
+                    )
+                    .bind(supplier_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                state_audit(
+                    &mut *tx,
+                    &audits,
+                    actor_id,
+                    &actor_session,
+                    "supplier.delete",
+                    "supplier",
+                    supplier_id,
+                    &correlation,
+                    Some(serde_json::json!({
+                        "code": code,
+                        "name": name,
+                        "balance_minor": balance,
+                        "linked_history": linked,
+                    })),
+                    None,
+                )
+                .await?;
+                Ok(())
+            })
+        })
+        .await
+}
+
 pub async fn list(state: &AppState, principal: &Principal) -> Result<Vec<SupplierDto>, AppError> {
     principal.require("payable.view")?;
     let rows = sqlx::query(
-        "SELECT id, code, name, phone, email, address, opening_balance_minor, is_active, created_at
-         FROM suppliers ORDER BY name COLLATE NOCASE",
+        "SELECT id, code, name, phone, email, address, opening_balance_minor, is_active, created_at,
+                (SELECT COUNT(*) FROM purchases p WHERE p.supplier_id = suppliers.id) +
+                (SELECT COUNT(*) FROM supplier_payments p WHERE p.supplier_id = suppliers.id) +
+                (SELECT COUNT(*) FROM supplier_returns r WHERE r.supplier_id = suppliers.id) AS linked_record_count
+         FROM suppliers WHERE deleted_at IS NULL ORDER BY name COLLATE NOCASE",
     )
     .fetch_all(&state.pool)
     .await?;
@@ -281,8 +382,11 @@ pub async fn get(
 ) -> Result<SupplierDto, AppError> {
     principal.require("payable.view")?;
     let row = sqlx::query(
-        "SELECT id, code, name, phone, email, address, opening_balance_minor, is_active, created_at
-         FROM suppliers WHERE id = ?",
+        "SELECT id, code, name, phone, email, address, opening_balance_minor, is_active, created_at,
+                (SELECT COUNT(*) FROM purchases p WHERE p.supplier_id = suppliers.id) +
+                (SELECT COUNT(*) FROM supplier_payments p WHERE p.supplier_id = suppliers.id) +
+                (SELECT COUNT(*) FROM supplier_returns r WHERE r.supplier_id = suppliers.id) AS linked_record_count
+         FROM suppliers WHERE id = ? AND deleted_at IS NULL",
     )
     .bind(supplier_id)
     .fetch_optional(&state.pool)
