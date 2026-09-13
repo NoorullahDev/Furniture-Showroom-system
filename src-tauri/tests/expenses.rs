@@ -469,6 +469,7 @@ async fn profit_matches_manual_calculation_and_cash_is_separate() {
             discount_minor: Some(0),
             delivery_charge_minor: Some(300),
             notes: None,
+            below_cost_reason: None,
             items: vec![SaleItemInput {
                 product_id: Some(product),
                 bundle_id: None,

@@ -172,6 +172,7 @@ export function SettingsPage() {
   const licenseQuery = useQuery({
     queryKey: ["license-status"],
     queryFn: licenseStatus,
+    refetchInterval: 60 * 60 * 1000,
   });
 
   React.useEffect(() => {

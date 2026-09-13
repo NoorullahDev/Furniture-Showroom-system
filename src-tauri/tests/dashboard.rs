@@ -249,6 +249,7 @@ async fn confirm_sale(
             discount_minor: None,
             delivery_charge_minor: None,
             notes: None,
+            below_cost_reason: None,
             items: vec![SaleItemInput {
                 product_id: Some(product_id),
                 bundle_id: None,

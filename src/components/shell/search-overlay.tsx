@@ -121,7 +121,7 @@ export function SearchOverlay({
               setInput(e.target.value);
               setActiveIndex(0);
             }}
-            placeholder="Search products, customers, invoices, receipts, deliveries…"
+            placeholder="Search products, customers, sales, receipts, deliveries…"
             className="border-0 px-0 shadow-none focus-visible:ring-0 focus-visible:border-transparent"
           />
         </div>

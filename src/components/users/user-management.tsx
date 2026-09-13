@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, UserPlus } from "lucide-react";
+import { Loader2, Plus, Search, UserPlus } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -97,6 +97,7 @@ export function UserManagement() {
   const [editingUser, setEditingUser] = React.useState<UserDto | null>(null);
   const [resettingUser, setResettingUser] = React.useState<UserDto | null>(null);
   const [deactivatingUser, setDeactivatingUser] = React.useState<UserDto | null>(null);
+  const [q, setQ] = React.useState("");
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -208,23 +209,46 @@ export function UserManagement() {
             {asCommandError(usersQuery.error).message || "Failed to load users."}
           </p>
         )}
-        {usersQuery.data && (
-          <div className="rounded-lg border bg-white shadow-sm">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Username</TableHead>
-                  <TableHead>Full name</TableHead>
-                  <TableHead>Roles</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {usersQuery.data.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.username}</TableCell>
+        {usersQuery.data && (() => {
+          const term = q.trim().toLowerCase();
+          const filtered = term
+            ? usersQuery.data.filter((u) => u.username.toLowerCase().includes(term) || u.fullName.toLowerCase().includes(term))
+            : usersQuery.data;
+
+          return (
+            <div>
+              <div className="relative mb-3 max-w-sm">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <Input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search username or name..."
+                  className="pl-8"
+                />
+              </div>
+              <div className="rounded-lg border bg-white shadow-sm">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Username</TableHead>
+                      <TableHead>Full name</TableHead>
+                      <TableHead>Roles</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-neutral-500">
+                          No users match your search.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      filtered.map((user) => (
+                        <TableRow key={user.id}>
+                          <TableCell className="font-medium">{user.username}</TableCell>
                     <TableCell>{user.fullName}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
@@ -281,12 +305,15 @@ export function UserManagement() {
                         )}
                       </div>
                     </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {creating && (

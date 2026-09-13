@@ -135,7 +135,7 @@ pub async fn create(
 
     let code = input.code.trim().to_uppercase();
     if code.is_empty() {
-        return Err(AppError::Validation("customer code is required".into()));
+        // Will generate inside the transaction to ensure atomicity
     }
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("customer name is required".into()));
@@ -167,12 +167,23 @@ pub async fn create(
     let id = state
         .write_coordinator
         .execute(&state.pool, move |tx| {
-            let code = code.clone();
+            let mut code = code.clone();
             let name = input.name.trim().to_string();
             let phone = input.phone.clone();
             let email = input.email.clone();
             let address = input.address.clone();
             Box::pin(async move {
+                if code.is_empty() {
+                    let next: i64 = sqlx::query_scalar(
+                        "SELECT COALESCE(MAX(CAST(SUBSTR(code, 5) AS INTEGER)), 0) + 1 
+                         FROM customers 
+                         WHERE code LIKE 'CUS-%'",
+                    )
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    code = format!("CUS-{:03}", next);
+                }
+
                 let existing: Option<i64> =
                     sqlx::query_scalar("SELECT 1 FROM customers WHERE code = ?")
                         .bind(&code)

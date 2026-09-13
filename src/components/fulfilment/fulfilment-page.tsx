@@ -9,6 +9,7 @@ import {
   PackagePlus,
   Printer,
   RefreshCw,
+  Search,
   Truck,
   Undo2,
   Wrench,
@@ -281,19 +282,52 @@ function DeliveriesView({
   onTransition: (d: DeliveryDto) => void;
   onDetail: (d: DeliveryDto) => void;
 }) {
+  const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
-  if (deliveries.length === 0)
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? deliveries.filter(
+        (d) =>
+          (d.deliveryNumber ?? "").toLowerCase().includes(term) ||
+          (d.saleNumber ?? "").toLowerCase().includes(term) ||
+          (d.customerName ?? "").toLowerCase().includes(term),
+      )
+    : deliveries;
+  if (filtered.length === 0)
     return (
-      <EmptyRow
-        message={
-          canCreate
-            ? "No deliveries yet. Create one from a confirmed sale."
-            : "No deliveries available."
-        }
-      />
+      <div>
+        <div className="relative mb-3 max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search delivery, invoice, or customer…"
+            className="pl-8"
+          />
+        </div>
+        <EmptyRow
+          message={
+            term
+              ? "No deliveries match your search."
+              : canCreate
+                ? "No deliveries yet. Create one from a confirmed sale."
+                : "No deliveries available."
+          }
+        />
+      </div>
     );
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+    <div>
+      <div className="relative mb-3 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search delivery, invoice, or customer…"
+          className="pl-8"
+        />
+      </div>
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -308,7 +342,7 @@ function DeliveriesView({
             </tr>
           </thead>
           <tbody>
-            {deliveries.map((d) => (
+            {filtered.map((d) => (
               <tr key={d.id} className="border-b border-neutral-100 last:border-0">
                 <td className="px-4 py-2 font-medium">{d.deliveryNumber ?? `#${d.id}`}</td>
                 <td className="px-4 py-2">
@@ -370,6 +404,7 @@ function DeliveriesView({
           </tbody>
         </table>
       </div>
+    </div>
     </div>
   );
 }
@@ -926,6 +961,13 @@ function PostReturnDialog({
 }) {
   const confirmed = sales.filter((s) => s.status === "confirmed");
   const [saleId, setSaleId] = React.useState<number>(0);
+  const [saleSearch, setSaleSearch] = React.useState("");
+  const filteredConfirmed = confirmed.filter((s) => {
+    if (!saleSearch) return true;
+    const term = saleSearch.toLowerCase();
+    return (s.saleNumber ?? `#${s.id}`).toLowerCase().includes(term);
+  });
+
   const [refundType, setRefundType] = React.useState<string>("credit");
   const [cashAccountId, setCashAccountId] = React.useState<number>(0);
   const [lines, setLines] = React.useState<Record<number, { qty: number; classification: string }>>({});
@@ -978,11 +1020,27 @@ function PostReturnDialog({
             <SelectValue placeholder="Select a confirmed sale" />
           </SelectTrigger>
           <SelectContent>
-            {confirmed.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.saleNumber ?? `#${s.id}`} — {formatPkr(s.totalMinor)}
-              </SelectItem>
-            ))}
+            <div className="p-2 sticky top-0 bg-white z-10 border-b">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <Input
+                  className="pl-8 h-8"
+                  placeholder="Search sale..."
+                  value={saleSearch}
+                  onChange={(e) => setSaleSearch(e.target.value)}
+                  onKeyDown={(e) => e.stopPropagation()}
+                />
+              </div>
+            </div>
+            {filteredConfirmed.length === 0 ? (
+              <div className="p-4 text-center text-sm text-neutral-500">No matching sales</div>
+            ) : (
+              filteredConfirmed.map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.saleNumber ?? `#${s.id}`} — {formatPkr(s.totalMinor)}
+                </SelectItem>
+              ))
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -1287,7 +1345,7 @@ function usePostMutation(
   return useMutation({ mutationFn: mutate, onSuccess: onDone, onError });
 }
 
-export function FulfilmentPage() {
+export function FulfilmentPage({ activeTab }: { activeTab?: "deliveries" | "returns" }) {
   const { toast } = useToast();
   const { refresh, profile, hasPermission } = useSession();
   const queryClient = useQueryClient();
@@ -1301,17 +1359,11 @@ export function FulfilmentPage() {
   const canDamage = hasPermission("damage.record");
 
   const dashboardTarget = React.useMemo(() => takeDashboardTarget("fulfilment"), []);
-  const defaultTab: Tab = dashboardTarget?.target === "damage"
-    ? "damage"
-    : dashboardTarget?.target === "returns"
-      ? "returns"
-      : canViewDeliveries
-        ? "deliveries"
-        : canReturn
-          ? "returns"
-          : canDamage
-            ? "damage"
-            : "deliveries";
+  const defaultTab: Tab = activeTab === "deliveries"
+    ? "deliveries"
+    : dashboardTarget?.target === "damage"
+      ? "damage"
+      : "returns";
   const [view, setView] = React.useState<Tab>(defaultTab);
   const [dialog, setDialog] = React.useState<PageDialog>(null);
 
@@ -1391,33 +1443,35 @@ export function FulfilmentPage() {
   };
 
   const primaryActions: React.ReactNode[] = [];
-  if (canViewDeliveries && canCreateDelivery)
+  if (activeTab === "deliveries" && canViewDeliveries && canCreateDelivery)
     primaryActions.push(
       <Button key="delivery" type="button" onClick={() => setDialog({ kind: "create-delivery" })}>
         <PackagePlus className="mr-2 h-4 w-4" />
         New delivery
       </Button>,
     );
-  if (canReturn)
-    primaryActions.push(
-      <Button key="return" type="button" onClick={() => setDialog({ kind: "post-return" })}>
-        <Undo2 className="mr-2 h-4 w-4" />
-        Post return
-      </Button>,
-    );
-  if (canDamage)
-    primaryActions.push(
-      <Button key="damage" type="button" onClick={() => setDialog({ kind: "record-damage" })}>
-        <AlertTriangle className="mr-2 h-4 w-4" />
-        Record damage
-      </Button>,
-    );
+  if (activeTab !== "deliveries") {
+    if (canReturn)
+      primaryActions.push(
+        <Button key="return" type="button" onClick={() => setDialog({ kind: "post-return" })}>
+          <Undo2 className="mr-2 h-4 w-4" />
+          Post return
+        </Button>,
+      );
+    if (canDamage)
+      primaryActions.push(
+        <Button key="damage" type="button" onClick={() => setDialog({ kind: "record-damage" })}>
+          <AlertTriangle className="mr-2 h-4 w-4" />
+          Record damage
+        </Button>,
+      );
+  }
 
   return (
     <div>
       <PageHeader
-        title="Fulfilment"
-        subtitle="Deliveries, sales returns, credit notes and damaged stock."
+        title={activeTab === "deliveries" ? "Deliveries" : "Returns & Exchanges"}
+        subtitle={activeTab === "deliveries" ? "Manage deliveries and dispatches." : "Sales returns, credit notes and damaged stock."}
         actions={
           <>
             {primaryActions}
@@ -1429,17 +1483,17 @@ export function FulfilmentPage() {
       />
 
       <div className="mt-5 flex items-center gap-1 border-b border-neutral-200">
-        {canViewDeliveries && (
+        {activeTab === "deliveries" && canViewDeliveries && (
           <TabButton active={view === "deliveries"} onClick={() => setView("deliveries")} icon={<Truck className="h-4 w-4" />}>
             Deliveries
           </TabButton>
         )}
-        {canReturn && (
+        {activeTab !== "deliveries" && canReturn && (
           <TabButton active={view === "returns"} onClick={() => setView("returns")} icon={<ClipboardList className="h-4 w-4" />}>
             Returns & credit notes
           </TabButton>
         )}
-        {canDamage && (
+        {activeTab !== "deliveries" && canDamage && (
           <TabButton active={view === "damage"} onClick={() => setView("damage")} icon={<AlertTriangle className="h-4 w-4" />}>
             Damaged stock
           </TabButton>

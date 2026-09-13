@@ -6,7 +6,6 @@ import {
   Boxes,
   CheckCircle,
   ClipboardList,
-  FileSpreadsheet,
   Loader2,
   PackageOpen,
   Plus,
@@ -55,7 +54,6 @@ import {
   stockLowList,
   stockMovementList,
   stockOpening,
-  stockOpeningBatch,
   stockRelease,
   stockRepair,
   stockReserve,
@@ -64,8 +62,6 @@ import {
   type CountSessionDto,
   type LocationDto,
   type LowStockItemDto,
-  type OpeningBatchInput,
-  type OpeningBatchResultDto,
   type ProductListItemDto,
   type StockBalanceDto,
   type StockMovementDto,
@@ -108,7 +104,7 @@ export function InventoryPage() {
   const [view, setView] = React.useState<Tab>(dashboardTarget?.target === "low-stock" ? "low" : "stock");
   const [historyProductId, setHistoryProductId] = React.useState<number | null>(null);
   const [dialog, setDialog] = React.useState<
-    null | "opening" | "adjust" | "damage" | "reserve" | "count" | "import"
+    null | "opening" | "adjust" | "damage" | "reserve" | "count"
   >(null);
 
   const locationsQuery = useQuery({
@@ -220,13 +216,9 @@ export function InventoryPage() {
                   <Plus className="h-4 w-4" />
                   Opening stock
                 </Button>
-                <Button variant="outline" onClick={() => setDialog("import")}>
-                  <FileSpreadsheet className="h-4 w-4" />
-                  Import openings
-                </Button>
                 <Button variant="outline" onClick={() => setDialog("count")}>
                   <CheckCircle className="h-4 w-4" />
-                  New count
+                  Stock Count
                 </Button>
               </>
             )}
@@ -341,33 +333,6 @@ export function InventoryPage() {
               return;
             }
             toast({ variant: "error", title: "Opening failed", description: commandErrorMessage(e) });
-          }}
-        />
-      )}
-      {dialog === "import" && canMutate && (
-        <OpeningImportDialog
-          session={session}
-          locations={locations}
-          onClose={() => setDialog(null)}
-          onDone={(result) => {
-            invalidate();
-            setDialog(null);
-            if (result.errors.length > 0) {
-              toast({
-                variant: "error",
-                title: "Import finished with errors",
-                description: `${result.postedCount} posted, ${result.errors.length} errors`,
-              });
-            } else {
-              toast({ variant: "success", title: "Opening stock imported", description: `${result.postedCount} rows posted` });
-            }
-          }}
-          onError={(e) => {
-            if (isSessionError(e)) {
-              refresh();
-              return;
-            }
-            toast({ variant: "error", title: "Import failed", description: commandErrorMessage(e) });
           }}
         />
       )}
@@ -522,12 +487,31 @@ function BalancesTable({
   loading: boolean;
   onViewHistory: (productId: number) => void;
 }) {
+  const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
-  if (rows.length === 0) {
-    return <EmptyRow message="No stock has been posted yet. Use Opening stock to begin." />;
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? rows.filter(
+        (r) =>
+          r.productName.toLowerCase().includes(term) ||
+          r.articleNumber.toLowerCase().includes(term),
+      )
+    : rows;
+  if (filtered.length === 0) {
+    return <EmptyRow message={term ? "No products match your search." : "No stock has been posted yet. Use Opening stock to begin."} />;
   }
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+    <div>
+      <div className="relative mb-3 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search name or article…"
+          className="pl-8"
+        />
+      </div>
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -542,7 +526,7 @@ function BalancesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((b) => (
+            {filtered.map((b) => (
               <TableRow key={`${b.productId}-${b.locationId}`}>
                 <TableCell>
                   <div className="flex items-center gap-3">
@@ -579,6 +563,7 @@ function BalancesTable({
           </TableBody>
         </Table>
       </div>
+    </div>
     </div>
   );
 }
@@ -1072,141 +1057,6 @@ function CountSessionDialog({
           <Label>Notes (optional)</Label>
           <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. weekly count" />
         </div>
-      </div>
-    </StockDialog>
-  );
-}
-
-function OpeningImportDialog({
-  session,
-  locations,
-  onClose,
-  onDone,
-  onError,
-}: Omit<DialogProps, "onDone"> & { onDone: (result: OpeningBatchResultDto) => void }) {
-  const [raw, setRaw] = React.useState("");
-  const locationId = locations[0]?.id ?? null;
-  const [result, setResult] = React.useState<OpeningBatchResultDto | null>(null);
-
-  const parsed = React.useMemo(() => {
-    return raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line, i) => {
-        const parts = line.split(",").map((p) => p.trim());
-        return {
-          rowIndex: i,
-          articleNumber: parts[0] ?? "",
-          locationId,
-          quantity: parts[1] === undefined ? 0 : Number(parts[1]),
-          unitCostMinor: parts[2] === undefined || parts[2] === "" ? undefined : Number(parts[2]),
-        };
-      });
-  }, [raw, locationId]);
-
-  const validationErrors = React.useMemo(() => {
-    const errors: { rowIndex: number; message: string }[] = [];
-    parsed.forEach((r) => {
-      if (!r.articleNumber) errors.push({ rowIndex: r.rowIndex, message: "missing article number" });
-      else if (!/^[A-Za-z0-9 ._-]+$/.test(r.articleNumber))
-        errors.push({ rowIndex: r.rowIndex, message: "invalid article number" });
-      if (!Number.isFinite(r.quantity) || r.quantity <= 0)
-        errors.push({ rowIndex: r.rowIndex, message: "quantity must be a positive number" });
-      if (r.unitCostMinor !== undefined && (!Number.isFinite(r.unitCostMinor) || r.unitCostMinor < 0))
-        errors.push({ rowIndex: r.rowIndex, message: "unit cost must be zero or positive" });
-    });
-    return errors;
-  }, [parsed, locationId]);
-
-  const payload = React.useMemo<OpeningBatchInput | null>(() => {
-    if (validationErrors.length > 0 || parsed.length === 0) return null;
-    return {
-      rows: parsed.map((r) => ({
-        articleNumber: r.articleNumber,
-        locationId: locationId!,
-        quantity: r.quantity,
-        unitCostMinor: r.unitCostMinor,
-      })),
-    };
-  }, [parsed, validationErrors, locationId]);
-
-  const submitMutation = useMutation({
-    mutationFn: () => stockOpeningBatch(session, payload!),
-    onSuccess: (res) => {
-      setResult(res);
-      if (res.errors.length === 0) onDone(res);
-    },
-    onError,
-  });
-
-  return (
-    <StockDialog
-      title="Import opening stock"
-      description="One row per line: ArticleNumber, Quantity, UnitCostMinor (optional). All rows use the showroom."
-      onSubmit={() => submitMutation.mutate()}
-      busy={submitMutation.isPending}
-      submitLabel="Post rows"
-      onClose={onClose}
-      submitDisabled={!payload || submitMutation.isPending}
-    >
-      <div className="grid gap-4">
-        <div className="grid gap-1.5">
-          <Label>Rows</Label>
-          <textarea
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            placeholder={"CHAIR-001,5,2500\nSOFA-200,1,18000"}
-            rows={6}
-            className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 font-mono text-xs text-neutral-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-forest-500"
-          />
-          <p className="text-xs text-neutral-500">
-            Columns: articleNumber, quantity, unitCostMinor. Only existing active products are matched.
-          </p>
-        </div>
-        {validationErrors.length > 0 && (
-          <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
-            <p className="font-medium text-rose-700">Fix before posting</p>
-            <ul className="mt-1 list-inside list-disc space-y-0.5 text-rose-600">
-              {validationErrors.slice(0, 6).map((v) => (
-                <li key={v.rowIndex}>
-                  {v.rowIndex === -1 ? "—" : `Row ${v.rowIndex + 1}`}: {v.message}
-                </li>
-              ))}
-              {validationErrors.length > 6 && <li>…and {validationErrors.length - 6} more</li>}
-            </ul>
-          </div>
-        )}
-        {payload && payload.rows.length > 0 && (
-          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3 text-xs">
-            <p className="font-medium text-neutral-700">
-              {payload.rows.length} row{payload.rows.length === 1 ? "" : "s"} ready to post
-            </p>
-            <ul className="mt-1 max-h-32 list-inside list-disc space-y-0.5 text-neutral-600">
-              {payload.rows.slice(0, 8).map((r, i) => (
-                <li key={i}>
-                  {r.articleNumber} × {r.quantity} @ {r.unitCostMinor == null ? "—" : `${(r.unitCostMinor / 100).toFixed(2)}`}
-                </li>
-              ))}
-              {payload.rows.length > 8 && <li>…and {payload.rows.length - 8} more</li>}
-            </ul>
-          </div>
-        )}
-        {result && result.errors.length > 0 && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs">
-            <p className="font-medium text-amber-700">
-              {result.postedCount} posted, {result.errors.length} failed
-            </p>
-            <ul className="mt-1 list-inside list-disc space-y-0.5 text-amber-600">
-              {result.errors.slice(0, 6).map((e, i) => (
-                <li key={e.rowIndex + i}>
-                  Row {e.rowIndex + 1} ({e.articleNumber}): {e.error}
-                </li>
-              ))}
-              {result.errors.length > 6 && <li>…and {result.errors.length - 6} more</li>}
-            </ul>
-          </div>
-        )}
       </div>
     </StockDialog>
   );

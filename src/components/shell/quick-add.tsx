@@ -228,8 +228,8 @@ function CustomerForm({ onDone, onBack }: { onDone: () => void; onBack: () => vo
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
-    if (!code.trim() || !name.trim()) {
-      setErr("Code and name are required.");
+    if (!name.trim()) {
+      setErr("Name is required.");
       return;
     }
     setBusy(true);
@@ -270,15 +270,6 @@ function CustomerForm({ onDone, onBack }: { onDone: () => void; onBack: () => vo
       busy={busy}
       error={err}
     >
-      <div className="grid gap-1.5">
-        <Label htmlFor="qa-cust-code">Code</Label>
-        <Input
-          id="qa-cust-code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          placeholder="e.g. CUST-0021"
-        />
-      </div>
       <div className="grid gap-1.5">
         <Label htmlFor="qa-cust-name">Name</Label>
         <Input

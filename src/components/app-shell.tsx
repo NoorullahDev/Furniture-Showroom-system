@@ -15,7 +15,6 @@ import {
   Menu,
   Package,
   PackageCheck,
-  ReceiptText,
   RotateCcw,
   Settings,
   ShoppingCart,
@@ -26,7 +25,6 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/components/session/session-provider";
 import type { ShellView } from "@/lib/shell";
 import { setDashboardTarget, type DashboardTarget } from "@/lib/dashboard-navigation";
@@ -45,8 +43,7 @@ import { FulfilmentPage } from "@/components/fulfilment/fulfilment-page";
 import { ExpensesPage } from "@/components/expenses/expenses-page";
 import { ReportsPage } from "@/components/reports/reports-page";
 import { MaintenancePage } from "@/components/maintenance/maintenance-page";
-import { InvoicesPage } from "@/components/invoices/invoices-page";
-import { licenseStatus, settingsGet, shopLogoGet } from "@/lib/tauri/api";
+import { settingsGet, shopLogoGet } from "@/lib/tauri/api";
 
 export type { ShellView } from "@/lib/shell";
 
@@ -80,7 +77,6 @@ const PRIMARY_NAV: NavItem[] = [
   { id: "supplier-dues",     label: "Supplier Dues",       icon: Banknote,         view: "supplier-dues", dashboardTarget: { view: "purchases", target: "payables" } },
   { id: "deliveries",        label: "Deliveries",          icon: PackageCheck,     view: "deliveries", dashboardTarget: { view: "fulfilment", target: "deliveries" } },
   { id: "finance",           label: "Expenses",            icon: Wallet,           view: "finance",   permission: "expense.view" },
-  { id: "invoices",          label: "Invoices",            icon: ReceiptText,      view: "invoices",  permission: "invoice.print" },
   { id: "reports",           label: "Reports",             icon: FileText,         view: "reports",   permission: "report.export" },
 ];
 
@@ -96,7 +92,6 @@ const VIEW_TITLES: Record<ShellView, string> = {
   roles: "Roles & permissions",
   audit: "Audit log",
   reports: "Reports",
-  invoices: "Invoices",
   settings: "Settings",
   maintenance: "Backup & maintenance",
   "new-sale": "New Sale / POS",
@@ -360,7 +355,6 @@ export function AppShell() {
     queryFn: () => shopLogoGet(session),
     enabled: Boolean(session),
   });
-  const licenseQuery = useQuery({ queryKey: ["license-status"], queryFn: licenseStatus });
   let shopName = "Furniture Showroom";
   if (shopNameQuery.data) {
     try {
@@ -460,9 +454,6 @@ export function AppShell() {
             <span>{VIEW_TITLES[view]}</span>
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Badge variant={licenseQuery.data?.isActivated ? "success" : "neutral"}>
-              {licenseQuery.data?.label ?? "License status unavailable"}
-            </Badge>
           </div>
         </header>
 
@@ -487,11 +478,10 @@ export function AppShell() {
           {view === "customers-tab" && <SalesPage activeTab="customers" />}
           {view === "customer-dues" && <SalesPage activeTab="due" />}
           {view === "fulfilment" && <FulfilmentPage />}
-          {view === "returns-exchanges" && <FulfilmentPage />}
-          {view === "deliveries" && <FulfilmentPage />}
+          {view === "returns-exchanges" && <FulfilmentPage activeTab="returns" />}
+          {view === "deliveries" && <FulfilmentPage activeTab="deliveries" />}
           {view === "finance" && <ExpensesPage />}
           {view === "reports" && <ReportsPage />}
-          {view === "invoices" && <InvoicesPage />}
           {view === "users" && <UserManagement />}
           {view === "roles" && <RoleManagement />}
           {view === "audit" && <AuditViewer />}
@@ -517,3 +507,4 @@ export function AppShell() {
     </div>
   );
 }
+

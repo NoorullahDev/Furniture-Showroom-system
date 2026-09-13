@@ -1261,6 +1261,22 @@ export type SaleCancelInput = {
   reason?: string | null;
 };
 
+export type SaleEditInput = {
+  saleId: number;
+  customerId?: number | null;
+  discountMinor?: number;
+  deliveryChargeMinor?: number;
+  paidMinor?: number;
+  paymentMethodId?: number | null;
+  notes?: string | null;
+  items: SaleItemInput[];
+};
+
+export type SaleDeleteInput = {
+  saleId: number;
+  reason?: string | null;
+};
+
 export type CustomerReceiptAllocationInput = {
   saleId: number;
   amountMinor: number;
@@ -1358,6 +1374,15 @@ export const saleConfirm = (session: string, input: SaleConfirmInput) =>
 
 export const saleCancel = (session: string, input: SaleCancelInput) =>
   runCommand<SaleDto>("sale_cancel", { session, input });
+
+export const saleEdit = (session: string, input: SaleEditInput) =>
+  runCommand<SaleDto>("sale_edit", { session, input });
+
+export const saleDelete = (session: string, input: SaleDeleteInput) =>
+  runCommand<void>("sale_delete", { session, input });
+
+export const saleDraftDelete = (session: string, input: SaleDeleteInput) =>
+  runCommand<void>("sale_draft_delete", { session, input });
 
 export const saleList = (session: string) =>
   runCommand<SaleDto[]>("sale_list", { session });
@@ -2158,3 +2183,7 @@ export type SeedResult = {
 
 export const seedDemoData = (session: string) =>
   runCommand<SeedResult>("seed_demo_data", { session });
+
+export type SaleUpdateInput = { saleId: number; customerId: number | null; discountMinor: number | null; deliveryChargeMinor: number | null; paidMinor: number | null; cashAccountId: number | null; paymentMethodId: number | null; advanceUsedMinor: number | null; notes: string | null; items: Array<{ productId: number | null; bundleId: number | null; quantity: number }> };
+export function saleUpdate(session: string, input: SaleUpdateInput) { return runCommand<SaleDto>('sale_update', { session, input }); }
+

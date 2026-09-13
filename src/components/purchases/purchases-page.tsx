@@ -555,10 +555,29 @@ function PurchasesTable({
   onView: (p: PurchaseDto) => void;
   onPost: (p: PurchaseDto) => void;
 }) {
+  const [q, setQ] = React.useState("");
   if (loading) return <LoadingRow />;
-  if (rows.length === 0) return <EmptyRow message="No purchases recorded yet." />;
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? rows.filter(
+        (p) =>
+          (p.purchaseNumber ?? "").toLowerCase().includes(term) ||
+          p.supplierName.toLowerCase().includes(term),
+      )
+    : rows;
+  if (filtered.length === 0) return <EmptyRow message={term ? "No purchases match your search." : "No purchases recorded yet."} />;
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+    <div>
+      <div className="relative mb-3 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search purchase or supplier…"
+          className="pl-8"
+        />
+      </div>
+      <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
       <div className="overflow-x-auto">
         <Table>
           <TableHeader>
@@ -574,7 +593,7 @@ function PurchasesTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((p) => (
+            {filtered.map((p) => (
               <TableRow key={p.id}>
                 <TableCell>
                   <button
@@ -613,6 +632,7 @@ function PurchasesTable({
         </Table>
       </div>
     </div>
+    </div>
   );
 }
 
@@ -627,23 +647,49 @@ function SuppliersTable({
   canViewLedger: boolean;
   onLedger: (id: number) => void;
 }) {
+  const [q, setQ] = React.useState("");
+
   if (loading) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow message="No suppliers yet." />;
+
+  const term = q.trim().toLowerCase();
+  const filtered = term
+    ? rows.filter(
+        (s) =>
+          s.name.toLowerCase().includes(term) ||
+          (s.phone ?? "").toLowerCase().includes(term) ||
+          (s.code ?? "").toLowerCase().includes(term)
+      )
+    : rows;
+
   return (
-    <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Supplier</TableHead>
-              <TableHead>Contact</TableHead>
-              <TableHead className="text-right">Balance</TableHead>
-              <TableHead>Active</TableHead>
-              {canViewLedger && <TableHead className="w-20" />}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((s) => (
+    <div>
+      <div className="relative mb-3 max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search supplier name, code, or phone..."
+          className="pl-8"
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <EmptyRow message="No suppliers match your search." />
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead>Active</TableHead>
+                  {canViewLedger && <TableHead className="w-20" />}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((s) => (
               <TableRow key={s.id}>
                 <TableCell>
                   <span className="font-medium text-neutral-900">{s.name}</span>
@@ -679,6 +725,8 @@ function SuppliersTable({
           </TableBody>
         </Table>
       </div>
+        </div>
+      )}
     </div>
   );
 }

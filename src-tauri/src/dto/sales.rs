@@ -177,6 +177,8 @@ pub struct SaleCreateInput {
 pub struct SaleConfirmInput {
     pub sale_id: i64,
     #[serde(default)]
+    pub override_sale_number: Option<String>,
+    #[serde(default)]
     pub idempotency_key: Option<String>,
     #[serde(default)]
     pub paid_minor: Option<i64>,
@@ -190,6 +192,28 @@ pub struct SaleConfirmInput {
     /// customer, and its amount must equal `advance_used_minor`.
     #[serde(default)]
     pub credit_note_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleUpdateInput {
+    pub sale_id: i64,
+    pub location_id: i64,
+    #[serde(default)]
+    pub customer_id: Option<i64>,
+    #[serde(default)]
+    pub discount_minor: Option<i64>,
+    #[serde(default)]
+    pub delivery_charge_minor: Option<i64>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub items: Vec<SaleItemInput>,
+    #[serde(default)]
+    pub paid_minor: Option<i64>,
+    #[serde(default)]
+    pub cash_account_id: Option<i64>,
+    #[serde(default)]
+    pub payment_method_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -287,6 +311,33 @@ pub struct CustomerPaymentDto {
 #[serde(rename_all = "camelCase")]
 pub struct CustomerPaymentVoidInput {
     pub payment_id: i64,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleEditInput {
+    pub sale_id: i64,
+    #[serde(default)]
+    pub customer_id: Option<i64>,
+    #[serde(default)]
+    pub discount_minor: Option<i64>,
+    #[serde(default)]
+    pub delivery_charge_minor: Option<i64>,
+    #[serde(default)]
+    pub paid_minor: Option<i64>,
+    #[serde(default)]
+    pub payment_method_id: Option<i64>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    pub items: Vec<SaleItemInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaleDeleteInput {
+    pub sale_id: i64,
     #[serde(default)]
     pub reason: Option<String>,
 }

@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ClipboardList,
   Copy,
+  Eye,
+  History,
   Layers,
   Loader2,
   Pencil,
@@ -16,6 +18,7 @@ import {
   TriangleAlert,
   Upload,
   UserPlus,
+  Wallet,
   X,
 } from "lucide-react";
 
@@ -53,7 +56,7 @@ import { useToast } from "@/components/ui/toast";
 import { isSessionError, useSession } from "@/components/session/session-provider";
 import { StoredImage } from "@/components/catalogue/stored-image";
 import { loadPrintSettings, type InvoicePrintSettings } from "@/components/invoices/invoice-settings";
-import { printInvoiceA4 } from "@/components/invoices/invoices-page";
+import { printInvoiceA4 } from "@/components/invoices/invoice-print";
 import {
   bundleAvailability,
   bundleCreate,
@@ -74,9 +77,11 @@ import {
   paymentMethodList,
   productList,
   receivables,
-  saleCancel,
   saleConfirm,
   saleCreate,
+  saleDelete,
+  saleDraftDelete,
+  saleEdit,
   saleGet,
   saleList,
   settingsGet,
@@ -171,11 +176,11 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
   const { refresh, profile, hasPermission } = useSession();
   const queryClient = useQueryClient();
   const session = profile?.sessionId ?? "";
+  const [editSaleId, setEditSaleId] = React.useState<number | null>(null);
+  const [salesSearchQ, setSalesSearchQ] = React.useState("");
 
   const canSell = hasPermission("sale.create");
-  const canCancel = hasPermission("sale.cancel");
-  const canOverride = hasPermission("sale.discount.override");
-  const canCredit = hasPermission("sale.credit");
+  const canEdit = hasPermission("sale.create");
   const canManageCustomer = hasPermission("customer.create");
   const canViewCustomer = hasPermission("customer.view");
   const canManageBundles = hasPermission("bundle.create");
@@ -196,7 +201,7 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
     | "bundle"
     | "bundle-detail"
     | "sale-detail"
-    | "cancel-sale"
+    | "edit-sale"
   >(dashboardTarget?.target === "new-customer" && canManageCustomer ? "customer" : null);
   const [activeCustomer, setActiveCustomer] = React.useState<CustomerDto | null>(null);
   const [activeBundle, setActiveBundle] = React.useState<BundleDto | null>(null);
@@ -252,11 +257,26 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
   const accounts = accountsQuery.data ?? [];
   const products = productsQuery.data ?? [];
   const dashboardShopDate = dashboardTarget && "shopDate" in dashboardTarget ? dashboardTarget.shopDate ?? "" : "";
-  const dashboardFilteredSales = dashboardSalesFilter && dashboardShopDate
-    ? sales.filter((sale) => dashboardSalesFilter === "today"
-      ? sale.saleDate === dashboardShopDate
-      : sale.saleDate.startsWith(dashboardShopDate.slice(0, 7)))
-    : sales;
+  const dashboardFilteredSales = (() => {
+    let list = dashboardSalesFilter && dashboardShopDate
+      ? sales.filter((sale) => dashboardSalesFilter === "today"
+        ? sale.saleDate === dashboardShopDate
+        : sale.saleDate.startsWith(dashboardShopDate.slice(0, 7)))
+      : sales;
+    const term = salesSearchQ.trim().toLowerCase();
+    if (term) {
+      const phoneByCustomerId = new Map<number, string>();
+      for (const c of customers) {
+        if (c.phone) phoneByCustomerId.set(c.id, c.phone.toLowerCase());
+      }
+      list = list.filter((s) =>
+        (s.saleNumber ?? "").toLowerCase().includes(term) ||
+        (s.customerName ?? "").toLowerCase().includes(term) ||
+        (s.customerId ? (phoneByCustomerId.get(s.customerId) ?? "").includes(term) : false)
+      );
+    }
+    return list;
+  })();
 
   React.useEffect(() => {
     if (!dashboardTarget) return;
@@ -348,7 +368,7 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
       )}
 
       <div className="mt-5">
-        {activeTab === "pos" && (
+        {(activeTab === "pos" || editSaleId) && (
           <PosPanel
             session={session}
             locations={locations}
@@ -357,20 +377,23 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
             customers={customers}
             methods={methods}
             accounts={accounts}
-            canOverride={canOverride}
-            canCredit={canCredit}
             canManageCustomer={canManageCustomer}
             canPrint={canPrint}
             canSell={canSell}
+            editSaleId={editSaleId}
             onNewCustomer={() => {
               setActiveCustomer(null);
               setDialog("customer");
             }}
-            onDone={done("Sale confirmed")}
+            onDone={() => {
+              toast({ variant: "success", title: editSaleId ? "Sale updated" : "Sale confirmed" });
+              setEditSaleId(null);
+              refresh();
+            }}
             onFailed={failed}
           />
         )}
-        {activeTab === "sales" && (
+        {activeTab === "sales" && !editSaleId && (
           <div>
             {dashboardSalesFilter && (
               <div className="mb-3 flex items-center justify-between rounded-md border border-forest-200 bg-forest-50 px-3 py-2 text-sm text-forest-800">
@@ -378,19 +401,40 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
                 <Button variant="ghost" size="sm" onClick={() => setDashboardSalesFilter(null)}>Show all</Button>
               </div>
             )}
+            <div className="relative mb-3 max-w-sm">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <Input
+                value={salesSearchQ}
+                onChange={(e) => setSalesSearchQ(e.target.value)}
+                placeholder="Search invoice, customer, or phone…"
+                className="pl-8"
+              />
+            </div>
             <SalesTable
               session={session}
               rows={dashboardFilteredSales}
               loading={salesQuery.isLoading}
-              canCancel={canCancel}
+              canEdit={canEdit}
               canPrint={canPrint}
               onView={(s) => {
                 setActiveSale(s);
                 setDialog("sale-detail");
               }}
-              onCancel={(s) => {
+              onEdit={(s) => {
                 setActiveSale(s);
-                setDialog("cancel-sale");
+                setDialog("edit-sale");
+              }}
+              onResumeDraft={(s) => {
+                setEditSaleId(s.id);
+              }}
+              onDeleteDraft={async (s) => {
+                try {
+                  await saleDraftDelete(session, { saleId: s.id, reason: "Draft deleted" });
+                  toast({ variant: "success", title: "Draft deleted" });
+                  refresh();
+                } catch (e) {
+                  failed(e as Error);
+                }
               }}
             />
           </div>
@@ -410,7 +454,7 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
             }}
           />
         )}
-        {activeTab === "due" && canReceive && <DueControlPanel session={session} onError={failed} />}
+        {activeTab === "due" && !editSaleId && canReceive && <DueControlPanel session={session} onError={failed} />}
       </div>
 
       {dialog === "customer" && (
@@ -453,20 +497,20 @@ export function SalesPage({ activeTab }: { activeTab: "pos" | "sales" | "custome
           sale={activeSale}
           canPrint={canPrint}
           onClose={() => setDialog(null)}
-          onCancel={(s) => {
+          onEdit={(s) => {
             setActiveSale(s);
-            setDialog("cancel-sale");
+            setDialog("edit-sale");
           }}
           onPrinted={done("Invoice generated")}
           onError={failed}
         />
       )}
-      {dialog === "cancel-sale" && activeSale && (
-        <CancelSaleDialog
+      {dialog === "edit-sale" && activeSale && (
+        <EditSaleDialog
           session={session}
           sale={activeSale}
           onClose={() => setDialog(null)}
-          onDone={done("Sale cancelled")}
+          onDone={done("Sale updated")}
           onError={failed}
         />
       )}
@@ -486,11 +530,11 @@ function PosPanel({
   customers,
   methods,
   accounts,
-  canOverride,
-  canCredit,
   canManageCustomer,
   canPrint,
   canSell,
+  editSaleId,
+  onBack,
   onNewCustomer,
   onDone,
   onFailed,
@@ -502,11 +546,11 @@ function PosPanel({
   customers: CustomerDto[];
   methods: PaymentMethodDto[];
   accounts: CashAccountDto[];
-  canOverride: boolean;
-  canCredit: boolean;
   canManageCustomer: boolean;
   canPrint: boolean;
   canSell: boolean;
+  editSaleId?: number | null;
+  onBack?: () => void;
   onNewCustomer: () => void;
   onDone: () => void;
   onFailed: (e: Error) => void;
@@ -520,7 +564,6 @@ function PosPanel({
   const [paidMinor, setPaidMinor] = React.useState(0);
   const [advanceMinor, setAdvanceMinor] = React.useState(0);
   const [methodId, setMethodId] = React.useState<number | null>(null);
-  const [accountId, setAccountId] = React.useState<number | null>(null);
   const [success, setSuccess] = React.useState<SaleDto | null>(null);
   const createdIdRef = React.useRef<number | null>(null);
   const nextKey = React.useRef(() => `l${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -530,6 +573,33 @@ function PosPanel({
     queryFn: () => stockBalanceList(session, locationId),
     enabled: !!session && locationId !== null,
   });
+  
+  React.useEffect(() => {
+    if (!editSaleId || !session) return;
+    let mounted = true;
+    saleGet(session, editSaleId).then((sale) => {
+      if (!mounted) return;
+      setCustomerId(sale.customerId ?? null);
+      setDiscountMinor(sale.discountMinor ?? 0);
+      setDeliveryMinor(sale.deliveryChargeMinor ?? 0);
+      
+      const cartItems = sale.items.map((i, idx) => ({
+        key: 'edit-' + idx,
+        productId: i.productId ?? undefined,
+        bundleId: i.bundleId ?? undefined,
+        name: i.productName ?? 'Unknown item',
+        article: i.articleNumber ?? '',
+        unitPriceMinor: i.unitPriceMinor,
+        quantity: i.quantity,
+      }));
+      setCart(cartItems);
+      
+      setPaidMinor(sale.paidMinor ?? 0);
+      setAdvanceMinor(sale.advanceUsedMinor ?? 0);
+    }).catch(console.error);
+    return () => { mounted = false; };
+  }, [editSaleId, session]);
+
   const stockByProduct: Record<number, StockBalanceDto> = React.useMemo(() => {
     const map: Record<number, StockBalanceDto> = {};
     for (const row of stockQuery.data ?? []) map[row.productId] = row;
@@ -538,10 +608,31 @@ function PosPanel({
 
   const selectedCustomer = customers.find((c) => c.id === customerId) ?? null;
 
+  const cartQtyByProduct: Record<number, number> = React.useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const l of cart) {
+      if (l.productId) map[l.productId] = (map[l.productId] ?? 0) + l.quantity;
+    }
+    return map;
+  }, [cart]);
+
+  const effectiveAvailable = React.useMemo(() => {
+    const map: Record<number, number> = {};
+    for (const p of products) {
+      const raw = stockByProduct[p.id]?.available ?? 0;
+      const inCart = cartQtyByProduct[p.id] ?? 0;
+      map[p.id] = Math.max(0, raw - inCart);
+    }
+    return map;
+  }, [products, stockByProduct, cartQtyByProduct]);
+
   const addProduct = (p: ProductListItemDto) => {
+    const avail = effectiveAvailable[p.id] ?? 0;
+    if (p.trackStock && avail <= 0) return;
     setCart((prev) => {
       const existing = prev.find((l) => l.productId === p.id);
       if (existing) {
+        if (p.trackStock && existing.quantity >= avail) return prev;
         return prev.map((l) =>
           l.productId === p.id ? { ...l, quantity: l.quantity + 1 } : l,
         );
@@ -585,7 +676,16 @@ function PosPanel({
   const changeQty = (key: string, delta: number) => {
     setCart((prev) =>
       prev
-        .map((l) => (l.key === key ? { ...l, quantity: Math.max(0, l.quantity + delta) } : l))
+        .map((l) => {
+          if (l.key !== key) return l;
+          const newQty = l.quantity + delta;
+          if (newQty <= 0) return { ...l, quantity: 0 };
+          if (delta > 0 && l.productId) {
+            const p = products.find((x) => x.id === l.productId);
+            if (p?.trackStock && newQty > (effectiveAvailable[l.productId] ?? 0) + l.quantity) return l;
+          }
+          return { ...l, quantity: newQty };
+        })
         .filter((l) => l.quantity > 0),
     );
   };
@@ -603,7 +703,6 @@ function PosPanel({
     setPaidMinor(0);
     setAdvanceMinor(0);
     setMethodId(null);
-    setAccountId(null);
     createdIdRef.current = null;
   };
 
@@ -631,7 +730,7 @@ function PosPanel({
         saleId,
         idempotencyKey: `sale-confirm-${saleId}-${Date.now()}`,
         paidMinor: paidMinor > 0 ? paidMinor : null,
-        cashAccountId: paidMinor > 0 ? accountId : null,
+        cashAccountId: paidMinor > 0 ? defaultAccountId : null,
         paymentMethodId: paidMinor > 0 ? methodId : null,
         advanceUsedMinor: advanceMinor > 0 ? advanceMinor : null,
       });
@@ -643,33 +742,40 @@ function PosPanel({
     onError: onFailed,
   });
 
-  const needsPaymentCtx = paidMinor > 0;
-  const discountBlocked = discountMinor > 0 && !canOverride;
-  const creditBlocked = due > 0 && !canCredit;
   const advanceExceeds = advanceMinor > advanceMax || advanceMinor > total;
   const overpaid = paidMinor + advanceMinor > total;
-  const missingPaymentCtx = needsPaymentCtx && (methodId === null || accountId === null);
+  const defaultAccountId = accounts[0]?.id ?? null;
+  const missingPaymentCtx = paidMinor > 0 && methodId === null;
   const valid =
     cart.length > 0 &&
-    !discountBlocked &&
-    !creditBlocked &&
     !advanceExceeds &&
     !overpaid &&
     !missingPaymentCtx;
 
   const searchTerm = q.trim().toLowerCase();
-  const filteredProducts = searchTerm
+  const filteredProducts = (searchTerm
     ? products.filter(
         (p) =>
           p.name.toLowerCase().includes(searchTerm) ||
           p.articleNumber.toLowerCase().includes(searchTerm),
       )
-    : products;
-  const filteredBundles = searchTerm
+    : products
+  ).filter((p) => !p.trackStock || (effectiveAvailable[p.id] ?? 0) > 0);
+
+  const filteredBundles = (searchTerm
     ? bundles.filter(
         (b) => b.name.toLowerCase().includes(searchTerm) || b.code.toLowerCase().includes(searchTerm),
       )
-    : bundles;
+    : bundles
+  ).filter((b) => {
+    const items = b.items;
+    if (items.length === 0) return true;
+    return items.every((bi) => {
+      const raw = stockByProduct[bi.productId]?.available ?? 0;
+      const inCart = cartQtyByProduct[bi.productId] ?? 0;
+      return raw - inCart >= bi.quantity;
+    });
+  });
 
   if (!canSell) {
     return <EmptyRow message="You don't have permission to create sales." />;
@@ -685,23 +791,32 @@ function PosPanel({
               {locations[0]?.name ?? "Loading…"}
             </div>
           </div>
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search products or sets…" className="pl-8" />
+          <div className="grid flex-1 gap-1.5">
+            <Label className="invisible">Search</Label>
+            <div className="relative min-w-0">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search products or sets…" className="pl-8" />
+            </div>
           </div>
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-4">
           {filteredProducts.map((p) => {
             const stock = stockByProduct[p.id];
+            const avail = effectiveAvailable[p.id] ?? 0;
+            const outOfStock = p.trackStock && (!stock || avail <= 0);
             return (
               <button
                 key={p.id}
                 type="button"
                 onClick={() => addProduct(p)}
-                className="flex flex-col gap-2 rounded-md border border-neutral-200 p-2 text-left transition-colors hover:border-forest-400 hover:bg-forest-50"
+                disabled={outOfStock}
+                className={cn(
+                  "flex flex-col gap-2 rounded-md border border-neutral-200 p-2 text-left transition-colors",
+                  outOfStock ? "cursor-not-allowed opacity-50" : "hover:border-forest-400 hover:bg-forest-50",
+                )}
               >
-                <div className="h-20 w-full overflow-hidden rounded-md bg-neutral-100">
+                <div className="aspect-[4/3] w-full overflow-hidden rounded-md bg-neutral-100">
                   <StoredImage path={p.primaryThumbnailPath} className="h-full w-full object-cover" />
                 </div>
                 <div className="grid gap-0.5">
@@ -713,10 +828,10 @@ function PosPanel({
                   <p
                     className={cn(
                       "text-[11px]",
-                      stock.available > 0 ? "text-emerald-700" : "text-rose-600",
+                      avail > 0 ? "text-emerald-700" : "text-rose-600",
                     )}
                   >
-                    {stock.available > 0 ? `${stock.available} available` : "Out of stock"}
+                    {avail > 0 ? `${avail} available` : "Out of stock"}
                   </p>
                 )}
               </button>
@@ -730,16 +845,16 @@ function PosPanel({
               className="flex flex-col gap-2 rounded-md border border-amber-200 bg-amber-50/40 p-2 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
             >
               {b.coverImagePath ? (
-                <div className="relative h-20 w-full overflow-hidden rounded-md bg-amber-100">
+                <div className="relative aspect-[4/3] w-full overflow-hidden rounded-md bg-amber-100">
                   <StoredImage path={b.coverImagePath} className="h-full w-full object-cover" />
                   <span className="absolute right-1 top-1 rounded bg-amber-100/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 backdrop-blur-sm">
                     Set
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center justify-between">
+                <div className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-md bg-amber-100">
                   <Layers className="h-4 w-4 text-amber-600" />
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                  <span className="absolute right-1 top-1 rounded bg-amber-100/90 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 backdrop-blur-sm">
                     Set
                   </span>
                 </div>
@@ -873,9 +988,6 @@ function PosPanel({
                 <MoneyInput value={discountMinor} onCommit={(v) => setDiscountMinor(v < 0 ? 0 : v)} placeholder="0.00" />
               </div>
             </div>
-            {discountBlocked && (
-              <p className="text-[11px] text-amber-700">Discounts require the Override discount permission.</p>
-            )}
             <div className="flex items-center justify-between gap-2 py-0.5">
               <span className="text-neutral-600">Delivery charge</span>
               <div className="w-40">
@@ -906,50 +1018,30 @@ function PosPanel({
             <Label>Received today</Label>
             <MoneyInput value={paidMinor} onCommit={(v) => setPaidMinor(v < 0 ? 0 : v)} placeholder="0.00" />
           </div>
-          {needsPaymentCtx && (
-            <div className="grid grid-cols-2 gap-2">
-              <div className="grid gap-1.5">
-                <Label>Payment method</Label>
-                <Select value={methodId ? String(methodId) : ""} onValueChange={(v) => setMethodId(Number(v))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {methods.map((m) => (
-                      <SelectItem key={m.id} value={String(m.id)}>
-                        {m.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1.5">
-                <Label>Cash account</Label>
-                <Select value={accountId ? String(accountId) : ""} onValueChange={(v) => setAccountId(Number(v))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Account" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {accounts.map((a) => (
-                      <SelectItem key={a.id} value={String(a.id)}>
-                        {a.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+          {paidMinor > 0 && (
+            <div className="grid gap-1.5">
+              <Label>Payment method</Label>
+              <Select value={methodId ? String(methodId) : ""} onValueChange={(v) => setMethodId(Number(v))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {methods.map((m) => (
+                    <SelectItem key={m.id} value={String(m.id)}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
 
           <div className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2">
-            <span className="text-sm text-neutral-700">Due / credit</span>
+            <span className="text-sm text-neutral-700">Remaining due</span>
             <span className={cn("text-sm font-semibold tabular-nums", due > 0 ? "text-rose-600" : "text-emerald-700")}>
               {formatPkr(due)}
             </span>
           </div>
-          {creditBlocked && (
-            <p className="text-[11px] text-amber-700">Making credit sales requires the Sell on credit permission.</p>
-          )}
 
           {createdIdRef.current !== null && (
             <p className="text-[11px] leading-relaxed text-amber-700">
@@ -972,6 +1064,9 @@ function PosPanel({
               "Confirm sale"
             )}
           </Button>
+          {success && canPrint && (
+            <PrintInvoiceButton session={session} saleId={success.id} className="w-full" />
+          )}
         </div>
       </div>
 
@@ -1069,6 +1164,19 @@ function PrintInvoiceButton({
         resolvePrintBranding(brandingQuery),
       ]);
       const cust = sale.customerId ? await customerGet(session, sale.customerId) : null;
+      let payments: { date: string; amount: number; method: string }[] | undefined;
+      if (sale.customerId) {
+        const allReceipts = await customerReceiptList(session, sale.customerId);
+        const matched = (allReceipts as CustomerPaymentDto[])
+          .filter((p) => p.status === "posted" && p.allocations.some((a) => a.saleId === sale.id))
+          .sort((a, b) => a.paymentDate.localeCompare(b.paymentDate));
+        if (matched.length > 0) {
+          payments = matched.map((p) => {
+            const alloc = p.allocations.find((a) => a.saleId === sale.id);
+            return { date: p.paymentDate, amount: alloc?.amountMinor ?? p.amountMinor, method: p.paymentMethodName };
+          });
+        }
+      }
       await printInvoiceA4(
         sale,
         loadPrintSettings(),
@@ -1078,6 +1186,7 @@ function PrintInvoiceButton({
         branding.logo,
         cust?.phone,
         cust?.address,
+        payments,
       );
       toast({ variant: "success", title: "Invoice print window opened" });
       if (onClose) onClose();
@@ -1252,18 +1361,22 @@ function SalesTable({
   session,
   rows,
   loading,
-  canCancel,
+  canEdit,
   canPrint,
   onView,
-  onCancel,
+  onEdit,
+  onResumeDraft,
+  onDeleteDraft,
 }: {
   session: string;
   rows: SaleDto[];
   loading: boolean;
-  canCancel: boolean;
+  canEdit: boolean;
   canPrint: boolean;
   onView: (s: SaleDto) => void;
-  onCancel: (s: SaleDto) => void;
+  onEdit: (s: SaleDto) => void;
+  onResumeDraft: (s: SaleDto) => void;
+  onDeleteDraft: (s: SaleDto) => void;
 }) {
   if (loading) return <LoadingRow />;
   if (rows.length === 0) return <EmptyRow message="No sales recorded yet." />;
@@ -1289,10 +1402,13 @@ function SalesTable({
               <TableRow key={s.id}>
                 <TableCell className="font-medium text-neutral-900">{s.saleNumber ?? `#${s.id}`}</TableCell>
                 <TableCell>{s.customerName ?? "—"}</TableCell>
-                <TableCell className="whitespace-nowrap">{s.saleDate}</TableCell>
+                <TableCell className="whitespace-nowrap">{s.saleDate ? new Date(s.saleDate).toLocaleDateString(undefined, { dateStyle: "medium" }) : "—"}</TableCell>
                 <TableCell className="capitalize">{s.kind}</TableCell>
                 <TableCell>
-                  <SaleStatusBadge status={s.status} />
+                  <div className="flex items-center gap-1.5">
+                    <SaleStatusBadge status={s.status} />
+                    {s.status === "confirmed" && <PaymentStatusBadge dueMinor={s.dueMinor} paidMinor={s.paidMinor} />}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{formatPkr(s.totalMinor)}</TableCell>
                 <TableCell className="text-right tabular-nums">{formatPkr(s.paidMinor + s.advanceUsedMinor)}</TableCell>
@@ -1302,12 +1418,23 @@ function SalesTable({
                     <Button variant="outline" size="sm" onClick={() => onView(s)}>
                       View
                     </Button>
+                    {s.status === "draft" && (
+                      <>
+                        <Button variant="outline" size="sm" className="text-forest-700" onClick={() => onResumeDraft(s)}>
+                          Resume
+                        </Button>
+                        <Button variant="outline" size="sm" className="text-rose-600" onClick={() => onDeleteDraft(s)}>
+                          Delete
+                        </Button>
+                      </>
+                    )}
                     {canPrint && s.status === "confirmed" && (
                       <PrintInvoiceButton session={session} saleId={s.id} />
                     )}
-                    {canCancel && s.status === "confirmed" && (
-                      <Button variant="outline" size="sm" className="text-rose-600" onClick={() => onCancel(s)}>
-                        Cancel
+                    {canEdit && s.status === "confirmed" && (
+                      <Button variant="outline" size="sm" className="text-amber-600" onClick={() => onEdit(s)}>
+                        <Pencil className="mr-1 h-3.5 w-3.5" />
+                        Edit
                       </Button>
                     )}
                   </div>
@@ -1328,12 +1455,18 @@ function SaleStatusBadge({ status }: { status: string }) {
   return <Badge variant="neutral">Draft</Badge>;
 }
 
+function PaymentStatusBadge({ dueMinor, paidMinor }: { dueMinor: number; paidMinor: number }) {
+  if (dueMinor <= 0 && paidMinor > 0) return <Badge variant="success">Paid</Badge>;
+  if (paidMinor > 0 && dueMinor > 0) return <Badge variant="warning">Partial</Badge>;
+  return <Badge variant="danger">Unpaid</Badge>;
+}
+
 function SaleDetailDialog({
   session,
   sale,
   canPrint,
   onClose,
-  onCancel,
+  onEdit,
   onPrinted,
   onError,
 }: {
@@ -1341,7 +1474,7 @@ function SaleDetailDialog({
   sale: SaleDto;
   canPrint: boolean;
   onClose: () => void;
-  onCancel: (s: SaleDto) => void;
+  onEdit: (s: SaleDto) => void;
   onPrinted: () => void;
   onError: (e: Error) => void;
 }) {
@@ -1351,6 +1484,26 @@ function SaleDetailDialog({
     enabled: !!session && sale.status === "confirmed",
   });
   const current = detailQuery.data ?? sale;
+
+  const paymentsQuery = useQuery({
+    queryKey: ["selling", "receipts", current.customerId],
+    queryFn: () => customerReceiptList(session, current.customerId!),
+    enabled: !!session && !!current.customerId && current.status === "confirmed",
+  });
+  const salePayments = React.useMemo(() => {
+    if (!paymentsQuery.data || !current.customerId) return [];
+    const posted = (paymentsQuery.data as CustomerPaymentDto[]).filter((p) => p.status === "posted");
+    const matched: CustomerPaymentDto[] = [];
+    for (const p of posted) {
+      for (const a of p.allocations) {
+        if (a.saleId === current.id) {
+          matched.push(p);
+          break;
+        }
+      }
+    }
+    return matched;
+  }, [paymentsQuery.data, current.id, current.customerId]);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -1420,6 +1573,26 @@ function SaleDetailDialog({
             <p className="font-medium tabular-nums">{formatPkr(current.dueMinor)}</p>
           </div>
         </div>
+        {salePayments.length > 0 && (
+          <div className="rounded-md border border-neutral-200 bg-neutral-50 p-3">
+            <p className="mb-2 text-xs font-medium text-neutral-600">Payment history</p>
+            <div className="space-y-1.5">
+              {salePayments.map((p) => {
+                const alloc = p.allocations.find((a) => a.saleId === current.id);
+                return (
+                  <div key={p.id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="text-neutral-500">{p.paymentDate}</span>
+                      <span className="text-xs text-neutral-400">·</span>
+                      <span className="text-xs text-neutral-500">{p.paymentMethodName}</span>
+                    </div>
+                    <span className="font-medium tabular-nums text-forest-700">{formatPkr(alloc?.amountMinor ?? p.amountMinor)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {current.notes && <p className="rounded-md bg-neutral-50 p-3 text-sm text-neutral-600">{current.notes}</p>}
         <DialogFooter className="items-center justify-between">
           <p className="text-xs text-neutral-400">
@@ -1431,8 +1604,9 @@ function SaleDetailDialog({
               <PrintInvoiceButton session={session} saleId={current.id} onError={onError} onClose={onPrinted} />
             )}
             {current.status === "confirmed" && (
-              <Button variant="ghost" className="text-rose-600" onClick={() => onCancel(current)}>
-                Cancel sale
+              <Button variant="ghost" className="text-amber-600" onClick={() => onEdit(current)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Edit sale
               </Button>
             )}
             <Button variant="outline" onClick={onClose}>
@@ -1445,9 +1619,9 @@ function SaleDetailDialog({
   );
 }
 
-function CancelSaleDialog({
+function EditSaleDialog({
   session,
-  sale,
+  sale: initialSale,
   onClose,
   onDone,
   onError,
@@ -1458,33 +1632,266 @@ function CancelSaleDialog({
   onDone: () => void;
   onError: (e: Error) => void;
 }) {
-  const [reason, setReason] = React.useState("");
-  const mutation = useMutation({
-    mutationFn: () =>
-      saleCancel(session, { saleId: sale.id, reason: reason.trim() || null }),
-    onSuccess: onDone,
+  const queryClient = useQueryClient();
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+  const [deleteReason, setDeleteReason] = React.useState("");
+
+  const saleQuery = useQuery({
+    queryKey: ["sale-detail", session, initialSale.id],
+    queryFn: () => saleGet(session, initialSale.id),
+  });
+  const fullSale = saleQuery.data ?? initialSale;
+
+  const [customerId, setCustomerId] = React.useState<number | null>(fullSale.customerId ?? null);
+  const [discountMinor, setDiscountMinor] = React.useState(fullSale.discountMinor);
+  const [deliveryChargeMinor, setDeliveryChargeMinor] = React.useState(fullSale.deliveryChargeMinor);
+  const [paidMinor, setPaidMinor] = React.useState(fullSale.paidMinor);
+  const [paymentMethodId, setPaymentMethodId] = React.useState<number | null>(null);
+  const [notes, setNotes] = React.useState(fullSale.notes ?? "");
+  const [items, setItems] = React.useState<Array<{ productId?: number | null; bundleId?: number | null; quantity: number; unitPriceMinor: number; name: string; articleNumber: string }>>(() =>
+    fullSale.items.map((it) => ({
+      productId: it.productId,
+      bundleId: it.bundleId,
+      quantity: it.quantity,
+      unitPriceMinor: it.unitPriceMinor,
+      name: it.productName,
+      articleNumber: it.articleNumber,
+    }))
+  );
+
+  React.useEffect(() => {
+    if (saleQuery.data) {
+      const s = saleQuery.data;
+      setCustomerId(s.customerId ?? null);
+      setDiscountMinor(s.discountMinor);
+      setDeliveryChargeMinor(s.deliveryChargeMinor);
+      setPaidMinor(s.paidMinor);
+      setNotes(s.notes ?? "");
+      setItems(s.items.map((it) => ({
+        productId: it.productId,
+        bundleId: it.bundleId,
+        quantity: it.quantity,
+        unitPriceMinor: it.unitPriceMinor,
+        name: it.productName,
+        articleNumber: it.articleNumber,
+      })));
+    }
+  }, [saleQuery.data]);
+
+  const customers = useQuery({
+    queryKey: ["customers", session],
+    queryFn: () => customerList(session),
+    enabled: !!session,
+  });
+
+  const methods = useQuery({
+    queryKey: ["payment-methods", session],
+    queryFn: () => paymentMethodList(session),
+    enabled: !!session,
+  });
+
+  const subtotalMinor = React.useMemo(() => items.reduce((sum, it) => sum + it.unitPriceMinor * it.quantity, 0), [items]);
+  const totalMinor = subtotalMinor - discountMinor + deliveryChargeMinor;
+  const dueMinor = Math.max(0, totalMinor - paidMinor);
+
+  const updateItemQty = (idx: number, qty: number) => {
+    setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, quantity: Math.max(1, qty) } : it)));
+  };
+  const updateItemPrice = (idx: number, price: number) => {
+    setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, unitPriceMinor: Math.max(0, price) } : it)));
+  };
+
+  const editMutation = useMutation({
+    mutationFn: () => saleEdit(session, {
+      saleId: fullSale.id,
+      customerId,
+      discountMinor,
+      deliveryChargeMinor,
+      paidMinor,
+      paymentMethodId,
+      notes: notes.trim() || null,
+      items: items.map((it) => ({
+        productId: it.productId,
+        bundleId: it.bundleId,
+        quantity: it.quantity,
+      })),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sales", session] });
+      onDone();
+    },
     onError,
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => saleDelete(session, { saleId: fullSale.id, reason: deleteReason.trim() || null }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sales", session] });
+      onClose();
+      onDone();
+    },
+    onError,
+  });
+
+  if (showDeleteConfirm) {
+    return (
+      <FormDialog
+        title={`Delete sale ${fullSale.saleNumber ?? `#${fullSale.id}`}`}
+        description="This will permanently remove the sale and restore all stock. Customer dues and payments will be reversed."
+        onSubmit={() => deleteMutation.mutate()}
+        busy={deleteMutation.isPending}
+        submitLabel="Delete sale"
+        onClose={onClose}
+      >
+        <div className="grid gap-1.5">
+          <Label>Reason (recommended)</Label>
+          <textarea
+            value={deleteReason}
+            onChange={(e) => setDeleteReason(e.target.value)}
+            placeholder="Why is this sale being deleted?"
+            rows={3}
+            className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
+          />
+        </div>
+        <p className="text-xs text-rose-600">This action cannot be undone.</p>
+      </FormDialog>
+    );
+  }
+
   return (
-    <FormDialog
-      title={`Cancel sale ${sale.saleNumber ?? `#${sale.id}`}`}
-      description="Stock, cost layers and customer balances will be reversed. A cancel reason is recommended for the audit log."
-      onSubmit={() => mutation.mutate()}
-      busy={mutation.isPending}
-      submitLabel="Cancel sale"
-      onClose={onClose}
-    >
-      <div className="grid gap-1.5">
-        <Label>Reason</Label>
-        <textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Customer returned the furniture…"
-          rows={3}
-          className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
-        />
-      </div>
-    </FormDialog>
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Edit sale {fullSale.saleNumber ?? `#${fullSale.id}`}</DialogTitle>
+          <DialogDescription>
+            Modify items, pricing, discount, or payment. Totals will recalculate automatically.
+          </DialogDescription>
+        </DialogHeader>
+
+        {saleQuery.isLoading ? (
+          <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : (
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-1.5">
+                <Label>Customer</Label>
+                <Select value={customerId ? String(customerId) : "walkin"} onValueChange={(v) => setCustomerId(v === "walkin" ? null : Number(v))}>
+                  <SelectTrigger><SelectValue placeholder="Walk-in" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="walkin">Walk-in</SelectItem>
+                    {(customers.data ?? []).map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Notes</Label>
+                <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label>Items</Label>
+              <div className="rounded-lg border border-neutral-200 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead className="w-24 text-right">Qty</TableHead>
+                      <TableHead className="w-32 text-right">Unit Price</TableHead>
+                      <TableHead className="text-right">Line Total</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {items.map((it, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell>
+                          <div className="text-sm font-medium">{it.name}</div>
+                          <div className="text-xs text-neutral-500">{it.articleNumber}</div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Input
+                            type="number"
+                            min={1}
+                            value={it.quantity}
+                            onChange={(e) => updateItemQty(idx, Number(e.target.value) || 1)}
+                            className="w-20 text-right h-8"
+                          />
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <MoneyInput value={it.unitPriceMinor} onCommit={(v) => updateItemPrice(idx, v)} className="w-28 h-8" />
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{formatPkr(it.unitPriceMinor * it.quantity)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-1.5">
+                <Label>Discount</Label>
+                <MoneyInput value={discountMinor} onCommit={setDiscountMinor} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Delivery charge</Label>
+                <MoneyInput value={deliveryChargeMinor} onCommit={setDeliveryChargeMinor} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-1.5">
+                <Label>Received amount</Label>
+                <MoneyInput value={paidMinor} onCommit={setPaidMinor} />
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Payment method</Label>
+                <Select value={paymentMethodId ? String(paymentMethodId) : ""} onValueChange={(v) => setPaymentMethodId(v ? Number(v) : null)}>
+                  <SelectTrigger><SelectValue placeholder="Select method" /></SelectTrigger>
+                  <SelectContent>
+                    {(methods.data ?? []).map((m) => (
+                      <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 grid grid-cols-4 gap-4 text-sm">
+              <div>
+                <div className="text-neutral-500">Subtotal</div>
+                <div className="font-semibold tabular-nums">{formatPkr(subtotalMinor)}</div>
+              </div>
+              <div>
+                <div className="text-neutral-500">Discount</div>
+                <div className="font-semibold tabular-nums text-rose-600">{discountMinor > 0 ? `- ${formatPkr(discountMinor)}` : "—"}</div>
+              </div>
+              <div>
+                <div className="text-neutral-500">Delivery</div>
+                <div className="font-semibold tabular-nums">{deliveryChargeMinor > 0 ? formatPkr(deliveryChargeMinor) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-neutral-500">Due</div>
+                <div className="font-semibold tabular-nums text-amber-600">{dueMinor > 0 ? formatPkr(dueMinor) : "Paid"}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" className="text-rose-600 mr-auto" onClick={() => setShowDeleteConfirm(true)}>
+            Delete sale
+          </Button>
+          <Button variant="ghost" onClick={onClose} disabled={editMutation.isPending}>Cancel</Button>
+          <Button onClick={() => editMutation.mutate()} disabled={editMutation.isPending || saleQuery.isLoading}>
+            {editMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1582,12 +1989,52 @@ function CustomersTable({
 }
 
 function DueControlPanel({ session, onError }: { session: string; onError: (e: Error) => void }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { hasPermission } = useSession();
+  const canReceive = hasPermission("payment.receive");
+
   const query = useQuery({
     queryKey: ["selling", "receivables"],
     queryFn: () => receivables(session),
     enabled: !!session,
   });
   const data = (query.data ?? null) as ReceivablesDto | null;
+
+  const [searchQ, setSearchQ] = React.useState("");
+  const [activeCustomer, setActiveCustomer] = React.useState<CustomerDto | null>(null);
+  const [activeSale, setActiveSale] = React.useState<ReceivableSaleDto | null>(null);
+  const [dialog, setDialog] = React.useState<null | "view" | "payment" | "history">(null);
+
+  const openPayment = (customerId: number) => {
+    customerGet(session, customerId).then((c) => {
+      setActiveCustomer(c);
+      setDialog("payment");
+    }).catch(onError);
+  };
+
+  const openHistory = (customerId: number) => {
+    customerGet(session, customerId).then((c) => {
+      setActiveCustomer(c);
+      setDialog("history");
+    }).catch(onError);
+  };
+
+  const openView = (customerId: number) => {
+    customerGet(session, customerId).then((c) => {
+      setActiveCustomer(c);
+      setDialog("view");
+    }).catch(onError);
+  };
+
+  const afterPayment = () => {
+    void queryClient.invalidateQueries({ queryKey: ["selling"] });
+    void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+    toast({ variant: "success", title: "Payment recorded" });
+    setDialog(null);
+    setActiveCustomer(null);
+    setActiveSale(null);
+  };
 
   React.useEffect(() => {
     if (query.isError && query.error) onError(query.error as Error);
@@ -1596,16 +2043,33 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
   if (query.isLoading) return <LoadingRow />;
   if (!data) return <EmptyRow message="Could not load receivable data." />;
 
+  const term = searchQ.trim().toLowerCase();
+  const matchesCustomer = (name: string, phone?: string | null) =>
+    !term || name.toLowerCase().includes(term) || (phone ?? "").toLowerCase().includes(term);
+  const overdue = data.overdue.filter((s) => matchesCustomer(s.customerName));
+  const dueSoon = data.dueSoon.filter((s) => matchesCustomer(s.customerName));
+  const highBalance = data.highBalance.filter((c) => matchesCustomer(c.customerName, c.phone));
+  const creditLimitExceptions = data.creditLimitExceptions.filter((c) => matchesCustomer(c.customerName, c.phone));
+
   return (
     <div className="grid gap-6">
+      <div className="relative max-w-sm">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Input
+          value={searchQ}
+          onChange={(e) => setSearchQ(e.target.value)}
+          placeholder="Search name or phone…"
+          className="pl-8"
+        />
+      </div>
       <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
         <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-rose-700">
             <TriangleAlert className="h-4 w-4" /> Overdue
           </h3>
-          <span className="text-xs text-neutral-500">{data.overdue.length} unpaid past due</span>
+          <span className="text-xs text-neutral-500">{overdue.length} unpaid past due</span>
         </div>
-        {data.overdue.length === 0 ? (
+        {overdue.length === 0 ? (
           <EmptyRow message="No overdue invoices." />
         ) : (
           <div className="overflow-x-auto">
@@ -1620,11 +2084,11 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                   <TableHead className="text-right">Paid</TableHead>
                   <TableHead className="text-right">Due</TableHead>
                   <TableHead className="text-right">Days</TableHead>
-                  <TableHead className="text-right">Reminder</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.overdue.map((s) => (
+                {overdue.map((s) => (
                   <TableRow key={s.saleId}>
                     <TableCell>{s.customerName}</TableCell>
                     <TableCell className="font-medium text-neutral-900">{s.saleNumber ?? `#${s.saleId}`}</TableCell>
@@ -1635,7 +2099,20 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                     <TableCell className="text-right tabular-nums font-medium text-rose-600">{formatPkr(s.dueMinor)}</TableCell>
                     <TableCell className="text-right tabular-nums">{s.days}</TableCell>
                     <TableCell className="text-right">
-                      <CopyReminderButton text={saleReminderText(s)} label="Copy" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openView(s.customerId)}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        {canReceive && (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-forest-700" onClick={() => openPayment(s.customerId)}>
+                            <Wallet className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openHistory(s.customerId)}>
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                        <CopyReminderButton text={saleReminderText(s)} label="" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1648,9 +2125,9 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
       <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
         <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
           <h3 className="text-sm font-semibold text-neutral-900">Due in 7 days</h3>
-          <span className="text-xs text-neutral-500">{data.dueSoon.length} approaching</span>
+          <span className="text-xs text-neutral-500">{dueSoon.length} approaching</span>
         </div>
-        {data.dueSoon.length === 0 ? (
+        {dueSoon.length === 0 ? (
           <EmptyRow message="Nothing due in the next week." />
         ) : (
           <div className="overflow-x-auto">
@@ -1665,11 +2142,11 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                   <TableHead className="text-right">Paid</TableHead>
                   <TableHead className="text-right">Due</TableHead>
                   <TableHead className="text-right">In days</TableHead>
-                  <TableHead className="text-right">Reminder</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.dueSoon.map((s) => (
+                {dueSoon.map((s) => (
                   <TableRow key={s.saleId}>
                     <TableCell>{s.customerName}</TableCell>
                     <TableCell className="font-medium text-neutral-900">{s.saleNumber ?? `#${s.saleId}`}</TableCell>
@@ -1680,7 +2157,20 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                     <TableCell className="text-right tabular-nums">{formatPkr(s.dueMinor)}</TableCell>
                     <TableCell className="text-right tabular-nums">{s.days}</TableCell>
                     <TableCell className="text-right">
-                      <CopyReminderButton text={saleReminderText(s)} label="Copy" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openView(s.customerId)}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        {canReceive && (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-forest-700" onClick={() => openPayment(s.customerId)}>
+                            <Wallet className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openHistory(s.customerId)}>
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                        <CopyReminderButton text={saleReminderText(s)} label="" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1693,9 +2183,9 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
       <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
         <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
           <h3 className="text-sm font-semibold text-neutral-900">Highest balances</h3>
-          <span className="text-xs text-neutral-500">top {data.highBalance.length}</span>
+          <span className="text-xs text-neutral-500">top {highBalance.length}</span>
         </div>
-        {data.highBalance.length === 0 ? (
+        {highBalance.length === 0 ? (
           <EmptyRow message="No customer balances." />
         ) : (
           <div className="overflow-x-auto">
@@ -1706,18 +2196,31 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                   <TableHead>Phone</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="text-right">Overdue</TableHead>
-                  <TableHead className="text-right">Reminder</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.highBalance.map((c) => (
+                {highBalance.map((c) => (
                   <TableRow key={c.customerId}>
                     <TableCell className="font-medium text-neutral-900">{c.customerName}</TableCell>
                     <TableCell>{c.phone ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums text-rose-600">{formatPkr(c.balanceMinor)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatPkr(c.overdueMinorTotal)}</TableCell>
                     <TableCell className="text-right">
-                      <CopyReminderButton text={customerReminderText(c)} label="Copy" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openView(c.customerId)}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        {canReceive && (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-forest-700" onClick={() => openPayment(c.customerId)}>
+                            <Wallet className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openHistory(c.customerId)}>
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                        <CopyReminderButton text={customerReminderText(c)} label="" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1730,9 +2233,9 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
       <section className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
         <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
           <h3 className="text-sm font-semibold text-amber-700">Credit limit exceptions</h3>
-          <span className="text-xs text-neutral-500">{data.creditLimitExceptions.length} over limit</span>
+          <span className="text-xs text-neutral-500">{creditLimitExceptions.length} over limit</span>
         </div>
-        {data.creditLimitExceptions.length === 0 ? (
+        {creditLimitExceptions.length === 0 ? (
           <EmptyRow message="No customer is over their credit limit." />
         ) : (
           <div className="overflow-x-auto">
@@ -1744,11 +2247,11 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                   <TableHead className="text-right">Limit</TableHead>
                   <TableHead className="text-right">Balance</TableHead>
                   <TableHead className="text-right">Over</TableHead>
-                  <TableHead className="text-right">Reminder</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.creditLimitExceptions.map((c) => (
+                {creditLimitExceptions.map((c) => (
                   <TableRow key={c.customerId}>
                     <TableCell className="font-medium text-neutral-900">{c.customerName}</TableCell>
                     <TableCell>{c.phone ?? "—"}</TableCell>
@@ -1756,7 +2259,20 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
                     <TableCell className="text-right tabular-nums text-rose-600">{formatPkr(c.balanceMinor)}</TableCell>
                     <TableCell className="text-right tabular-nums font-medium text-amber-700">{formatPkr(Math.max(0, c.balanceMinor - c.creditLimitMinor))}</TableCell>
                     <TableCell className="text-right">
-                      <CopyReminderButton text={customerReminderText(c)} label="Copy" />
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openView(c.customerId)}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        {canReceive && (
+                          <Button variant="ghost" size="sm" className="h-7 px-2 text-forest-700" onClick={() => openPayment(c.customerId)}>
+                            <Wallet className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => openHistory(c.customerId)}>
+                          <History className="h-3.5 w-3.5" />
+                        </Button>
+                        <CopyReminderButton text={customerReminderText(c)} label="" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1765,7 +2281,374 @@ function DueControlPanel({ session, onError }: { session: string; onError: (e: E
           </div>
         )}
       </section>
+
+      {dialog === "payment" && activeCustomer && (
+        <DuePaymentDialog
+          session={session}
+          customer={activeCustomer}
+          sale={activeSale}
+          onClose={() => { setDialog(null); setActiveCustomer(null); setActiveSale(null); }}
+          onDone={afterPayment}
+          onError={onError}
+        />
+      )}
+      {dialog === "history" && activeCustomer && (
+        <DuePaymentHistoryDialog
+          session={session}
+          customer={activeCustomer}
+          onClose={() => { setDialog(null); setActiveCustomer(null); }}
+        />
+      )}
+      {dialog === "view" && activeCustomer && (
+        <DueViewDialog
+          session={session}
+          customer={activeCustomer}
+          onClose={() => { setDialog(null); setActiveCustomer(null); }}
+        />
+      )}
     </div>
+  );
+}
+
+function DuePaymentDialog({
+  session,
+  customer,
+  sale,
+  onClose,
+  onDone,
+  onError,
+}: {
+  session: string;
+  customer: CustomerDto;
+  sale?: ReceivableSaleDto | null;
+  onClose: () => void;
+  onDone: () => void;
+  onError: (e: Error) => void;
+}) {
+  const [amount, setAmount] = React.useState(sale ? sale.dueMinor : 0);
+  const [methodId, setMethodId] = React.useState<number | null>(null);
+  const [accountId, setAccountId] = React.useState<number | null>(null);
+  const [paymentDate, setPaymentDate] = React.useState(todayIso());
+  const [notes, setNotes] = React.useState("");
+  const [allocations, setAllocations] = React.useState<CustomerReceiptAllocationInput[]>([]);
+
+  const methodsQuery = useQuery({
+    queryKey: ["selling", "payment-methods"],
+    queryFn: () => paymentMethodList(session),
+    enabled: !!session,
+  });
+  const accountsQuery = useQuery({
+    queryKey: ["selling", "cash-accounts"],
+    queryFn: () => cashAccountList(session),
+    enabled: !!session,
+  });
+  const previewQuery = useQuery({
+    queryKey: ["selling", "receipt-preview", customer.id, amount],
+    queryFn: () => customerReceiptPreview(session, { customerId: customer.id, amountMinor: amount }),
+    enabled: amount > 0,
+  });
+
+  React.useEffect(() => {
+    if (previewQuery.data) {
+      setAllocations(previewQuery.data.allocations.map((a) => ({ saleId: a.saleId, amountMinor: a.allocatedMinor })));
+    }
+  }, [previewQuery.data]);
+
+  const previewData = (previewQuery.data ?? null) as ReceiptPreviewDto | null;
+  const allocMap = React.useMemo(() => {
+    const m = new Map<number, number>();
+    for (const a of allocations) m.set(a.saleId, a.amountMinor);
+    return m;
+  }, [allocations]);
+  const submitAllocations: CustomerReceiptAllocationInput[] | null =
+    previewData?.allocations.map((a) => ({ saleId: a.saleId, amountMinor: allocMap.get(a.saleId) ?? a.allocatedMinor })) ?? null;
+  const allocatedSum = (submitAllocations ?? []).reduce((s, a) => s + Math.max(0, a.amountMinor), 0);
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      customerReceiptCreate(session, {
+        customerId: customer.id,
+        paymentMethodId: methodId!,
+        cashAccountId: accountId!,
+        paymentDate,
+        amountMinor: amount,
+        notes: notes.trim() || null,
+        allocations: submitAllocations ?? [],
+        idempotencyKey: `receipt-${customer.id}-${Date.now()}`,
+      }),
+    onSuccess: onDone,
+    onError,
+  });
+
+  const previewReady = amount > 0 && previewQuery.isSuccess && !previewQuery.isFetching;
+  const valid =
+    amount > 0 &&
+    methodId !== null &&
+    accountId !== null &&
+    paymentDate.length > 0 &&
+    previewReady;
+
+  const setAllocation = (saleId: number, v: number) =>
+    setAllocations((prev) => [...prev.filter((x) => x.saleId !== saleId), { saleId, amountMinor: v }]);
+
+  return (
+    <FormDialog
+      title="Receive payment"
+      description={`Payment from ${customer.name}. Current due: ${formatPkr(customer.balanceMinor)}.`}
+      onSubmit={() => mutation.mutate()}
+      busy={mutation.isPending}
+      submitLabel="Record payment"
+      onClose={onClose}
+      submitDisabled={!valid}
+    >
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-neutral-500">Customer</span>
+          <span className="font-medium">{customer.name}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between">
+          <span className="text-neutral-500">Current due</span>
+          <span className="font-medium text-rose-600">{formatPkr(customer.balanceMinor)}</span>
+        </div>
+        {sale && (
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-neutral-500">Invoice due</span>
+            <span className="font-medium text-rose-600">{formatPkr(sale.dueMinor)}</span>
+          </div>
+        )}
+      </div>
+      <div className="grid gap-1.5">
+        <Label>Amount received</Label>
+        <MoneyInput value={amount} onCommit={(v) => setAmount(v < 0 ? 0 : v)} placeholder="0.00" />
+      </div>
+      {amount > 0 && previewReady && previewData && previewData.allocations.length > 0 && (
+        <div className="overflow-hidden rounded-md border border-neutral-200">
+          <div className="border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-medium text-neutral-600">
+            Apply to open invoices
+          </div>
+          <div className="divide-y divide-neutral-100">
+            {previewData.allocations.map((a) => (
+              <div key={a.saleId} className="flex items-center gap-2 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-neutral-900">{a.saleNumber ?? `Invoice #${a.saleId}`}</p>
+                  <p className="text-[11px] text-neutral-500">Due {formatPkr(a.dueMinor)}</p>
+                </div>
+                <MoneyInput
+                  className="w-28"
+                  value={allocMap.get(a.saleId) ?? a.allocatedMinor}
+                  onCommit={(v) => setAllocation(a.saleId, v)}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between border-t border-neutral-200 px-3 py-2 text-sm">
+            <span className="text-neutral-500">Applied to invoices</span>
+            <span className="font-medium tabular-nums">{formatPkr(Math.min(allocatedSum, amount))}</span>
+          </div>
+          <div className="flex items-center justify-between px-3 py-2 text-sm">
+            <span className="text-neutral-500">Advances</span>
+            <span className="font-medium tabular-nums text-forest-700">{formatPkr(Math.max(0, amount - allocatedSum))}</span>
+          </div>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-1.5">
+          <Label>Payment method</Label>
+          <Select value={methodId ? String(methodId) : ""} onValueChange={(v) => setMethodId(Number(v))}>
+            <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+            <SelectContent>
+              {(methodsQuery.data ?? []).map((m) => (
+                <SelectItem key={m.id} value={String(m.id)}>{m.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Cash account</Label>
+          <Select value={accountId ? String(accountId) : ""} onValueChange={(v) => setAccountId(Number(v))}>
+            <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+            <SelectContent>
+              {(accountsQuery.data ?? []).map((a) => (
+                <SelectItem key={a.id} value={String(a.id)}>{a.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="grid gap-1.5">
+          <Label>Date</Label>
+          <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Notes (optional)</Label>
+          <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Reference" />
+        </div>
+      </div>
+    </FormDialog>
+  );
+}
+
+function DuePaymentHistoryDialog({
+  session,
+  customer,
+  onClose,
+}: {
+  session: string;
+  customer: CustomerDto;
+  onClose: () => void;
+}) {
+  const receiptsQuery = useQuery({
+    queryKey: ["selling", "receipts", customer.id],
+    queryFn: () => customerReceiptList(session, customer.id),
+    enabled: !!session,
+  });
+  const receipts = (receiptsQuery.data ?? []) as CustomerPaymentDto[];
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Payment history — {customer.name}</DialogTitle>
+          <DialogDescription>
+            Balance: {formatPkr(customer.balanceMinor)} · {receipts.length} payment{receipts.length === 1 ? "" : "s"}
+          </DialogDescription>
+        </DialogHeader>
+        {receiptsQuery.isLoading ? (
+          <div className="flex items-center justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div>
+        ) : receipts.length === 0 ? (
+          <EmptyRow message="No payments recorded yet." />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-neutral-200">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Invoice</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {receipts.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="whitespace-nowrap">{r.paymentDate}</TableCell>
+                    <TableCell className="text-right tabular-nums font-medium">{formatPkr(r.amountMinor)}</TableCell>
+                    <TableCell>{r.paymentMethodName}</TableCell>
+                    <TableCell>
+                      {r.allocations.length > 0
+                        ? r.allocations.map((a) => a.saleNumber ?? `#${a.saleId}`).join(", ")
+                        : <span className="text-neutral-400">Advance</span>
+                      }
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={r.status === "posted" ? "success" : r.status === "voided" ? "danger" : "neutral"}>
+                        {r.status}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DueViewDialog({
+  session,
+  customer,
+  onClose,
+}: {
+  session: string;
+  customer: CustomerDto;
+  onClose: () => void;
+}) {
+  const ledgerQuery = useQuery({
+    queryKey: ["selling", "ledger", customer.id],
+    queryFn: () => customerLedger(session, customer.id),
+    enabled: !!session,
+  });
+  const ledger = (ledgerQuery.data ?? []) as CustomerLedgerEntryDto[];
+
+  const ledgerLabels: Record<string, string> = {
+    opening_balance: "Opening balance",
+    sale: "Sale",
+    payment: "Payment received",
+    advance_used: "Advance used",
+    advance_restore: "Advance restored",
+    sale_cancellation: "Sale cancelled",
+    payment_refund: "Payment refund",
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{customer.name}</DialogTitle>
+          <DialogDescription>{customer.phone ?? "No phone"} · {customer.email ?? "No email"}</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="text-neutral-500">Balance</div>
+            <div className="text-lg font-semibold tabular-nums text-rose-600">{formatPkr(customer.balanceMinor)}</div>
+          </div>
+          <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="text-neutral-500">Advance</div>
+            <div className="text-lg font-semibold tabular-nums text-forest-700">{formatPkr(customer.advanceMinor)}</div>
+          </div>
+          <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+            <div className="text-neutral-500">Credit limit</div>
+            <div className="text-lg font-semibold tabular-nums">{formatPkr(customer.creditLimitMinor)}</div>
+          </div>
+        </div>
+        {customer.address && (
+          <p className="text-sm text-neutral-600">{customer.address}</p>
+        )}
+        <div className="grid gap-1.5">
+          <Label>Ledger</Label>
+          {ledgerQuery.isLoading ? (
+            <div className="flex items-center justify-center py-4"><Loader2 className="h-4 w-4 animate-spin" /></div>
+          ) : ledger.length === 0 ? (
+            <p className="text-sm text-neutral-500">No ledger entries.</p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-neutral-200">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ledger.map((e) => (
+                    <TableRow key={e.id}>
+                      <TableCell className="whitespace-nowrap text-xs">{e.createdAt.slice(0, 10)}</TableCell>
+                      <TableCell className="text-xs">{ledgerLabels[e.entryType] ?? e.entryType}</TableCell>
+                      <TableCell className={`text-right tabular-nums text-xs ${e.amountMinor >= 0 ? "text-forest-700" : "text-rose-600"}`}>
+                        {e.amountMinor >= 0 ? "+" : ""}{formatPkr(e.amountMinor)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-xs">{formatPkr(e.balanceAfterMinor)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1782,31 +2665,28 @@ function CustomerDialog({
   onDone: () => void;
   onError: (e: Error) => void;
 }) {
-  const [code, setCode] = React.useState(customer?.code ?? "");
   const [name, setName] = React.useState(customer?.name ?? "");
   const [phone, setPhone] = React.useState(customer?.phone ?? "");
   const [email, setEmail] = React.useState(customer?.email ?? "");
   const [address, setAddress] = React.useState(customer?.address ?? "");
-  const [creditLimit, setCreditLimit] = React.useState(customer?.creditLimitMinor ?? 0);
-  const [creditDays, setCreditDays] = React.useState(customer?.creditDays ?? 30);
-  const [openingBalance, setOpeningBalance] = React.useState(customer?.openingBalanceMinor ?? 0);
   const [isActive, setIsActive] = React.useState(customer?.isActive ?? true);
 
   const mutation = useMutation({
     mutationFn: () => {
+      const code = customer?.code ?? "";
       const input: CustomerInput = {
-        code: code.trim().toUpperCase(),
+        code,
         name: name.trim(),
         phone: phone.trim() || null,
         email: email.trim() || null,
         address: address.trim() || null,
-        creditLimitMinor: creditLimit,
-        creditDays: creditDays < 0 ? 0 : creditDays,
+        creditLimitMinor: customer?.creditLimitMinor ?? 0,
+        creditDays: customer?.creditDays ?? 30,
       };
       if (customer) {
         return customerUpdate(session, customer.id, { ...input, isActive });
       }
-      return customerCreate(session, { ...input, openingBalanceMinor: openingBalance });
+      return customerCreate(session, { ...input, openingBalanceMinor: 0 });
     },
     onSuccess: onDone,
     onError,
@@ -1820,17 +2700,11 @@ function CustomerDialog({
       busy={mutation.isPending}
       submitLabel={customer ? "Save customer" : "Add customer"}
       onClose={onClose}
-      submitDisabled={code.trim().length === 0 || name.trim().length === 0}
+      submitDisabled={name.trim().length === 0}
     >
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Code</Label>
-          <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="CUST-001" />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Name</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ahmed Khan" />
-        </div>
+      <div className="grid gap-1.5">
+        <Label>Name</Label>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ahmed Khan" />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="grid gap-1.5">
@@ -1845,29 +2719,6 @@ function CustomerDialog({
       <div className="grid gap-1.5">
         <Label>Address</Label>
         <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="House 4, Street 5, Gulberg" />
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="grid gap-1.5">
-          <Label>Credit limit</Label>
-          <MoneyInput value={creditLimit} onCommit={(v) => setCreditLimit(v < 0 ? 0 : v)} placeholder="0.00" />
-        </div>
-        <div className="grid gap-1.5">
-          <Label>Credit terms (days)</Label>
-          <Input
-            type="number"
-            min={0}
-            step={1}
-            value={creditDays}
-            onChange={(e) => setCreditDays(Number.isFinite(Number(e.target.value)) ? Math.max(0, Math.floor(Number(e.target.value))) : 30)}
-            inputMode="numeric"
-          />
-        </div>
-        {!customer && (
-          <div className="grid gap-1.5">
-            <Label>Opening balance</Label>
-            <MoneyInput value={openingBalance} onCommit={(v) => setOpeningBalance(v < 0 ? 0 : v)} placeholder="0.00" />
-          </div>
-        )}
       </div>
       {customer && (
         <label className="flex items-center gap-2 text-sm text-neutral-700">
@@ -3122,3 +3973,4 @@ function ProductPicker({
     </div>
   );
 }
+

@@ -278,6 +278,7 @@ async fn make_open_sale(
             discount_minor: Some(0),
             delivery_charge_minor: Some(0),
             notes: None,
+            below_cost_reason: None,
             items: vec![line(product_id, quantity)],
         },
         "corr-create",

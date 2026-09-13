@@ -1,5 +1,4 @@
 use crate::application;
-use crate::commands::authed;
 use crate::commands::wrapper::run_command;
 use crate::dto::AppErrorDto;
 use crate::state::AppState;
@@ -7,8 +6,8 @@ use tauri::State;
 
 #[tauri::command]
 pub async fn seed_demo_data(
-    state: State<'_, AppState>,
-    session: String,
+    _state: State<'_, AppState>,
+    _session: String,
 ) -> Result<application::seed_demo::SeedResult, AppErrorDto> {
     run_command("seed_demo_data", async move {
         #[cfg(not(debug_assertions))]
@@ -19,8 +18,9 @@ pub async fn seed_demo_data(
         }
         #[cfg(debug_assertions)]
         {
-            let _ = authed(&state, &session, "settings.manage").await?;
-            application::seed_demo::seed_demo_data(&state).await
+            use crate::commands::authed;
+            let _ = authed(&_state, &_session, "settings.manage").await?;
+            application::seed_demo::seed_demo_data(&_state).await
         }
     })
     .await

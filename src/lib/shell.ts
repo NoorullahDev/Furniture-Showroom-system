@@ -10,7 +10,6 @@ export type ShellView =
   | "roles"
   | "audit"
   | "reports"
-  | "invoices"
   | "settings"
   | "maintenance"
   | "new-sale"
