@@ -302,6 +302,15 @@ async fn dashboard_reconciles_with_module_figures() {
     // Stock a product at 2 units @ 300 each, and post a rent expense today.
     let product = stock_product(&state, &owner, "D-REC", 2, 300).await;
     set_price(&state, product, 2000).await;
+    sqlx::query(
+        "INSERT INTO product_images
+         (product_id, relative_path, thumbnail_path, is_primary, sha256, mime_type)
+         VALUES (?, 'dashboard-product.webp', 'dashboard-product-thumb.webp', 1, 'test-sha', 'image/webp')",
+    )
+    .bind(product)
+    .execute(&state.pool)
+    .await
+    .unwrap();
     let customer = create_customer(&state, &owner, "D-REC").await;
     confirm_sale(&state, &owner, customer, product).await;
 
@@ -345,6 +354,17 @@ async fn dashboard_reconciles_with_module_figures() {
     // Low stock is 0 (minimum_stock is 0 for our product).
     assert_eq!(s.low_stock_count, 0);
 
+    assert_eq!(s.recent_sales.len(), 1);
+    assert_eq!(s.recent_sales[0].amount_minor, 2000);
+    assert_eq!(s.top_products.len(), 1);
+    assert_eq!(s.top_products[0].item_id, product);
+    assert_eq!(s.top_products[0].units_sold, 1);
+    assert_eq!(s.top_products[0].sales_amount_minor, 2000);
+    assert!(s.top_products[0]
+        .image_path
+        .as_deref()
+        .is_some_and(|path| path.ends_with("dashboard-product-thumb.webp")));
+
     // Activity stream does not blow up and is non-empty (owner audits).
     assert!(!s.recent_transactions.is_empty());
 
@@ -378,6 +398,13 @@ async fn dashboard_hides_cost_and_profit_for_unauthorized() {
     // The salesperson (sale.create) still sees today's sale count/value.
     assert_eq!(s.today_sales_count, Some(1));
     assert_eq!(s.today_sales_minor, Some(1500));
+
+    // With no configured minimums, the dashboard labels and shows true
+    // out-of-stock products instead of claiming a threshold was crossed.
+    assert!(!s.low_stock_uses_threshold);
+    assert_eq!(s.low_stock_count, 1);
+    assert_eq!(s.low_stock_items[0].product_id, product);
+    assert_eq!(s.low_stock_items[0].available, 0);
 
     // Salesperson has no audit.view -> no activity, no error.
     assert!(!s.recent_transactions.is_empty());

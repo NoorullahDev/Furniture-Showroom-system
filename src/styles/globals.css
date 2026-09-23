@@ -9,9 +9,32 @@
 }
 
 body {
-  @apply bg-cream text-neutral-900 antialiased;
+  @apply text-slate-900 antialiased;
+  background: #f4f7fb;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Arial, sans-serif;
+}
+
+::selection {
+  background: #dbeafe;
+  color: #172033;
+}
+
+.app-content .rounded-lg.border.bg-white,
+.app-content .rounded-xl.border.bg-white {
+  border-color: #dbe3ee;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+}
+
+.app-content textarea {
+  border-color: #dbe3ee;
+  border-radius: 0.5rem;
+}
+
+.app-content textarea:focus {
+  border-color: #059669;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(5 150 105 / 0.12);
 }
 
 .tabular {

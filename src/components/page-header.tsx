@@ -19,16 +19,16 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between",
         className,
       )}
       {...props}
     >
-      <div className="grid gap-1">
-        <h1 className="text-xl font-semibold text-forest-700">{title}</h1>
-        {subtitle && <p className="text-sm text-neutral-500">{subtitle}</p>}
+      <div className="grid min-w-0 gap-0.5">
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">{title}</h1>
+        {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">{actions}</div>}
     </div>
   );
 }

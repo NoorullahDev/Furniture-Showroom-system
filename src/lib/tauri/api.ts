@@ -1995,6 +1995,30 @@ export type DashboardTransactionDto = {
   amountMinor: number;
 };
 
+export type DashboardRecentSaleDto = {
+  id: number;
+  invoice: string;
+  customerName: string;
+  saleDate: string;
+  amountMinor: number;
+};
+
+export type DashboardStockItemDto = {
+  productId: number;
+  productName: string;
+  thumbnailPath?: string | null;
+  available: number;
+};
+
+export type DashboardTopProductDto = {
+  itemId: number;
+  itemType: "product" | "bundle";
+  productName: string;
+  imagePath?: string | null;
+  unitsSold: number;
+  salesAmountMinor: number;
+};
+
 export type DashboardSummaryDto = {
   asOf: string;
   shopDate: string;
@@ -2014,6 +2038,10 @@ export type DashboardSummaryDto = {
   openDamageCount?: number | null;
   upcomingDeliveries: DashboardDeliveryDto[];
   recentTransactions: DashboardTransactionDto[];
+  recentSales: DashboardRecentSaleDto[];
+  lowStockItems: DashboardStockItemDto[];
+  lowStockUsesThreshold: boolean;
+  topProducts: DashboardTopProductDto[];
 };
 
 export const dashboardSummary = (session: string) =>

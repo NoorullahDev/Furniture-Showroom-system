@@ -56,7 +56,6 @@ type NavItem = {
   view?: ShellView;
   permission?: string;
   phase?: string;
-  highlight?: boolean;
   dashboardTarget?: DashboardTarget;
 };
 
@@ -65,7 +64,7 @@ type NavItem = {
 // Settings page; their ShellView routes remain for backward-compatibility.
 const PRIMARY_NAV: NavItem[] = [
   { id: "dashboard",         label: "Dashboard",           icon: LayoutDashboard,  view: "dashboard" },
-  { id: "new-sale",          label: "New Sale / POS",      icon: ShoppingCart,     view: "new-sale", highlight: true, dashboardTarget: { view: "sales", target: "new-sale" } },
+  { id: "new-sale",          label: "New Sale / POS",      icon: ShoppingCart,     view: "new-sale", dashboardTarget: { view: "sales", target: "new-sale" } },
   { id: "sales-history",     label: "Sales History",       icon: ClipboardList,    view: "sales-history", dashboardTarget: { view: "sales", target: "sales-today" } },
   { id: "returns-exchanges", label: "Returns & Exchanges", icon: RotateCcw,        view: "returns-exchanges", dashboardTarget: { view: "fulfilment", target: "returns" } },
   { id: "products",          label: "Products",            icon: Package,          view: "catalogue" },
@@ -169,36 +168,32 @@ function SidebarContent({
   }
 
   return (
-    // Dark navy sidebar: slate-900 background
-    <div
-      className="flex h-full flex-col"
-      style={{ background: "#0f172a" }}
-    >
-      {/* ── Brand header ── */}
-      <div
-        className="flex h-14 shrink-0 items-center gap-2.5 px-4"
-        style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
-      >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/10 text-sm font-bold text-white">
-          {logo ? <img src={logo} alt="" className="h-full w-full object-contain" /> : "FS"}
+    <div className="flex h-full min-h-0 flex-col bg-white text-slate-700">
+      <div className="flex h-20 shrink-0 items-center gap-3 border-b border-slate-200 px-4">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 text-sm font-bold text-blue-700 ring-1 ring-slate-200">
+          {logo ? <img src={logo} alt={`${shopName} logo`} className="h-full w-full object-contain" /> : "FS"}
         </span>
-        <div className="min-w-0 leading-tight">
-          <p className="truncate text-sm font-semibold text-white">{shopName}</p>
-          <p className="truncate text-[10px]" style={{ color: "rgba(255,255,255,0.38)" }}>
-            Powered by EagleNest Creations
-          </p>
-        </div>
+        <p className="line-clamp-2 min-w-0 text-sm font-semibold leading-[18px] text-slate-900">
+          {shopName}
+        </p>
       </div>
 
-      {/* ── Scrollable primary nav ── */}
       <nav
-        className="flex-1 overflow-y-auto px-3 py-3"
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
         aria-label="Main navigation"
-        style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
+        style={{
+          overscrollBehavior: "contain",
+          scrollbarGutter: "stable",
+          scrollbarWidth: "thin",
+          scrollbarColor: "rgba(148,163,184,0.5) transparent",
+        }}
       >
         <ul className="space-y-0.5">
           {visibleNav.map((item) => {
-            const active = item.view === current;
+            const active =
+              item.view === current ||
+              (current === "sales" && item.id === "sales-history") ||
+              (current === "fulfilment" && item.id === "deliveries");
             return (
               <li key={item.id}>
                 <button
@@ -207,26 +202,14 @@ function SidebarContent({
                   disabled={!item.view}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors",
+                    "relative flex min-h-[42px] w-full items-center gap-3 overflow-hidden rounded-lg px-3 text-sm font-medium transition duration-150 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500",
+                    active
+                      ? "bg-blue-50 text-blue-700 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-r-full before:bg-blue-600"
+                      : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
                   )}
-                  style={{
-                    background: active
-                      ? item.highlight ? "#059669" : "#2563eb"
-                      : "transparent",
-                    color: active ? "#fff" : "rgba(255,255,255,0.65)",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!active)
-                      (e.currentTarget as HTMLButtonElement).style.background =
-                        "rgba(255,255,255,0.07)";
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!active)
-                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                  }}
                 >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  <span>{item.label}</span>
+                  <item.icon className="h-5 w-5 shrink-0" strokeWidth={1.8} />
+                  <span className="whitespace-nowrap">{item.label}</span>
                 </button>
               </li>
             );
@@ -234,54 +217,31 @@ function SidebarContent({
         </ul>
       </nav>
 
-      {/* ── Fixed bottom: Settings + user block ── */}
-      <div
-        className="shrink-0 px-3 pb-3 pt-2"
-        style={{ borderTop: "1px solid rgba(255,255,255,0.07)" }}
-      >
-        {/* Settings */}
-        <button
-          type="button"
-          onClick={() => { onNavigate("settings"); closeMenu?.(); }}
-          aria-current={isSettingsActive ? "page" : undefined}
-          className="mb-1 flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors"
-          style={{
-            background: isSettingsActive ? "#2563eb" : "transparent",
-            color: isSettingsActive ? "#fff" : "rgba(255,255,255,0.65)",
-          }}
-          onMouseEnter={(e) => {
-            if (!isSettingsActive)
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "rgba(255,255,255,0.07)";
-          }}
-          onMouseLeave={(e) => {
-            if (!isSettingsActive)
-              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-          }}
-        >
-          <Settings className="h-4 w-4 shrink-0" />
-          <span>Settings</span>
-        </button>
-
-        {/* User block */}
-        <div
-          className="flex items-center gap-2.5 rounded-md px-2.5 py-2"
-          style={{ marginTop: 2 }}
-        >
-          <span
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-            style={{ background: "#1e40af" }}
+      <div className="shrink-0 px-3 pb-3">
+        <div className="mb-2 border-t border-slate-200 pt-2.5">
+          <button
+            type="button"
+            onClick={() => { onNavigate("settings"); closeMenu?.(); }}
+            aria-current={isSettingsActive ? "page" : undefined}
+            className={cn(
+              "relative flex min-h-[42px] w-full items-center gap-3 overflow-hidden rounded-lg px-3 text-sm font-medium transition duration-150 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500",
+              isSettingsActive
+                ? "bg-blue-50 text-blue-700 before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-r-full before:bg-blue-600"
+                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900",
+            )}
           >
+            <Settings className="h-5 w-5 shrink-0" strokeWidth={1.8} />
+            <span>Settings</span>
+          </button>
+        </div>
+
+        <div className="flex min-h-14 items-center gap-3 rounded-lg px-3 py-2">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
             {initial}
           </span>
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-sm font-medium text-white">
-              {displayName}
-            </p>
-            <p
-              className="truncate text-[10px] capitalize"
-              style={{ color: "rgba(255,255,255,0.45)" }}
-            >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium leading-5 text-slate-800">{displayName}</p>
+            <p className="truncate text-xs capitalize leading-4 text-slate-500">
               {(profile?.roles ?? [])[0] ?? ""}
             </p>
           </div>
@@ -291,34 +251,18 @@ function SidebarContent({
               onClick={() => void lock()}
               disabled={busy}
               aria-label="Lock screen"
-              className="rounded p-1 transition-colors"
-              style={{ color: "rgba(255,255,255,0.45)" }}
-              onMouseEnter={(e) =>
-                ((e.currentTarget as HTMLButtonElement).style.color = "#fff")
-              }
-              onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLButtonElement).style.color =
-                  "rgba(255,255,255,0.45)")
-              }
+              className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
             >
-              <Lock className="h-3.5 w-3.5" />
+              <Lock className="h-4 w-4" strokeWidth={1.8} />
             </button>
             <button
               type="button"
               onClick={() => void logout()}
               disabled={busy}
               aria-label="Sign out"
-              className="rounded p-1 transition-colors"
-              style={{ color: "rgba(255,255,255,0.45)" }}
-              onMouseEnter={(e) =>
-                ((e.currentTarget as HTMLButtonElement).style.color = "#fff")
-              }
-              onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLButtonElement).style.color =
-                  "rgba(255,255,255,0.45)")
-              }
+              className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <LogOut className="h-4 w-4" strokeWidth={1.8} />
             </button>
           </div>
         </div>
@@ -340,6 +284,9 @@ export function AppShell() {
   const [quickAddOpen, setQuickAddOpen] = React.useState(false);
   const [quickAddInitialForm, setQuickAddInitialForm] = React.useState<QuickAddForm>(null);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const pageContentRef = React.useRef<HTMLDivElement>(null);
+  const pageTransitionRef = React.useRef<Animation | null>(null);
+  const hasRenderedPage = React.useRef(false);
   const shopNameQuery = useQuery({
     queryKey: ["branding", "shop-name"],
     queryFn: () => settingsGet(session, "shop.name"),
@@ -379,6 +326,48 @@ export function AppShell() {
   }, [lock]);
   useIdleLock(onIdle);
 
+  React.useLayoutEffect(() => {
+    if (!hasRenderedPage.current) {
+      hasRenderedPage.current = true;
+      return;
+    }
+
+    const content = pageContentRef.current;
+    pageTransitionRef.current?.cancel();
+    pageTransitionRef.current = null;
+    if (
+      !content ||
+      typeof content.animate !== "function" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+
+    const animation = content.animate(
+      [
+        { transform: "translateX(8px)" },
+        { transform: "translateX(0)" },
+      ],
+      {
+        duration: 180,
+        easing: "ease-out",
+      },
+    );
+    pageTransitionRef.current = animation;
+    animation.addEventListener(
+      "finish",
+      () => {
+        if (pageTransitionRef.current === animation) pageTransitionRef.current = null;
+      },
+      { once: true },
+    );
+
+    return () => {
+      animation.cancel();
+      if (pageTransitionRef.current === animation) pageTransitionRef.current = null;
+    };
+  }, [view]);
+
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -399,9 +388,8 @@ export function AppShell() {
   }, []);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-cream">
-      {/* Desktop sidebar — dark navy */}
-      <aside className="hidden w-56 shrink-0 lg:block" style={{ background: "#0f172a" }}>
+    <div className="flex h-screen w-full overflow-hidden bg-[#f4f7fb]">
+      <aside className="hidden h-full w-[240px] min-w-[240px] max-w-[240px] shrink-0 overflow-hidden border-r border-slate-200 bg-white lg:block">
         <SidebarContent current={view} onNavigate={navigate} shopName={shopName} ownerName={ownerName} logo={logoQuery.data ?? null} />
       </aside>
 
@@ -412,15 +400,13 @@ export function AppShell() {
           onClick={() => setMobileOpen(false)}
         >
           <div
-            className="relative h-full w-72 shadow-xl"
-            style={{ background: "#0f172a" }}
+            className="relative h-full w-[240px] overflow-hidden border-r border-slate-200 bg-white shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="absolute right-2 top-3 rounded p-1 hover:bg-white/10"
-              style={{ color: "rgba(255,255,255,0.6)" }}
+              className="absolute right-2 top-3 z-10 rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
               aria-label="Close menu"
             >
               <X className="h-5 w-5" />
@@ -437,8 +423,8 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-4">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
@@ -448,45 +434,49 @@ export function AppShell() {
             <Menu className="h-5 w-5" />
           </button>
           {/* Top bar — simplified: lock/logout moved into sidebar user block */}
-          <div className="flex items-center gap-2 text-xs text-neutral-500">
-            <span className="font-medium text-neutral-800">{shopName}</span>
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <span className="font-semibold text-slate-800">{shopName}</span>
             <span>/</span>
             <span>{VIEW_TITLES[view]}</span>
           </div>
-          <div className="ml-auto flex items-center gap-2">
-          </div>
+          <div className="ml-auto" />
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-          {view === "dashboard" && (
-            <DashboardView
-              onNavigate={navigate}
-              onReceivePayment={() => {
-                setQuickAddInitialForm("receipt");
-                setQuickAddOpen(true);
-              }}
-            />
-          )}
-          {view === "catalogue" && <CataloguePage />}
-          {view === "inventory" && <InventoryPage />}
-          {view === "purchases" && <PurchasesPage activeTab="purchases" />}
-          {view === "suppliers-list" && <PurchasesPage activeTab="suppliers" />}
-          {view === "supplier-dues" && <PurchasesPage activeTab="payables" />}
-          {view === "sales" && <SalesPage activeTab="sales" />}
-          {view === "new-sale" && <SalesPage activeTab="pos" />}
-          {view === "sales-history" && <SalesPage activeTab="sales" />}
-          {view === "customers-tab" && <SalesPage activeTab="customers" />}
-          {view === "customer-dues" && <SalesPage activeTab="due" />}
-          {view === "fulfilment" && <FulfilmentPage />}
-          {view === "returns-exchanges" && <FulfilmentPage activeTab="returns" />}
-          {view === "deliveries" && <FulfilmentPage activeTab="deliveries" />}
-          {view === "finance" && <ExpensesPage />}
-          {view === "reports" && <ReportsPage />}
-          {view === "users" && <UserManagement />}
-          {view === "roles" && <RoleManagement />}
-          {view === "audit" && <AuditViewer />}
-          {view === "settings" && <SettingsPage />}
-          {view === "maintenance" && <MaintenancePage />}
+        <main
+          className="app-content min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-scroll overscroll-contain p-4 xl:p-5"
+          style={{ scrollbarGutter: "stable" }}
+        >
+          <div ref={pageContentRef} className="min-w-0">
+            {view === "dashboard" && (
+              <DashboardView
+                onNavigate={navigate}
+                onReceivePayment={() => {
+                  setQuickAddInitialForm("receipt");
+                  setQuickAddOpen(true);
+                }}
+              />
+            )}
+            {view === "catalogue" && <CataloguePage />}
+            {view === "inventory" && <InventoryPage />}
+            {view === "purchases" && <PurchasesPage activeTab="purchases" />}
+            {view === "suppliers-list" && <PurchasesPage activeTab="suppliers" />}
+            {view === "supplier-dues" && <PurchasesPage activeTab="payables" />}
+            {view === "sales" && <SalesPage activeTab="sales" />}
+            {view === "new-sale" && <SalesPage activeTab="pos" />}
+            {view === "sales-history" && <SalesPage activeTab="sales" />}
+            {view === "customers-tab" && <SalesPage activeTab="customers" />}
+            {view === "customer-dues" && <SalesPage activeTab="due" />}
+            {view === "fulfilment" && <FulfilmentPage />}
+            {view === "returns-exchanges" && <FulfilmentPage activeTab="returns" />}
+            {view === "deliveries" && <FulfilmentPage activeTab="deliveries" />}
+            {view === "finance" && <ExpensesPage />}
+            {view === "reports" && <ReportsPage />}
+            {view === "users" && <UserManagement />}
+            {view === "roles" && <RoleManagement />}
+            {view === "audit" && <AuditViewer />}
+            {view === "settings" && <SettingsPage />}
+            {view === "maintenance" && <MaintenancePage />}
+          </div>
         </main>
       </div>
 

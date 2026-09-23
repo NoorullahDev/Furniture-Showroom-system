@@ -26,6 +26,36 @@ pub struct DashboardTransactionDto {
     pub amount_minor: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardRecentSaleDto {
+    pub id: i64,
+    pub invoice: String,
+    pub customer_name: String,
+    pub sale_date: String,
+    pub amount_minor: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardStockItemDto {
+    pub product_id: i64,
+    pub product_name: String,
+    pub thumbnail_path: Option<String>,
+    pub available: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardTopProductDto {
+    pub item_id: i64,
+    pub item_type: String,
+    pub product_name: String,
+    pub image_path: Option<String>,
+    pub units_sold: i64,
+    pub sales_amount_minor: i64,
+}
+
 /// Permission-filtered landing summary. A missing value means the signed-in
 /// account is not allowed to view that metric; a real zero is always returned
 /// as `Some(0)` so permission restrictions and failed requests never masquerade
@@ -51,4 +81,8 @@ pub struct DashboardSummaryDto {
     pub open_damage_count: Option<i64>,
     pub upcoming_deliveries: Vec<DashboardDeliveryDto>,
     pub recent_transactions: Vec<DashboardTransactionDto>,
+    pub recent_sales: Vec<DashboardRecentSaleDto>,
+    pub low_stock_items: Vec<DashboardStockItemDto>,
+    pub low_stock_uses_threshold: bool,
+    pub top_products: Vec<DashboardTopProductDto>,
 }

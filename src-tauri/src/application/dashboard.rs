@@ -1,10 +1,12 @@
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use sqlx::Row;
 
 use crate::application::auth::Principal;
-use crate::application::inventory::list_low_stock;
-use crate::dto::dashboard::{DashboardDeliveryDto, DashboardSummaryDto, DashboardTransactionDto};
+use crate::dto::dashboard::{
+    DashboardDeliveryDto, DashboardRecentSaleDto, DashboardStockItemDto, DashboardSummaryDto,
+    DashboardTopProductDto, DashboardTransactionDto,
+};
 use crate::error::AppError;
 use crate::infrastructure::clock::Clock;
 use crate::state::AppState;
@@ -14,6 +16,25 @@ fn allowed(principal: &Principal, any: &[&str]) -> bool {
         .permissions
         .iter()
         .any(|held| any.contains(&held.as_str()))
+}
+
+fn managed_image_path(state: &AppState, stored: Option<String>) -> Option<String> {
+    let value = stored.filter(|value| !value.trim().is_empty())?;
+    let path = std::path::Path::new(&value);
+    if path.is_absolute() {
+        Some(value)
+    } else if path.components().count() == 1 {
+        Some(
+            state
+                .paths
+                .images_dir
+                .join(path)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    } else {
+        None
+    }
 }
 
 async fn configured_timezone(state: &AppState) -> Result<Tz, AppError> {
@@ -53,6 +74,9 @@ async fn dashboard_summary_at(
     let today = shop_today.format("%Y-%m-%d").to_string();
     let month_start = NaiveDate::from_ymd_opt(shop_today.year(), shop_today.month(), 1)
         .expect("valid first day of month")
+        .format("%Y-%m-%d")
+        .to_string();
+    let top_products_start = (shop_today - Duration::days(29))
         .format("%Y-%m-%d")
         .to_string();
 
@@ -215,7 +239,89 @@ async fn dashboard_summary_at(
         (None, Vec::new())
     };
 
-    let low_stock_count = list_low_stock(state, principal).await?.len() as i64;
+    let configured_threshold_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM products
+          WHERE archived_at IS NULL AND track_stock = 1 AND minimum_stock > 0",
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    let low_stock_uses_threshold = configured_threshold_count > 0;
+    let stock_rows = sqlx::query(if low_stock_uses_threshold {
+        "WITH stock AS (
+             SELECT p.id, p.name,
+                    (SELECT pi.thumbnail_path FROM product_images pi
+                      WHERE pi.product_id = p.id
+                      ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS thumbnail_path,
+                    p.minimum_stock,
+                    COALESCE(SUM(b.on_hand - b.reserved - b.damaged), 0) AS available
+               FROM products p
+               LEFT JOIN stock_balances b ON b.product_id = p.id
+              WHERE p.archived_at IS NULL AND p.track_stock = 1
+              GROUP BY p.id
+         )
+         SELECT id, name, thumbnail_path, available
+           FROM stock
+          WHERE (minimum_stock > 0 AND available < minimum_stock) OR available <= 0
+          ORDER BY (minimum_stock - available) DESC, name COLLATE NOCASE
+          LIMIT 5"
+    } else {
+        "WITH stock AS (
+             SELECT p.id, p.name,
+                    (SELECT pi.thumbnail_path FROM product_images pi
+                      WHERE pi.product_id = p.id
+                      ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1) AS thumbnail_path,
+                    COALESCE(SUM(b.on_hand - b.reserved - b.damaged), 0) AS available
+               FROM products p
+               LEFT JOIN stock_balances b ON b.product_id = p.id
+              WHERE p.archived_at IS NULL AND p.track_stock = 1
+              GROUP BY p.id
+         )
+         SELECT id, name, thumbnail_path, available
+           FROM stock
+          WHERE available <= 0
+          ORDER BY available, name COLLATE NOCASE
+          LIMIT 5"
+    })
+    .fetch_all(&state.pool)
+    .await?;
+    let low_stock_items: Vec<DashboardStockItemDto> = stock_rows
+        .into_iter()
+        .map(|row| DashboardStockItemDto {
+            product_id: row.get(0),
+            product_name: row.get(1),
+            thumbnail_path: managed_image_path(state, row.try_get(2).ok().flatten()),
+            available: row.get(3),
+        })
+        .collect();
+    let low_stock_count: i64 = if low_stock_uses_threshold {
+        sqlx::query_scalar(
+            "WITH stock AS (
+                 SELECT p.id, p.minimum_stock,
+                        COALESCE(SUM(b.on_hand - b.reserved - b.damaged), 0) AS available
+                   FROM products p
+                   LEFT JOIN stock_balances b ON b.product_id = p.id
+                  WHERE p.archived_at IS NULL AND p.track_stock = 1
+                  GROUP BY p.id
+             )
+             SELECT COUNT(*) FROM stock
+              WHERE (minimum_stock > 0 AND available < minimum_stock) OR available <= 0",
+        )
+        .fetch_one(&state.pool)
+        .await?
+    } else {
+        sqlx::query_scalar(
+            "WITH stock AS (
+                 SELECT p.id, COALESCE(SUM(b.on_hand - b.reserved - b.damaged), 0) AS available
+                   FROM products p
+                   LEFT JOIN stock_balances b ON b.product_id = p.id
+                  WHERE p.archived_at IS NULL AND p.track_stock = 1
+                  GROUP BY p.id
+             )
+             SELECT COUNT(*) FROM stock WHERE available <= 0",
+        )
+        .fetch_one(&state.pool)
+        .await?
+    };
     let open_damage_count = if can_view_damage {
         Some(
             sqlx::query_scalar("SELECT COUNT(*) FROM damage_records WHERE status = 'open'")
@@ -267,6 +373,73 @@ async fn dashboard_summary_at(
         })
         .collect();
 
+    let recent_sales = if can_view_sales {
+        sqlx::query(
+            "SELECT s.id, COALESCE(NULLIF(s.sale_number, ''), '#' || s.id),
+                    COALESCE(NULLIF(s.customer_name, ''), 'Walk-in Customer'),
+                    s.sale_date, s.total_minor
+               FROM sales s
+              WHERE s.status = 'confirmed'
+              ORDER BY s.sale_date DESC, s.created_at DESC, s.id DESC
+              LIMIT 5",
+        )
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| DashboardRecentSaleDto {
+            id: row.get(0),
+            invoice: row.get(1),
+            customer_name: row.get(2),
+            sale_date: row.get(3),
+            amount_minor: row.get(4),
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+
+    let top_products = if can_view_sales {
+        sqlx::query(
+            "SELECT COALESCE(si.product_id, si.bundle_id),
+                    CASE WHEN si.product_id IS NOT NULL THEN 'product' ELSE 'bundle' END,
+                    si.product_name,
+                    CASE WHEN si.product_id IS NOT NULL THEN
+                        (SELECT pi.thumbnail_path FROM product_images pi
+                          WHERE pi.product_id = si.product_id
+                          ORDER BY pi.is_primary DESC, pi.sort_order, pi.id LIMIT 1)
+                    ELSE b.cover_image_path END,
+                    SUM(si.quantity) AS units_sold,
+                    SUM(si.line_total_minor) AS sales_amount_minor
+               FROM sale_items si
+               JOIN sales s ON s.id = si.sale_id
+               LEFT JOIN bundles b ON b.id = si.bundle_id
+              WHERE s.status = 'confirmed' AND s.sale_date BETWEEN ?1 AND ?2
+              GROUP BY si.product_id, si.bundle_id, si.article_number, si.product_name,
+                       CASE WHEN si.product_id IS NOT NULL THEN 'product' ELSE 'bundle' END
+              ORDER BY sales_amount_minor DESC, units_sold DESC, si.product_name COLLATE NOCASE
+              LIMIT 8",
+        )
+        .bind(&top_products_start)
+        .bind(&today)
+        .fetch_all(&state.pool)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let image_path = managed_image_path(state, row.try_get(3).ok().flatten());
+            DashboardTopProductDto {
+                item_id: row.get(0),
+                item_type: row.get(1),
+                product_name: row.get(2),
+                image_path,
+                units_sold: row.get(4),
+                sales_amount_minor: row.get(5),
+            }
+        })
+        .collect()
+    } else {
+        Vec::new()
+    };
+
     Ok(DashboardSummaryDto {
         as_of: now.to_rfc3339(),
         shop_date: today,
@@ -286,6 +459,10 @@ async fn dashboard_summary_at(
         open_damage_count,
         upcoming_deliveries,
         recent_transactions,
+        recent_sales,
+        low_stock_items,
+        low_stock_uses_threshold,
+        top_products,
     })
 }
 
@@ -545,6 +722,8 @@ mod tests {
         assert!(summary.pending_deliveries.is_none());
         assert!(summary.upcoming_deliveries.is_empty());
         assert!(summary.recent_transactions.is_empty());
+        assert!(summary.recent_sales.is_empty());
+        assert!(summary.top_products.is_empty());
         state.pool.close().await;
         let _ = std::fs::remove_dir_all(dir);
     }

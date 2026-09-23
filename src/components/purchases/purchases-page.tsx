@@ -124,7 +124,12 @@ export function PurchasesPage({ activeTab = "purchases" }: { activeTab?: Tab }) 
         : activeTab,
   );
 
+  const mountedRef = React.useRef(false);
   React.useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
     setView(activeTab);
   }, [activeTab]);
 
